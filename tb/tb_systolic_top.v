@@ -68,10 +68,12 @@ module tb_systolic_top;
         repeat (350) @(negedge clk);
 
         // ---- 5: Skip pipeline-fill entries, then read valid data ----
-        $display("=== 5: Skip first 155 (pipe fill partial sums), read valid ===");
-        psum_rd_en = {32{1'b1}};
-        for (ii=0; ii<155; ii=ii+1) @(negedge clk);
-        psum_rd_en = 0; @(negedge clk);
+        // valid at bottom: starts ~160, lasts ~64 cycles. Don't skip.
+        $display("=== 5: Read PSUM FIFO entries (no skip) ===");
+        for (cc=0; cc<32; cc=cc+1) begin
+            psum_rd_en = (1'b1 << cc); @(negedge clk);
+            psum_rd_en = 0;            @(negedge clk);
+        end
         // Now read one valid entry from each FIFO
         for (cc=0; cc<32; cc=cc+1) begin
             psum_rd_en = (1'b1 << cc); @(negedge clk);

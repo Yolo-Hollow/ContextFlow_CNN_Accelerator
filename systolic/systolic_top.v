@@ -109,11 +109,10 @@ module systolic_top #(
     );
 
     // ---- PSUM FIFOs (32 × 48-bit) ----
-    // Write enable: column c produces valid psuma output
     wire [31:0] psum_fifo_wr_en;
     generate
         for (r = 0; r < COLS; r = r + 1) begin : psum_fifo_gen
-            assign psum_fifo_wr_en[r] = valid_v_bot[2*r];  // psuma valid for column r
+            assign psum_fifo_wr_en[r] = valid_v_bot[2*r];
 
             systolic_fifo #(.WIDTH(PSUM_W*2), .DEPTH(PSUM_FIFO_DEPTH), .AW(PSUM_FIFO_AW))
             u_psum_fifo (.clk(clk), .rst(rst),
