@@ -1,0 +1,10 @@
+xsim.dir/
+*.wdb
+*.jou
+*.log
+*.pb
+vivado_*.backup.*
+xsim_*.backup.*
+xelab.*
+xvlog.*
+dfx_runtime.txt
