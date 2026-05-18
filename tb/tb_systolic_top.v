@@ -5,7 +5,8 @@
 module tb_systolic_top;
     localparam ROWS = 32, COLS = 32;
     localparam IFM_W = 8, WGT_W = 8, PSUM_W = 24;
-    localparam IFM_D = 256, IFM_AW = 8, WGT_D = 64, WGT_AW = 6, PSUM_D = 256, PSUM_AW = 8;
+    localparam IFM_D = 64, IFM_AW = 6, WGT_D = 64, WGT_AW = 6, PSUM_D = 256, PSUM_AW = 8;
+    // IFM_D=64: exactly 8x8 output pixels for our test convolution
 
     reg clk, rst, start;
     wire done;
@@ -18,7 +19,7 @@ module tb_systolic_top;
     wire [COLS*PSUM_W*2-1:0]  psum_rd_data;
     wire [31:0]               psum_empty;
 
-    systolic_top #(.ROWS(ROWS),.COLS(COLS)) u_top (
+    systolic_top #(.ROWS(ROWS),.COLS(COLS), .IFM_FIFO_DEPTH(IFM_D), .IFM_FIFO_AW(IFM_AW)) u_top (
         .clk(clk),.rst(rst),.start(start),.done(done),
         .ifm_fifo_wr_en(ifm_wr_en),.ifm_fifo_wr_data(ifm_wr_data),.ifm_fifo_full(ifm_full),
         .wgt_fifo_wr_en(wgt_wr_en),.wgt_fifo_wr_data(wgt_wr_data),.wgt_fifo_full(wgt_full),
@@ -43,7 +44,9 @@ module tb_systolic_top;
             wtmp=0;
             for (rr=0; rr<32; rr=rr+1) begin
                 w0b=cc+1; w1b=rr+1;
-                wtmp = wtmp | ({w0b,w1b} << (rr*16));
+                // Verilog {a,b}: a→upper [15:8], b→lower [7:0]
+                // PE: pe_w0=lower, pe_w1=upper → {w1b,w0b} so pe_w0=col-wt, pe_w1=row-wt
+                wtmp = wtmp | ({w1b,w0b} << (rr*16));
             end
             wgt_wr_data=wtmp; wgt_wr_en={32{1'b1}}; @(negedge clk);
         end
@@ -52,7 +55,7 @@ module tb_systolic_top;
         // ---- 2: Fill IFM FIFOs (200 entries, all = 1) ----
         $display("=== 2: Fill IFM FIFOs ===");
         ifm_wr_data = {ROWS{8'd1}}; ifm_wr_en = {32{1'b1}};
-        for (ii=0; ii<200; ii=ii+1) @(negedge clk);
+        for (ii=0; ii<64; ii=ii+1) @(negedge clk);
         ifm_wr_en=0;
 
         // ---- 3: Start compute ----
@@ -61,12 +64,13 @@ module tb_systolic_top;
 
         // ---- 4: Wait for pipeline fill + stable output ----
         $display("=== 4: Wait for pipeline... ===");
-        repeat (500) @(negedge clk);
+        // Pipeline fill: ~32*5=160 cycles, +64 pixels, + drain ~130
+        repeat (350) @(negedge clk);
 
         // ---- 5: Skip pipeline-fill entries, then read valid data ----
-        $display("=== 5: Skip pipe fill (170 entries), then read ===");
+        $display("=== 5: Skip first 155 (pipe fill partial sums), read valid ===");
         psum_rd_en = {32{1'b1}};
-        for (ii=0; ii<300; ii=ii+1) @(negedge clk);
+        for (ii=0; ii<155; ii=ii+1) @(negedge clk);
         psum_rd_en = 0; @(negedge clk);
         // Now read one valid entry from each FIFO
         for (cc=0; cc<32; cc=cc+1) begin
@@ -89,8 +93,9 @@ module tb_systolic_top;
             wire [PSUM_W-1:0]   lo  = raw[PSUM_W-1:0];
             wire [PSUM_W-1:0]   hi  = raw[PSUM_W*2-1:PSUM_W];
             // psuma = row-weight * ifm = 528, psumb = col-weight * ifm = 32*(c+1)
-            wire [PSUM_W-1:0]   exp_lo = 528;
-            wire [PSUM_W-1:0]   exp_hi = 32 * (c + 1);
+            // w0=c+1(col-wt)→psuma varies, w1=r+1(row-wt)→psumb=528 constant
+            wire [PSUM_W-1:0]   exp_lo = 32 * (c + 1);
+            wire [PSUM_W-1:0]   exp_hi = 528;
 
             always @(posedge clk) begin
                 if (check_now) begin
