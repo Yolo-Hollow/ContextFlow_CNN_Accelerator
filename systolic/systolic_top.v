@@ -42,7 +42,7 @@ module systolic_top #(
     assign done = compute_active;
 
     // ---- Weight FIFOs (32 × 16-bit) ----
-    // Pre-read 1 cycle before weight load compensates for FIFO read latency
+    // rd_en = start||ctrl_w_load: pre-reads 1 cycle before weight load
     wire wgt_fifo_rd = ctrl_w_load || start;
     wire [ROWS*WEIGHT_W*2-1:0] wgt_fifo_rd_data;
     wire [31:0] wgt_fifo_empty;
@@ -98,17 +98,14 @@ module systolic_top #(
     // Left-edge horizontal valid: IFM FIFO rd_en (data being read is valid)
     wire [ROWS-1:0]   valid_h_left = ifm_fifo_rd_en;
 
-    // Register w_load/w_col to align with weight FIFO read latency (1 cycle)
+    // Register w_col to align with FIFO read latency (1 cycle)
+    // w_load stays unregistered — PE loads on the cycle where w_load=1 AND w_col matches
     reg [4:0] w_col_r;
-    reg       w_load_r;
-    always @(posedge clk) begin
-        w_col_r  <= ctrl_w_col;
-        w_load_r <= ctrl_w_load;
-    end
+    always @(posedge clk) w_col_r <= ctrl_w_col;
 
     systolic_array_32x32 #(.ROWS(ROWS), .COLS(COLS)) u_array (
         .clk(clk), .rst(rst),
-        .w_load(w_load_r), .w_col(w_col_r),
+        .w_load(ctrl_w_load), .w_col(w_col_r),
         .w_row_data(wgt_fifo_rd_data),
         .ifm_in_flat(ifm_fifo_rd_data),
         .valid_h_left(valid_h_left),
