@@ -1,6 +1,6 @@
 `timescale 1ns / 1ps
-// Generic FIFO using distributed RAM (small depth) or BRAM
-// Intended for systolic accelerator data buffering
+// Generic FIFO with overflow/underflow protection + data_out reset
+// Write silently ignored when full; read silently ignored when empty
 module systolic_fifo #(
     parameter WIDTH = 8,
     parameter DEPTH = 256,          // must be power-of-2
@@ -20,23 +20,35 @@ module systolic_fifo #(
     assign empty = (wptr == rptr);
     assign full  = (wptr[AW] != rptr[AW]) && (wptr[AW-1:0] == rptr[AW-1:0]);
 
-    // Write
+    // Internal gated enables: prevent overflow/underflow
+    wire wren_int = wr_en && !full;
+    wire rden_int = rd_en && !empty;
+
+    // Write datapath (single always block avoids race)
     always @(posedge clk) begin
-        if (rst)        wptr <= {PTR_W{1'b0}};
-        else if (wr_en) wptr <= wptr + 1'b1;
-    end
-    always @(posedge clk) begin
-        if (wr_en) mem[wptr[AW-1:0]] <= data_in;
+        if (rst) begin
+            wptr <= {PTR_W{1'b0}};
+        end else if (wren_int) begin
+            wptr <= wptr + 1'b1;
+            mem[wptr[AW-1:0]] <= data_in;
+        end
     end
 
-    // Read
+    // Read datapath
+    always @(posedge clk) begin
+        if (rst) begin
+            rptr <= {PTR_W{1'b0}};
+        end else if (rden_int) begin
+            rptr <= rptr + 1'b1;
+        end
+    end
+
     reg [WIDTH-1:0] data_out_reg;
     always @(posedge clk) begin
-        if (rst)        rptr <= {PTR_W{1'b0}};
-        else if (rd_en) rptr <= rptr + 1'b1;
-    end
-    always @(posedge clk) begin
-        if (rd_en) data_out_reg <= mem[rptr[AW-1:0]];
+        if (rst)
+            data_out_reg <= {WIDTH{1'b0}};
+        else if (rden_int)
+            data_out_reg <= mem[rptr[AW-1:0]];
     end
     assign data_out = data_out_reg;
 endmodule
