@@ -1,3 +1,4 @@
+`timescale 1ns / 1ps
 // Systolic array control FSM
 // IDLE → WGT_PREFILL (32 RAM reads) → WEIGHT_LOAD (32 cols) → COMPUTE → DONE
 module systolic_ctrl #(

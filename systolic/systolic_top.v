@@ -1,3 +1,4 @@
+`timescale 1ns / 1ps
 // Systolic accelerator top — FIFO-buffered architecture
 // 32 IFM FIFOs (8b) + 32 Weight FIFOs (16b) + 32 PSUM FIFOs (48b)
 // Large RAM bursts are decoupled from the systolic array via FIFOs
@@ -171,7 +172,7 @@ module systolic_top #(
             psum_sub_cnt   <= 2'd0;
             psum_col_active <= 6'd0;
         end else if (compute_active) begin
-            if (psum_base_timer >= 9'd155) begin
+            if (psum_base_timer >= 9'd160) begin
                 if (psum_col_active < 6'd32) begin
                     psum_sub_cnt <= psum_sub_cnt + 2'd1;
                     if (psum_sub_cnt == 2'd3)
