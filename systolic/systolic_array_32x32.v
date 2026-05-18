@@ -1,3 +1,4 @@
+`timescale 1ns / 1ps
 // 32x32 weight-stationary systolic array — Verilog-2001 compatible
 // Weight loading: 1 col/cycle (all 32 rows in parallel), 32 cycles full load
 // Uses 512-bit w_row_data: 32 rows x 16 bits (w1,w0 packed)

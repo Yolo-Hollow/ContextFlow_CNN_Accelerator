@@ -1,3 +1,4 @@
+`timescale 1ns / 1ps
 module com_shift_reg
 #(
 	parameter DEPTH=30,
