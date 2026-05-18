@@ -54,9 +54,16 @@ module tb_systolic_top;
 
         // ---- 2: Fill IFM FIFOs (200 entries, all = 1) ----
         $display("=== 2: Fill IFM FIFOs ===");
-        ifm_wr_data = {ROWS{8'd1}}; ifm_wr_en = {32{1'b1}};
-        for (ii=0; ii<64; ii=ii+1) @(negedge clk);
-        ifm_wr_en=0;
+        // ifm[r] = r+1 → psuma[c] = (c+1)*Σ(r+1) = (c+1)*528, psumb[c] = Σ(r+1)² = 11440
+        for (ii=0; ii<64; ii=ii+1) begin
+            ifm_wr_data = 256'd0;
+            for (rr=0; rr<32; rr=rr+1) begin
+                w0b = rr + 1;  // reuse w0b as temp byte
+                ifm_wr_data = ifm_wr_data | ({w0b} << (rr*8));
+            end
+            ifm_wr_en = {32{1'b1}}; @(negedge clk);
+        end
+        ifm_wr_en = 0;
 
         // ---- 3: Start compute ----
         $display("=== 3: Start ===");
@@ -95,9 +102,10 @@ module tb_systolic_top;
             wire [PSUM_W-1:0]   lo  = raw[PSUM_W-1:0];
             wire [PSUM_W-1:0]   hi  = raw[PSUM_W*2-1:PSUM_W];
             // psuma = row-weight * ifm = 528, psumb = col-weight * ifm = 32*(c+1)
-            // w0=c+1(col-wt)→psuma varies, w1=r+1(row-wt)→psumb=528 constant
-            wire [PSUM_W-1:0]   exp_lo = 32 * (c + 1);
-            wire [PSUM_W-1:0]   exp_hi = 528;
+            // ifm[r]=r+1, w0=c+1, w1=r+1
+            // psuma = Σ(r+1)*(c+1) = (c+1)*528, psumb = Σ(r+1)² = 11440
+            wire [PSUM_W-1:0]   exp_lo = (c + 1) * 528;
+            wire [PSUM_W-1:0]   exp_hi = 11440;
 
             always @(posedge clk) begin
                 if (check_now) begin
