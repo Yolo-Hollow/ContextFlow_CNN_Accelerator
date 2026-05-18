@@ -1,3 +1,4 @@
+`timescale 1ns / 1ps
 // Generic FIFO using distributed RAM (small depth) or BRAM
 // Intended for systolic accelerator data buffering
 module systolic_fifo #(
@@ -16,16 +17,13 @@ module systolic_fifo #(
     reg [WIDTH-1:0] mem [0:DEPTH-1];
     reg [PTR_W-1:0] wptr, rptr;
 
-    wire wptr_next = wptr + 1'b1;
-    wire rptr_next = rptr + 1'b1;
-
     assign empty = (wptr == rptr);
     assign full  = (wptr[AW] != rptr[AW]) && (wptr[AW-1:0] == rptr[AW-1:0]);
 
     // Write
     always @(posedge clk) begin
         if (rst)        wptr <= {PTR_W{1'b0}};
-        else if (wr_en) wptr <= wptr_next;
+        else if (wr_en) wptr <= wptr + 1'b1;
     end
     always @(posedge clk) begin
         if (wr_en) mem[wptr[AW-1:0]] <= data_in;
@@ -35,7 +33,7 @@ module systolic_fifo #(
     reg [WIDTH-1:0] data_out_reg;
     always @(posedge clk) begin
         if (rst)        rptr <= {PTR_W{1'b0}};
-        else if (rd_en) rptr <= rptr_next;
+        else if (rd_en) rptr <= rptr + 1'b1;
     end
     always @(posedge clk) begin
         if (rd_en) data_out_reg <= mem[rptr[AW-1:0]];
