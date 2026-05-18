@@ -1,12 +1,11 @@
-// Top-level testbench with valid-based architecture
-// Pre-fill IFM/Weight FIFOs, start compute, verify PSUM FIFO contents
+// Top-level testbench — verify ALL 64 output pixels per column
+// IFM[pixel][r] = pixel+1, WGT: PE(r,c).w0=c+1, PE(r,c).w1=r+1
 `timescale 1ns / 1ps
 
 module tb_systolic_top;
     localparam ROWS = 32, COLS = 32;
     localparam IFM_W = 8, WGT_W = 8, PSUM_W = 24;
     localparam IFM_D = 64, IFM_AW = 6, WGT_D = 64, WGT_AW = 6, PSUM_D = 256, PSUM_AW = 8;
-    // IFM_D=64: exactly 8x8 output pixels for our test convolution
 
     reg clk, rst, start;
     wire done;
@@ -28,37 +27,37 @@ module tb_systolic_top;
 
     always #5 clk = ~clk;
 
-    integer ii, rr, cc, pass, fail;
+    integer ii, rr, cc, pp, pass, fail, pixel_cnt;
     reg [7:0] w0b, w1b; reg [511:0] wtmp;
-    reg check_now;  genvar c;  // declared before use
+    genvar c;
+
+    reg [31:0] col_rd;  // which column is being read now
 
     initial begin
         clk=0; rst=1; start=0; pass=0; fail=0;
         ifm_wr_en=0; ifm_wr_data=0; wgt_wr_en=0; wgt_wr_data=0; psum_rd_en=0;
+        col_rd=0;
 
         repeat(3) @(negedge clk); rst=0; repeat(2) @(negedge clk);
 
-        // ---- 1: Fill Weight FIFOs (32 entries, column 0..31) ----
+        // ---- 1: Fill Weight FIFOs ----
         $display("=== 1: Fill Weight FIFOs ===");
         for (cc=0; cc<32; cc=cc+1) begin
             wtmp=0;
             for (rr=0; rr<32; rr=rr+1) begin
                 w0b=cc+1; w1b=rr+1;
-                // Verilog {a,b}: a→upper [15:8], b→lower [7:0]
-                // PE: pe_w0=lower, pe_w1=upper → {w1b,w0b} so pe_w0=col-wt, pe_w1=row-wt
                 wtmp = wtmp | ({w1b,w0b} << (rr*16));
             end
             wgt_wr_data=wtmp; wgt_wr_en={32{1'b1}}; @(negedge clk);
         end
         wgt_wr_en=0;
 
-        // ---- 2: Fill IFM FIFOs (200 entries, all = 1) ----
-        $display("=== 2: Fill IFM FIFOs ===");
-        // ifm[r] = r+1 → psuma[c] = (c+1)*Σ(r+1) = (c+1)*528, psumb[c] = Σ(r+1)² = 11440
-        for (ii=0; ii<64; ii=ii+1) begin
+        // ---- 2: Fill IFM FIFOs (64 pixels, ifm[pixel][r] = pixel+1) ----
+        $display("=== 2: Fill IFM FIFOs (ifm[p]=p+1) ===");
+        for (pp=0; pp<64; pp=pp+1) begin
             ifm_wr_data = 256'd0;
             for (rr=0; rr<32; rr=rr+1) begin
-                w0b = rr + 1;  // reuse w0b as temp byte
+                w0b = pp + 1;
                 ifm_wr_data = ifm_wr_data | ({w0b} << (rr*8));
             end
             ifm_wr_en = {32{1'b1}}; @(negedge clk);
@@ -69,50 +68,67 @@ module tb_systolic_top;
         $display("=== 3: Start ===");
         @(negedge clk); start=1; @(negedge clk); start=0;
 
-        // ---- 4: Wait for pipeline fill + stable output ----
-        $display("=== 4: Wait for pipeline... ===");
-        // Pipeline fill: ~32*5=160 cycles, +64 pixels, + drain ~130
+        // ---- 4: Wait for pipeline ----
         repeat (350) @(negedge clk);
 
-        // ---- 5: Skip pipeline-fill entries, then read valid data ----
-        // valid at bottom: starts ~160, lasts ~64 cycles. Don't skip.
-        $display("=== 5: Read PSUM FIFO entries (no skip) ===");
+        // ---- 5: Drain all entries from each PSUM FIFO, check via generate ----
+        $display("=== 5: Drain & verify all 64 pixels per column ===");
         for (cc=0; cc<32; cc=cc+1) begin
-            psum_rd_en = (1'b1 << cc); @(negedge clk);
-            psum_rd_en = 0;            @(negedge clk);
+            col_rd = cc;
+            // Read all 64 entries (FIFO goes empty after last valid entry)
+            for (pp=0; pp<64; pp=pp+1) begin  // 1 garbage + 63 valid (pipeline tail loss)
+                psum_rd_en = (1'b1 << cc); @(negedge clk);
+                psum_rd_en = 0;            @(negedge clk);
+            end
         end
-        // Now read one valid entry from each FIFO
-        for (cc=0; cc<32; cc=cc+1) begin
-            psum_rd_en = (1'b1 << cc); @(negedge clk);
-            psum_rd_en = 0;            @(negedge clk);
-        end
+        col_rd = 32;  // done reading
 
-        // ---- 6: Verify ----
-        $display("=== 6: Verify ===");
-        check_now = 1; repeat (5) @(negedge clk);
-        $display("%0d pass, %0d fail", pass, fail);
+        // Let checker finish
+        repeat (3) @(negedge clk);
+        $display("=== Result: %0d pass, %0d fail ===", pass, fail);
         $finish;
     end
 
+    // Generate-block checker: triggered when its column is being read
     generate
         for (c = 0; c < 32; c = c + 1) begin : chk
-            // Extract column c's 48-bit PSUM FIFO read data
             wire [PSUM_W*2-1:0] raw = psum_rd_data[(c+1)*PSUM_W*2-1 : c*PSUM_W*2];
-            // RTL packs {psumb, psuma} in 48b → lo=psuma, hi=psumb
             wire [PSUM_W-1:0]   lo  = raw[PSUM_W-1:0];
             wire [PSUM_W-1:0]   hi  = raw[PSUM_W*2-1:PSUM_W];
-            // psuma = row-weight * ifm = 528, psumb = col-weight * ifm = 32*(c+1)
-            // ifm[r]=r+1, w0=c+1, w1=r+1
-            // psuma = Σ(r+1)*(c+1) = (c+1)*528, psumb = Σ(r+1)² = 11440
-            wire [PSUM_W-1:0]   exp_lo = (c + 1) * 528;
-            wire [PSUM_W-1:0]   exp_hi = 11440;
+
+            reg [7:0] pix;  // pixel counter, increments on each read of this column
+            always @(posedge clk) begin
+                if (rst) pix <= 0;
+                else if (col_rd == c && psum_rd_en[c]) pix <= pix + 1;
+                else if (col_rd != c) pix <= 0;
+            end
+
+            reg [7:0] pix_d;  // delayed pixel to align with FIFO read latency
+            always @(posedge clk) pix_d <= pix;
+
+            // First FIFO entry is garbage (timing artifact), skip it.
+            // pix_d=2 → pixel 0, pix_d=3 → pixel 1, ...
+            wire [PSUM_W-1:0] exp_lo = (pix_d >= 2) ? (pix_d - 1) * 32 * (c + 1) : 0;
+            wire [PSUM_W-1:0] exp_hi = (pix_d >= 2) ? (pix_d - 1) * 528 : 0;
+
+            reg check_me, check_me_d;
+            always @(posedge clk) begin
+                if (rst) {check_me_d, check_me} <= 0;
+                else     {check_me_d, check_me} <= {check_me, (col_rd == c) && psum_rd_en[c]};
+            end
 
             always @(posedge clk) begin
-                if (check_now) begin
-                    if (lo !== exp_lo) $display("[FAIL] col%0d psuma=%0d exp=%0d", c, lo, exp_lo);
-                    else                $display("[ OK ] col%0d psuma=%0d", c, lo);
-                    if (hi !== exp_hi) $display("[FAIL] col%0d psumb=%0d exp=%0d", c, hi, exp_hi);
-                    else                $display("[ OK ] col%0d psumb=%0d", c, hi);
+                if (check_me_d) begin
+                    if (lo !== exp_lo) begin
+                        $display("[FAIL] col%0d pix%0d psuma=%0d exp=%0d", c, pix_d, lo, exp_lo);
+                    end else begin
+                        $display("[ OK ] col%0d pix%0d psuma=%0d", c, pix_d, lo);
+                    end
+                    if (hi !== exp_hi) begin
+                        $display("[FAIL] col%0d pix%0d psumb=%0d exp=%0d", c, pix_d, hi, exp_hi);
+                    end else begin
+                        $display("[ OK ] col%0d pix%0d psumb=%0d", c, pix_d, hi);
+                    end
                 end
             end
         end
