@@ -62,17 +62,6 @@ module tb_systolic_top;
         if (psum_rd_en) psum_rd_data <= psum_mem[psum_rd_addr][PSUM_W-1:0];
     end
 
-    // ---- Done monitor + internal probes ----
-    reg done_seen;
-    always @(posedge clk) begin
-        if (rst) done_seen <= 0;
-        else if (done) begin
-            done_seen <= 1;
-            $display("  [%0t] done pulsed! ctrl_state=%0d compute=%0d psum_active=%0d",
-                     $time, u_top.u_ctrl.state, u_top.compute_active, u_top.psum_col_active);
-        end
-    end
-
     // ================================================================
     // Pre-fill RAMs
     // ================================================================
@@ -118,11 +107,18 @@ module tb_systolic_top;
         $display("=== Launching systolic_top ===");
         @(negedge clk); start = 1;
 
-        // Wait for done pulse
-        @(posedge done);
-        $display("  [%0t] done seen!", $time);
-        // Check PSUM RAM right after drain would have started
-        repeat (50) @(negedge clk);
+        // Wait for compute to complete (pipeline fill + 64 pixels + drain = ~500)
+        // Keep start high for 800 cycles then release
+        repeat (800) @(negedge clk);
+        start = 0;
+
+        // Monitor psum_wr_en and done signals
+        $display("  [%0t] waiting for done... psum_wr_en=%0d done=%0d", $time, psum_wr_en, done);
+        repeat (100) @(negedge clk);
+        $display("  [%0t] after wait: psum_wr_en=%0d done=%0d", $time, psum_wr_en, done);
+
+        // Also check: did PSUM RAM get any writes?
+        $display("  psum_mem[0]=%0d psum_mem[1]=%0d", psum_mem[0], psum_mem[1]);
         repeat (1000) @(negedge clk);
         $display("  [%0t] done=%0d — setting start=0", $time, done);
         start = 0;
@@ -134,10 +130,12 @@ module tb_systolic_top;
         // ---- Verify PSUM RAM ----
         $display("=== Verifying PSUM RAM ===");
         for (c = 0; c < 32; c = c + 1) begin
-            got_a = psum_mem[c][PSUM_W-1:0];
-            got_b = psum_mem[c][PSUM_W*2-1:PSUM_W];
-            exp_a = 32 * (c + 1);
-            exp_b = 528;
+            // RTL packs {psumb, psuma} in 48-bit word: upper=psumb, lower=psuma
+            // After PE swap: psumb = w0*ifm col-weight, psuma = w1*ifm row-weight
+            got_b = psum_mem[c][PSUM_W*2-1:PSUM_W];  // upper = psumb
+            got_a = psum_mem[c][PSUM_W-1:0];         // lower = psuma
+            exp_a = 528;
+            exp_b = 32 * (c + 1);
 
             if (got_a !== exp_a) begin
                 $display("[FAIL] col%0d psuma=%0d expected=%0d", c, got_a, exp_a);

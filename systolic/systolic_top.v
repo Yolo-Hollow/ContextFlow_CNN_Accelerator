@@ -156,41 +156,40 @@ module systolic_top #(
     // ================================================================
     // PSUM: array output → 32 x 48-bit FIFOs → RAM
     // ================================================================
-    wire [31:0] psum_fifo_wr_en;
-    wire [31:0] psum_fifo_empty, psum_fifo_full;
-
     // Each column's output is valid at a different time due to horizontal skew.
     // The FIFO absorbs this: write whenever the column produces valid data.
     // Col c first valid output: (ROWS*5) + c*4 cycles into COMPUTE phase
     // ROWS*5 = 160 (vertical pipeline), then +4 per column (horizontal pipeline)
     reg  [8:0] psum_base_timer;
-    reg  [1:0] psum_sub_cnt;
     reg  [5:0] psum_col_active;
     always @(posedge clk) begin
         if (rst) begin
             psum_base_timer <= 9'd0;
-            psum_sub_cnt   <= 2'd0;
             psum_col_active <= 6'd0;
         end else if (compute_active) begin
-            if (psum_base_timer >= 9'd160) begin
-                if (psum_col_active < 6'd32) begin
-                    psum_sub_cnt <= psum_sub_cnt + 2'd1;
-                    if (psum_sub_cnt == 2'd3)
-                        psum_col_active <= psum_col_active + 6'd1;
-                end
+            if (psum_base_timer >= ROWS * 5) begin
+                if (psum_col_active < 6'd32)
+                    psum_col_active <= psum_col_active + 6'd1;
             end else begin
                 psum_base_timer <= psum_base_timer + 9'd1;
             end
         end else begin
             psum_base_timer <= 9'd0;
-            psum_sub_cnt   <= 2'd0;
             psum_col_active <= 6'd0;
         end
     end
 
+    // Drain address (declared early for mux use)
+    reg [PSUM_RAM_AW-1:0] psum_wr_addr;
+    reg                    psum_drain;
+
+    // PSUM FIFO per column
+    wire [COLS*PSUM_W*2-1:0] psum_fifo_dout_flat;
+    wire [31:0] psum_fifo_wr_en;        // one-hot per column
+    wire [31:0] psum_fifo_empty, psum_fifo_full;
+
     generate
-        for (r = 0; r < COLS; r = r + 1) begin : psum_fifo_gen  // r here = column index
-            // Write enable: col r is active when psum_col_active > r
+        for (r = 0; r < COLS; r = r + 1) begin : psum_fifo_gen
             assign psum_fifo_wr_en[r] = (psum_col_active > r) && compute_active;
 
             systolic_fifo #(.WIDTH(PSUM_W*2), .DEPTH(PSUM_FIFO_DEPTH), .AW(PSUM_FIFO_AW))
@@ -199,12 +198,59 @@ module systolic_top #(
                 .wr_en(psum_fifo_wr_en[r]),
                 .rd_en(psum_ram_wr_en && (psum_ram_wr_addr == r[5:0])),
                 .data_in(psum_bot[(r*2+2)*PSUM_W-1 : r*2*PSUM_W]),
-                .data_out(psum_ram_wr_data),
+                .data_out(psum_fifo_dout_flat[(r+1)*PSUM_W*2-1 : r*PSUM_W*2]),
                 .empty(psum_fifo_empty[r]),
                 .full(psum_fifo_full[r])
             );
         end
     endgenerate
+
+    // Mux: 32-to-1 from FIFO outputs to psum_ram_wr_data
+    // Use generate to create per-address decoder (V-2001 safe)
+    wire [PSUM_W*2-1:0] psum_fifo_slice [0:31];
+    generate
+        for (r = 0; r < 32; r = r + 1) begin : psum_dout_slice
+            assign psum_fifo_slice[r] = psum_fifo_dout_flat[(r+1)*PSUM_W*2-1 : r*PSUM_W*2];
+        end
+    endgenerate
+    reg [PSUM_W*2-1:0] psum_wr_data_mux;
+    always @(*) begin
+        case (psum_wr_addr)
+            5'd0:  psum_wr_data_mux = psum_fifo_slice[0];
+            5'd1:  psum_wr_data_mux = psum_fifo_slice[1];
+            5'd2:  psum_wr_data_mux = psum_fifo_slice[2];
+            5'd3:  psum_wr_data_mux = psum_fifo_slice[3];
+            5'd4:  psum_wr_data_mux = psum_fifo_slice[4];
+            5'd5:  psum_wr_data_mux = psum_fifo_slice[5];
+            5'd6:  psum_wr_data_mux = psum_fifo_slice[6];
+            5'd7:  psum_wr_data_mux = psum_fifo_slice[7];
+            5'd8:  psum_wr_data_mux = psum_fifo_slice[8];
+            5'd9:  psum_wr_data_mux = psum_fifo_slice[9];
+            5'd10: psum_wr_data_mux = psum_fifo_slice[10];
+            5'd11: psum_wr_data_mux = psum_fifo_slice[11];
+            5'd12: psum_wr_data_mux = psum_fifo_slice[12];
+            5'd13: psum_wr_data_mux = psum_fifo_slice[13];
+            5'd14: psum_wr_data_mux = psum_fifo_slice[14];
+            5'd15: psum_wr_data_mux = psum_fifo_slice[15];
+            5'd16: psum_wr_data_mux = psum_fifo_slice[16];
+            5'd17: psum_wr_data_mux = psum_fifo_slice[17];
+            5'd18: psum_wr_data_mux = psum_fifo_slice[18];
+            5'd19: psum_wr_data_mux = psum_fifo_slice[19];
+            5'd20: psum_wr_data_mux = psum_fifo_slice[20];
+            5'd21: psum_wr_data_mux = psum_fifo_slice[21];
+            5'd22: psum_wr_data_mux = psum_fifo_slice[22];
+            5'd23: psum_wr_data_mux = psum_fifo_slice[23];
+            5'd24: psum_wr_data_mux = psum_fifo_slice[24];
+            5'd25: psum_wr_data_mux = psum_fifo_slice[25];
+            5'd26: psum_wr_data_mux = psum_fifo_slice[26];
+            5'd27: psum_wr_data_mux = psum_fifo_slice[27];
+            5'd28: psum_wr_data_mux = psum_fifo_slice[28];
+            5'd29: psum_wr_data_mux = psum_fifo_slice[29];
+            5'd30: psum_wr_data_mux = psum_fifo_slice[30];
+            5'd31: psum_wr_data_mux = psum_fifo_slice[31];
+        endcase
+    end
+    assign psum_ram_wr_data = psum_wr_data_mux;
 
     // ---- PSUM RAM read (initial psum values) ----
     // For multi-tile accumulation: read previous psum from RAM
@@ -212,23 +258,18 @@ module systolic_top #(
     assign psum_ram_rd_addr = {PSUM_RAM_AW{1'b0}};
 
     // ---- PSUM RAM write (after compute, drain FIFOs) ----
-    reg [PSUM_RAM_AW-1:0] psum_wr_addr;
-    reg                    psum_drain;
     always @(posedge clk) begin
         if (rst) begin
             psum_wr_addr <= {PSUM_RAM_AW{1'b0}};
             psum_drain   <= 1'b0;
-        end else if (!compute_active && !ctrl_done) begin
-            // Drain phase: write FIFOs out to RAM
-            psum_drain <= 1'b0;
-            psum_wr_addr <= {PSUM_RAM_AW{1'b0}};
         end else if (psum_drain) begin
-            if (psum_wr_addr < {PSUM_RAM_AW{1'b1}})
+            if (psum_wr_addr < 6'd32)
                 psum_wr_addr <= psum_wr_addr + 1'b1;
             else
                 psum_drain <= 1'b0;
         end else if (!compute_active && done) begin
             psum_drain <= 1'b1;
+            psum_wr_addr <= {PSUM_RAM_AW{1'b0}};
         end
     end
     assign psum_ram_wr_en   = psum_drain;

@@ -47,12 +47,13 @@ module systolic_pe #(
     end
     assign ifm_out = ifm_r3;
 
-    // DSP: a=w0, b=w1, c=ifm → ac=w0*ifm, bc=w1*ifm (4-cycle pipeline)
+    // DSP: a=w1, b=w0, c=ifm → ac=w1*ifm, bc=w0*ifm (4-cycle pipeline)
+    // psuma accumulates ac (w1 product), psumb accumulates bc (w0 product)
     wire signed [PROD_W-1:0] prod_a, prod_b;
     cal_mult_int8_x2 u_dsp (
         .clk (clk),
-        .a   (w0_reg),
-        .b   (w1_reg),
+        .a   (w1_reg),
+        .b   (w0_reg),
         .c   (ifm_in),
         .ac  (prod_a),
         .bc  (prod_b)
