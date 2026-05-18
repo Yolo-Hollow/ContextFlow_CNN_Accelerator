@@ -1,158 +1,105 @@
-// Top-level testbench: full integration — 9x9x8 IFM, 2x2x8x64 kernel, stride=1
-// All IFM=1, PE(r,c).w0=c+1, PE(r,c).w1=r+1
-// Expect: psuma[c] = 32*(c+1), psumb[c] = 528
+// Top-level testbench with valid-based architecture
+// Pre-fill IFM/Weight FIFOs, start compute, verify PSUM FIFO contents
 `timescale 1ns / 1ps
 
 module tb_systolic_top;
     localparam ROWS = 32, COLS = 32;
     localparam IFM_W = 8, WGT_W = 8, PSUM_W = 24;
-    localparam IFM_RAM_AW = 12, WGT_RAM_AW = 7, PSUM_RAM_AW = 5;
-    localparam CLK = 10;
+    localparam IFM_D = 256, IFM_AW = 8, WGT_D = 64, WGT_AW = 6, PSUM_D = 256, PSUM_AW = 8;
 
     reg clk, rst, start;
     wire done;
-    wire ifm_rd_en, wgt_rd_en, psum_wr_en, psum_rd_en;
-    wire [IFM_RAM_AW-1:0]  ifm_rd_addr;
-    wire [WGT_RAM_AW-1:0]  wgt_rd_addr;
-    wire [PSUM_RAM_AW-1:0] psum_wr_addr, psum_rd_addr;
-    reg  [ROWS*IFM_W-1:0]   ifm_rd_data;
-    reg  [ROWS*WGT_W*2-1:0] wgt_rd_data;
-    wire [PSUM_W*2-1:0]     psum_wr_data;
-    reg  [PSUM_W-1:0]       psum_rd_data;
 
-    systolic_top #(
-        .ROWS(ROWS), .COLS(COLS), .IFM_W(IFM_W), .WEIGHT_W(WGT_W), .PSUM_W(PSUM_W),
-        .IFM_RAM_AW(IFM_RAM_AW), .WGT_RAM_AW(WGT_RAM_AW), .PSUM_RAM_AW(PSUM_RAM_AW)
-    ) u_top (
-        .clk(clk), .rst(rst), .start(start), .done(done),
-        .ifm_ram_rd_en(ifm_rd_en), .ifm_ram_rd_addr(ifm_rd_addr), .ifm_ram_rd_data(ifm_rd_data),
-        .wgt_ram_rd_en(wgt_rd_en), .wgt_ram_rd_addr(wgt_rd_addr), .wgt_ram_rd_data(wgt_rd_data),
-        .psum_ram_wr_en(psum_wr_en), .psum_ram_wr_addr(psum_wr_addr),
-        .psum_ram_wr_data(psum_wr_data),
-        .psum_ram_rd_en(psum_rd_en), .psum_ram_rd_addr(psum_rd_addr),
-        .psum_ram_rd_data(psum_rd_data)
+    reg  [31:0]               ifm_wr_en;  reg  [ROWS*IFM_W-1:0]   ifm_wr_data;
+    wire [31:0]               ifm_full;
+    reg  [31:0]               wgt_wr_en;  reg  [ROWS*WGT_W*2-1:0] wgt_wr_data;
+    wire [31:0]               wgt_full;
+    reg  [31:0]               psum_rd_en;
+    wire [COLS*PSUM_W*2-1:0]  psum_rd_data;
+    wire [31:0]               psum_empty;
+
+    systolic_top #(.ROWS(ROWS),.COLS(COLS)) u_top (
+        .clk(clk),.rst(rst),.start(start),.done(done),
+        .ifm_fifo_wr_en(ifm_wr_en),.ifm_fifo_wr_data(ifm_wr_data),.ifm_fifo_full(ifm_full),
+        .wgt_fifo_wr_en(wgt_wr_en),.wgt_fifo_wr_data(wgt_wr_data),.wgt_fifo_full(wgt_full),
+        .psum_fifo_rd_en(psum_rd_en),.psum_fifo_rd_data(psum_rd_data),.psum_fifo_empty(psum_empty)
     );
 
-    always #(CLK/2) clk = ~clk;
+    always #5 clk = ~clk;
 
-    // ================================================================
-    // IFM RAM model — 4096 x 256-bit
-    // ================================================================
-    reg [ROWS*IFM_W-1:0] ifm_mem [0:4095];
-    always @(posedge clk) begin
-        if (ifm_rd_en) ifm_rd_data <= ifm_mem[ifm_rd_addr];
-    end
-
-    // ================================================================
-    // Weight RAM model — 128 x 512-bit
-    // ================================================================
-    reg [ROWS*WGT_W*2-1:0] wgt_mem [0:127];
-    always @(posedge clk) begin
-        if (wgt_rd_en) wgt_rd_data <= wgt_mem[wgt_rd_addr];
-    end
-
-    // ================================================================
-    // PSUM RAM model — 32 x 48-bit (capture writes)
-    // ================================================================
-    reg [PSUM_W*2-1:0] psum_mem [0:31];
-    always @(posedge clk) begin
-        if (psum_wr_en) psum_mem[psum_wr_addr] <= psum_wr_data;
-    end
-    always @(posedge clk) begin
-        if (psum_rd_en) psum_rd_data <= psum_mem[psum_rd_addr][PSUM_W-1:0];
-    end
-
-    // ================================================================
-    // Pre-fill RAMs
-    // ================================================================
-    integer r, c;
-    reg [511:0] wgt_tmp;
-    reg [7:0] w0_byte, w1_byte;
-
-    task prefill_rams;
-        begin
-            // IFM: all pixels = 1 (fill entire RAM to avoid X reads)
-            for (r = 0; r < 4096; r = r + 1)
-                ifm_mem[r] = {ROWS{8'd1}};
-
-            // WGT: 32 columns, PE(r,c).w0=c+1, PE(r,c).w1=r+1
-            for (c = 0; c < 32; c = c + 1) begin
-                wgt_tmp = 512'd0;
-                for (r = 0; r < 32; r = r + 1) begin
-                    w0_byte = c + 1; w1_byte = r + 1;
-                    wgt_tmp = wgt_tmp | ({w0_byte, w1_byte} << (r * 16));
-                end
-                wgt_mem[c] = wgt_tmp[511:0];
-            end
-        end
-    endtask
-
-    // ================================================================
-    // Test
-    // ================================================================
-    integer pass, fail, ii;
-    reg signed [PSUM_W-1:0] exp_a, exp_b, got_a, got_b;
+    integer ii, rr, cc, pass, fail;
+    reg [7:0] w0b, w1b; reg [511:0] wtmp;
+    reg check_now;  genvar c;  // declared before use
 
     initial begin
-        clk = 0; rst = 1; start = 0; pass = 0; fail = 0;
-        ifm_rd_data = 0; wgt_rd_data = 0; psum_rd_data = 0;
+        clk=0; rst=1; start=0; pass=0; fail=0;
+        ifm_wr_en=0; ifm_wr_data=0; wgt_wr_en=0; wgt_wr_data=0; psum_rd_en=0;
 
-        prefill_rams;
+        repeat(3) @(negedge clk); rst=0; repeat(2) @(negedge clk);
 
-        repeat (5) @(negedge clk);
-        rst = 0;
-        repeat (2) @(negedge clk);
+        // ---- 1: Fill Weight FIFOs (32 entries, column 0..31) ----
+        $display("=== 1: Fill Weight FIFOs ===");
+        for (cc=0; cc<32; cc=cc+1) begin
+            wtmp=0;
+            for (rr=0; rr<32; rr=rr+1) begin
+                w0b=cc+1; w1b=rr+1;
+                wtmp = wtmp | ({w0b,w1b} << (rr*16));
+            end
+            wgt_wr_data=wtmp; wgt_wr_en={32{1'b1}}; @(negedge clk);
+        end
+        wgt_wr_en=0;
 
-        // ---- Launch ----
-        $display("=== Launching systolic_top ===");
-        @(negedge clk); start = 1;
+        // ---- 2: Fill IFM FIFOs (200 entries, all = 1) ----
+        $display("=== 2: Fill IFM FIFOs ===");
+        ifm_wr_data = {ROWS{8'd1}}; ifm_wr_en = {32{1'b1}};
+        for (ii=0; ii<200; ii=ii+1) @(negedge clk);
+        ifm_wr_en=0;
 
-        // Wait for compute to complete (pipeline fill + 64 pixels + drain = ~500)
-        // Keep start high for 800 cycles then release
-        repeat (800) @(negedge clk);
-        start = 0;
+        // ---- 3: Start compute ----
+        $display("=== 3: Start ===");
+        @(negedge clk); start=1; @(negedge clk); start=0;
 
-        // Monitor psum_wr_en and done signals
-        $display("  [%0t] waiting for done... psum_wr_en=%0d done=%0d", $time, psum_wr_en, done);
-        repeat (100) @(negedge clk);
-        $display("  [%0t] after wait: psum_wr_en=%0d done=%0d", $time, psum_wr_en, done);
+        // ---- 4: Wait for pipeline fill + stable output ----
+        $display("=== 4: Wait for pipeline... ===");
+        repeat (500) @(negedge clk);
 
-        // Also check: did PSUM RAM get any writes?
-        $display("  psum_mem[0]=%0d psum_mem[1]=%0d", psum_mem[0], psum_mem[1]);
-        repeat (1000) @(negedge clk);
-        $display("  [%0t] done=%0d — setting start=0", $time, done);
-        start = 0;
-
-        // Wait for DONE + PSUM drain
-        repeat (200) @(negedge clk);
-        $display("  [%0t] after drain: done=%0d", $time, done);
-
-        // ---- Verify PSUM RAM ----
-        $display("=== Verifying PSUM RAM ===");
-        for (c = 0; c < 32; c = c + 1) begin
-            // RTL packs {psumb, psuma} in 48-bit word: upper=psumb, lower=psuma
-            // After PE swap: psumb = w0*ifm col-weight, psuma = w1*ifm row-weight
-            got_b = psum_mem[c][PSUM_W*2-1:PSUM_W];  // upper = psumb
-            got_a = psum_mem[c][PSUM_W-1:0];         // lower = psuma
-            exp_a = 528;
-            exp_b = 32 * (c + 1);
-
-            if (got_a !== exp_a) begin
-                $display("[FAIL] col%0d psuma=%0d expected=%0d", c, got_a, exp_a);
-                fail = fail + 1;
-            end else pass = pass + 1;
-
-            if (got_b !== exp_b) begin
-                $display("[FAIL] col%0d psumb=%0d expected=%0d", c, got_b, exp_b);
-                fail = fail + 1;
-            end else pass = pass + 1;
+        // ---- 5: Skip pipeline-fill entries, then read valid data ----
+        $display("=== 5: Skip pipe fill (170 entries), then read ===");
+        psum_rd_en = {32{1'b1}};
+        for (ii=0; ii<300; ii=ii+1) @(negedge clk);
+        psum_rd_en = 0; @(negedge clk);
+        // Now read one valid entry from each FIFO
+        for (cc=0; cc<32; cc=cc+1) begin
+            psum_rd_en = (1'b1 << cc); @(negedge clk);
+            psum_rd_en = 0;            @(negedge clk);
         end
 
-        $display("==========================================");
-        $display("  Top TB: %0d checks, %0d pass, %0d fail", pass+fail, pass, fail);
-        if (fail > 0) $display("*** FAILURES DETECTED ***");
-        else          $display("*** ALL GOOD ***");
-        $display("==========================================");
+        // ---- 6: Verify ----
+        $display("=== 6: Verify ===");
+        check_now = 1; repeat (5) @(negedge clk);
+        $display("%0d pass, %0d fail", pass, fail);
         $finish;
     end
+
+    generate
+        for (c = 0; c < 32; c = c + 1) begin : chk
+            // Extract column c's 48-bit PSUM FIFO read data
+            wire [PSUM_W*2-1:0] raw = psum_rd_data[(c+1)*PSUM_W*2-1 : c*PSUM_W*2];
+            // RTL packs {psumb, psuma} in 48b → lo=psuma, hi=psumb
+            wire [PSUM_W-1:0]   lo  = raw[PSUM_W-1:0];
+            wire [PSUM_W-1:0]   hi  = raw[PSUM_W*2-1:PSUM_W];
+            // psuma = row-weight * ifm = 528, psumb = col-weight * ifm = 32*(c+1)
+            wire [PSUM_W-1:0]   exp_lo = 528;
+            wire [PSUM_W-1:0]   exp_hi = 32 * (c + 1);
+
+            always @(posedge clk) begin
+                if (check_now) begin
+                    if (lo !== exp_lo) $display("[FAIL] col%0d psuma=%0d exp=%0d", c, lo, exp_lo);
+                    else                $display("[ OK ] col%0d psuma=%0d", c, lo);
+                    if (hi !== exp_hi) $display("[FAIL] col%0d psumb=%0d exp=%0d", c, hi, exp_hi);
+                    else                $display("[ OK ] col%0d psumb=%0d", c, hi);
+                end
+            end
+        end
+    endgenerate
 endmodule

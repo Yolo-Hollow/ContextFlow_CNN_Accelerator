@@ -1,278 +1,126 @@
 `timescale 1ns / 1ps
-// Systolic accelerator top — FIFO-buffered architecture
-// 32 IFM FIFOs (8b) + 32 Weight FIFOs (16b) + 32 PSUM FIFOs (48b)
-// Large RAM bursts are decoupled from the systolic array via FIFOs
+// Top module: IFM FIFOs + Weight FIFOs + Array + PSUM FIFOs
+// No storage scheduler — FIFO fill/drain handled externally
+// Valid-based control: compute_start → stagger → valid through array → PSUM wr_en
 module systolic_top #(
-    parameter ROWS = 32,
-    parameter COLS = 32,
-    parameter IFM_W = 8,
-    parameter WEIGHT_W = 8,
-    parameter PSUM_W = 24,
-    // RAM address widths
-    parameter IFM_RAM_AW  = 12,      // IFM RAM depth (4096 x 256b)
-    parameter WGT_RAM_AW  = 7,       // Weight RAM depth (128 x 512b)
-    parameter PSUM_RAM_AW = 5,       // PSUM RAM depth (32 x 48b, one per column)
-    // FIFO depths
-    parameter IFM_FIFO_DEPTH  = 256,
-    parameter IFM_FIFO_AW     = 8,
-    parameter WGT_FIFO_DEPTH  = 64,
-    parameter WGT_FIFO_AW     = 6,
-    parameter PSUM_FIFO_DEPTH = 256,
-    parameter PSUM_FIFO_AW    = 8
+    parameter ROWS = 32, parameter COLS = 32,
+    parameter IFM_W = 8, parameter WEIGHT_W = 8, parameter PSUM_W = 24,
+    parameter IFM_FIFO_DEPTH = 256, parameter IFM_FIFO_AW = 8,
+    parameter WGT_FIFO_DEPTH = 64,  parameter WGT_FIFO_AW = 6,
+    parameter PSUM_FIFO_DEPTH = 256, parameter PSUM_FIFO_AW = 8
 ) (
     input  clk, rst,
-    input  start,
-    output done,
+    input  start,           // pulse: begin weight load → compute
+    output done,            // high during COMPUTE (informational)
 
-    // ---- IFM RAM (burst read, 256-bit) ----
-    output ifm_ram_rd_en,
-    output [IFM_RAM_AW-1:0] ifm_ram_rd_addr,
-    input  [ROWS*IFM_W-1:0] ifm_ram_rd_data,
+    // ---- IFM FIFO write ports (fill externally) ----
+    input  [31:0]               ifm_fifo_wr_en,
+    input  [ROWS*IFM_W-1:0]     ifm_fifo_wr_data,
+    output [31:0]               ifm_fifo_full,
 
-    // ---- Weight RAM (burst read, 512-bit) ----
-    output wgt_ram_rd_en,
-    output [WGT_RAM_AW-1:0] wgt_ram_rd_addr,
-    input  [ROWS*WEIGHT_W*2-1:0] wgt_ram_rd_data,
+    // ---- Weight FIFO write ports (fill externally) ----
+    input  [31:0]               wgt_fifo_wr_en,
+    input  [ROWS*WEIGHT_W*2-1:0] wgt_fifo_wr_data,
+    output [31:0]               wgt_fifo_full,
 
-    // ---- PSUM RAM (burst write, 48-bit per entry) ----
-    output psum_ram_wr_en,
-    output [PSUM_RAM_AW-1:0] psum_ram_wr_addr,
-    output [PSUM_W*2-1:0] psum_ram_wr_data,     // 48-bit: 2 OFM channels per column
-    output psum_ram_rd_en,
-    output [PSUM_RAM_AW-1:0] psum_ram_rd_addr,
-    input  [PSUM_W-1:0] psum_ram_rd_data
+    // ---- PSUM FIFO read ports (drain externally) ----
+    input  [31:0]               psum_fifo_rd_en,
+    output [COLS*PSUM_W*2-1:0]  psum_fifo_rd_data,
+    output [31:0]               psum_fifo_empty
 );
-    // ================================================================
-    // Control
-    // ================================================================
-    wire ctrl_wgt_prefill, ctrl_w_load, ctrl_done;
+    // ---- Control ----
+    wire ctrl_w_load, ctrl_compute_start;
     wire [4:0] ctrl_w_col;
     wire compute_active;
 
     systolic_ctrl #(.ROWS(ROWS), .COLS(COLS)) u_ctrl (
         .clk(clk), .rst(rst), .start(start),
-        .wgt_prefill(ctrl_wgt_prefill), .w_load(ctrl_w_load), .w_col(ctrl_w_col),
-        .compute_active(compute_active), .done(ctrl_done)
+        .w_load(ctrl_w_load), .w_col(ctrl_w_col),
+        .compute_active(compute_active),
+        .compute_start_pulse(ctrl_compute_start)
     );
-    assign done = ctrl_done;
+    assign done = compute_active;
 
-    // ================================================================
-    // Weight: pre-fill 32 FIFOs from RAM (32 cycles) → array drains (32 cycles)
-    // ================================================================
-    reg [WGT_RAM_AW-1:0] wgt_ram_addr;
-    always @(posedge clk) begin
-        if (rst)                           wgt_ram_addr <= {WGT_RAM_AW{1'b0}};
-        else if (ctrl_wgt_prefill)         wgt_ram_addr <= wgt_ram_addr + 1'b1;
-        else                               wgt_ram_addr <= {WGT_RAM_AW{1'b0}};
-    end
-    assign wgt_ram_rd_en   = ctrl_wgt_prefill;
-    assign wgt_ram_rd_addr = wgt_ram_addr;
-
-    wire [ROWS*WEIGHT_W*2-1:0] wgt_fifo_data_out;
+    // ---- Weight FIFOs (32 × 16-bit) ----
+    wire [ROWS*WEIGHT_W*2-1:0] wgt_fifo_rd_data;
+    wire [31:0] wgt_fifo_empty;
     genvar r;
     generate
         for (r = 0; r < ROWS; r = r + 1) begin : wgt_fifo_gen
             systolic_fifo #(.WIDTH(WEIGHT_W*2), .DEPTH(WGT_FIFO_DEPTH), .AW(WGT_FIFO_AW))
-            u_wgt_fifo (
-                .clk(clk), .rst(rst),
-                .wr_en(ctrl_wgt_prefill),
-                .rd_en(ctrl_w_load),
-                .data_in (wgt_ram_rd_data[(r+1)*WEIGHT_W*2-1 : r*WEIGHT_W*2]),
-                .data_out(wgt_fifo_data_out[(r+1)*WEIGHT_W*2-1 : r*WEIGHT_W*2]),
-                .empty(), .full()
-            );
+            u_wgt_fifo (.clk(clk), .rst(rst),
+                .wr_en(wgt_fifo_wr_en[r]), .rd_en(ctrl_w_load),
+                .data_in(wgt_fifo_wr_data[(r+1)*WEIGHT_W*2-1 : r*WEIGHT_W*2]),
+                .data_out(wgt_fifo_rd_data[(r+1)*WEIGHT_W*2-1 : r*WEIGHT_W*2]),
+                .empty(wgt_fifo_empty[r]), .full(wgt_fifo_full[r]));
         end
     endgenerate
 
-    // ================================================================
-    // IFM: 32 x 8-bit FIFOs → array (staggered read)
-    // ================================================================
-    reg ifm_ram_rd_en_reg;
-    reg [IFM_RAM_AW-1:0] ifm_ram_addr_reg;
+    // ---- IFM FIFOs (32 × 8-bit) + stagger chain ----
+    wire [ROWS*IFM_W-1:0] ifm_fifo_rd_data;
     wire [31:0] ifm_fifo_empty;
-    reg  [7:0] ifm_start_cnt;          // count up to 155 (31*5) for stagger init
-    reg        ifm_all_active;
 
-    always @(posedge clk) begin
-        if (rst) begin
-            ifm_ram_rd_en_reg <= 1'b0;
-            ifm_ram_addr_reg  <= {IFM_RAM_AW{1'b0}};
-            ifm_start_cnt     <= 6'd0;
-            ifm_all_active    <= 1'b0;
-        end else if (compute_active) begin
-            ifm_ram_rd_en_reg <= 1'b1;
-            ifm_ram_addr_reg  <= ifm_ram_addr_reg + 1'b1;
-            if (ifm_start_cnt < 6'd31*5) begin
-                ifm_start_cnt <= ifm_start_cnt + 6'd1;
-            end else begin
-                ifm_all_active <= 1'b1;
-            end
-        end else begin
-            ifm_ram_rd_en_reg <= 1'b0;
-            ifm_ram_addr_reg  <= {IFM_RAM_AW{1'b0}};
-            ifm_start_cnt     <= 6'd0;
-            ifm_all_active    <= 1'b0;
+    // Stagger: compute_active delayed by r*5 cycles per row
+    // Row r starts reading IFM 5*r cycles after compute_active goes high
+    wire [ROWS-1:0] ifm_rd_stagger;
+    wire            compute_active_level = compute_active;  // rename for clarity
+    assign ifm_rd_stagger[0] = compute_active_level;
+    generate
+        for (r = 1; r < ROWS; r = r + 1) begin : stagger_gen
+            com_shift_reg #(.DEPTH(r*5), .WIDTH(1)) u_stag (
+                .clk(clk), .si(compute_active_level), .so(ifm_rd_stagger[r]));
         end
-    end
-    assign ifm_ram_rd_en   = ifm_ram_rd_en_reg;
-    assign ifm_ram_rd_addr = ifm_ram_addr_reg;
+    endgenerate
 
-    wire [ROWS*IFM_W-1:0] ifm_fifo_data_out;
+    // IFM FIFO rd_en = stagger AND not empty
     wire [31:0] ifm_fifo_rd_en;
     generate
         for (r = 0; r < ROWS; r = r + 1) begin : ifm_fifo_gen
-            // Staggered read: row r starts reading after r*5 cycles
-            wire row_active = (ifm_start_cnt >= (r * 5));
-            assign ifm_fifo_rd_en[r] = row_active;
+            assign ifm_fifo_rd_en[r] = ifm_rd_stagger[r] && !ifm_fifo_empty[r];
 
             systolic_fifo #(.WIDTH(IFM_W), .DEPTH(IFM_FIFO_DEPTH), .AW(IFM_FIFO_AW))
-            u_ifm_fifo (
-                .clk(clk), .rst(rst),
-                .wr_en(ifm_ram_rd_en_reg),
-                .rd_en(ifm_fifo_rd_en[r]),
-                .data_in(ifm_ram_rd_data[(r+1)*IFM_W-1 : r*IFM_W]),
-                .data_out(ifm_fifo_data_out[(r+1)*IFM_W-1 : r*IFM_W]),
-                .empty(ifm_fifo_empty[r]),
-                .full()
-            );
+            u_ifm_fifo (.clk(clk), .rst(rst),
+                .wr_en(ifm_fifo_wr_en[r]), .rd_en(ifm_fifo_rd_en[r]),
+                .data_in(ifm_fifo_wr_data[(r+1)*IFM_W-1 : r*IFM_W]),
+                .data_out(ifm_fifo_rd_data[(r+1)*IFM_W-1 : r*IFM_W]),
+                .empty(ifm_fifo_empty[r]), .full(ifm_fifo_full[r]));
         end
     endgenerate
 
-    // ================================================================
-    // Systolic array
-    // ================================================================
-    wire [COLS*2*PSUM_W-1:0] psum_top_init = {COLS*2*PSUM_W{1'b0}};
+    // ---- Systolic array ----
     wire [COLS*2*PSUM_W-1:0] psum_bot;
+    wire [COLS*2-1:0]        valid_v_bot;
+
+    // Top-row valid: always 1 for first pass (psum_top=0 is "always valid")
+    wire [COLS*2-1:0] valid_v_top = {COLS*2{1'b1}};
+    // Left-edge horizontal valid: IFM FIFO rd_en (data being read is valid)
+    wire [ROWS-1:0]   valid_h_left = ifm_fifo_rd_en;
 
     systolic_array_32x32 #(.ROWS(ROWS), .COLS(COLS)) u_array (
         .clk(clk), .rst(rst),
         .w_load(ctrl_w_load), .w_col(ctrl_w_col),
-        .w_row_data(wgt_fifo_data_out),
-        .ifm_in_flat(ifm_fifo_data_out),
-        .psum_top_flat(psum_top_init),
-        .psum_bot_flat(psum_bot)
+        .w_row_data(wgt_fifo_rd_data),
+        .ifm_in_flat(ifm_fifo_rd_data),
+        .valid_h_left(valid_h_left),
+        .psum_top_flat({COLS*2*PSUM_W{1'b0}}),
+        .valid_v_top(valid_v_top),
+        .psum_bot_flat(psum_bot),
+        .valid_v_bot(valid_v_bot)
     );
 
-    // ================================================================
-    // PSUM: array output → 32 x 48-bit FIFOs → RAM
-    // ================================================================
-    // Each column's output is valid at a different time due to horizontal skew.
-    // The FIFO absorbs this: write whenever the column produces valid data.
-    // Col c first valid output: (ROWS*5) + c*4 cycles into COMPUTE phase
-    // ROWS*5 = 160 (vertical pipeline), then +4 per column (horizontal pipeline)
-    reg  [8:0] psum_base_timer;
-    reg  [5:0] psum_col_active;
-    always @(posedge clk) begin
-        if (rst) begin
-            psum_base_timer <= 9'd0;
-            psum_col_active <= 6'd0;
-        end else if (compute_active) begin
-            if (psum_base_timer >= ROWS * 5) begin
-                if (psum_col_active < 6'd32)
-                    psum_col_active <= psum_col_active + 6'd1;
-            end else begin
-                psum_base_timer <= psum_base_timer + 9'd1;
-            end
-        end else begin
-            psum_base_timer <= 9'd0;
-            psum_col_active <= 6'd0;
-        end
-    end
-
-    // Drain address (declared early for mux use)
-    reg [PSUM_RAM_AW-1:0] psum_wr_addr;
-    reg                    psum_drain;
-
-    // PSUM FIFO per column
-    wire [COLS*PSUM_W*2-1:0] psum_fifo_dout_flat;
-    wire [31:0] psum_fifo_wr_en;        // one-hot per column
-    wire [31:0] psum_fifo_empty, psum_fifo_full;
-
+    // ---- PSUM FIFOs (32 × 48-bit) ----
+    // Write enable: column c produces valid psuma output
+    wire [31:0] psum_fifo_wr_en;
     generate
         for (r = 0; r < COLS; r = r + 1) begin : psum_fifo_gen
-            assign psum_fifo_wr_en[r] = (psum_col_active > r) && compute_active;
+            assign psum_fifo_wr_en[r] = valid_v_bot[2*r];  // psuma valid for column r
 
             systolic_fifo #(.WIDTH(PSUM_W*2), .DEPTH(PSUM_FIFO_DEPTH), .AW(PSUM_FIFO_AW))
-            u_psum_fifo (
-                .clk(clk), .rst(rst),
-                .wr_en(psum_fifo_wr_en[r]),
-                .rd_en(psum_ram_wr_en && (psum_ram_wr_addr == r[5:0])),
+            u_psum_fifo (.clk(clk), .rst(rst),
+                .wr_en(psum_fifo_wr_en[r]), .rd_en(psum_fifo_rd_en[r]),
                 .data_in(psum_bot[(r*2+2)*PSUM_W-1 : r*2*PSUM_W]),
-                .data_out(psum_fifo_dout_flat[(r+1)*PSUM_W*2-1 : r*PSUM_W*2]),
-                .empty(psum_fifo_empty[r]),
-                .full(psum_fifo_full[r])
-            );
+                .data_out(psum_fifo_rd_data[(r+1)*PSUM_W*2-1 : r*PSUM_W*2]),
+                .empty(psum_fifo_empty[r]), .full());
         end
     endgenerate
-
-    // Mux: 32-to-1 from FIFO outputs to psum_ram_wr_data
-    // Use generate to create per-address decoder (V-2001 safe)
-    wire [PSUM_W*2-1:0] psum_fifo_slice [0:31];
-    generate
-        for (r = 0; r < 32; r = r + 1) begin : psum_dout_slice
-            assign psum_fifo_slice[r] = psum_fifo_dout_flat[(r+1)*PSUM_W*2-1 : r*PSUM_W*2];
-        end
-    endgenerate
-    reg [PSUM_W*2-1:0] psum_wr_data_mux;
-    always @(*) begin
-        case (psum_wr_addr)
-            5'd0:  psum_wr_data_mux = psum_fifo_slice[0];
-            5'd1:  psum_wr_data_mux = psum_fifo_slice[1];
-            5'd2:  psum_wr_data_mux = psum_fifo_slice[2];
-            5'd3:  psum_wr_data_mux = psum_fifo_slice[3];
-            5'd4:  psum_wr_data_mux = psum_fifo_slice[4];
-            5'd5:  psum_wr_data_mux = psum_fifo_slice[5];
-            5'd6:  psum_wr_data_mux = psum_fifo_slice[6];
-            5'd7:  psum_wr_data_mux = psum_fifo_slice[7];
-            5'd8:  psum_wr_data_mux = psum_fifo_slice[8];
-            5'd9:  psum_wr_data_mux = psum_fifo_slice[9];
-            5'd10: psum_wr_data_mux = psum_fifo_slice[10];
-            5'd11: psum_wr_data_mux = psum_fifo_slice[11];
-            5'd12: psum_wr_data_mux = psum_fifo_slice[12];
-            5'd13: psum_wr_data_mux = psum_fifo_slice[13];
-            5'd14: psum_wr_data_mux = psum_fifo_slice[14];
-            5'd15: psum_wr_data_mux = psum_fifo_slice[15];
-            5'd16: psum_wr_data_mux = psum_fifo_slice[16];
-            5'd17: psum_wr_data_mux = psum_fifo_slice[17];
-            5'd18: psum_wr_data_mux = psum_fifo_slice[18];
-            5'd19: psum_wr_data_mux = psum_fifo_slice[19];
-            5'd20: psum_wr_data_mux = psum_fifo_slice[20];
-            5'd21: psum_wr_data_mux = psum_fifo_slice[21];
-            5'd22: psum_wr_data_mux = psum_fifo_slice[22];
-            5'd23: psum_wr_data_mux = psum_fifo_slice[23];
-            5'd24: psum_wr_data_mux = psum_fifo_slice[24];
-            5'd25: psum_wr_data_mux = psum_fifo_slice[25];
-            5'd26: psum_wr_data_mux = psum_fifo_slice[26];
-            5'd27: psum_wr_data_mux = psum_fifo_slice[27];
-            5'd28: psum_wr_data_mux = psum_fifo_slice[28];
-            5'd29: psum_wr_data_mux = psum_fifo_slice[29];
-            5'd30: psum_wr_data_mux = psum_fifo_slice[30];
-            5'd31: psum_wr_data_mux = psum_fifo_slice[31];
-        endcase
-    end
-    assign psum_ram_wr_data = psum_wr_data_mux;
-
-    // ---- PSUM RAM read (initial psum values) ----
-    // For multi-tile accumulation: read previous psum from RAM
-    assign psum_ram_rd_en   = 1'b0;  // disabled for now (single-tile mode)
-    assign psum_ram_rd_addr = {PSUM_RAM_AW{1'b0}};
-
-    // ---- PSUM RAM write (after compute, drain FIFOs) ----
-    always @(posedge clk) begin
-        if (rst) begin
-            psum_wr_addr <= {PSUM_RAM_AW{1'b0}};
-            psum_drain   <= 1'b0;
-        end else if (psum_drain) begin
-            if (psum_wr_addr < 6'd32)
-                psum_wr_addr <= psum_wr_addr + 1'b1;
-            else
-                psum_drain <= 1'b0;
-        end else if (!compute_active && done) begin
-            psum_drain <= 1'b1;
-            psum_wr_addr <= {PSUM_RAM_AW{1'b0}};
-        end
-    end
-    assign psum_ram_wr_en   = psum_drain;
-    assign psum_ram_wr_addr = psum_wr_addr;
-
 endmodule
