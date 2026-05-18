@@ -121,13 +121,17 @@ module tb_systolic_top;
                 if (check_me_d) begin
                     if (lo !== exp_lo) begin
                         $display("[FAIL] col%0d pix%0d psuma=%0d exp=%0d", c, pix_d, lo, exp_lo);
+                        fail = fail + 1;
                     end else begin
-                        $display("[ OK ] col%0d pix%0d psuma=%0d", c, pix_d, lo);
+                        if (c == 0) $display("[ OK ] col%0d pix%0d psuma=%0d exp=%0d", c, pix_d, lo, exp_lo);
+                        pass = pass + 1;
                     end
                     if (hi !== exp_hi) begin
                         $display("[FAIL] col%0d pix%0d psumb=%0d exp=%0d", c, pix_d, hi, exp_hi);
+                        fail = fail + 1;
                     end else begin
-                        $display("[ OK ] col%0d pix%0d psumb=%0d", c, pix_d, hi);
+                        if (c == 0) $display("[ OK ] col%0d pix%0d psumb=%0d exp=%0d", c, pix_d, hi, exp_hi);
+                        pass = pass + 1;
                     end
                 end
             end
