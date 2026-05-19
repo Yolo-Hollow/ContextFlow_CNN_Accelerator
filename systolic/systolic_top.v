@@ -18,6 +18,12 @@ module systolic_top #(
     input  [ROWS*IFM_W-1:0]     ifm_fifo_wr_data,
     output [31:0]               ifm_fifo_full,
 
+    // ---- Bias buffer write port (64 entries × 24-bit, loaded once per layer) ----
+    input  [5:0]                bias_wr_addr,
+    input  [PSUM_W-1:0]         bias_wr_data,
+    input                       bias_wr_en,
+    input                       is_first_pass,  // 1: use bias as psum_top; 0: use 0
+
     // ---- Weight FIFO write ports (fill externally) ----
     input  [31:0]               wgt_fifo_wr_en,
     input  [ROWS*WEIGHT_W*2-1:0] wgt_fifo_wr_data,
@@ -89,11 +95,27 @@ module systolic_top #(
         end
     endgenerate
 
+    // ---- Bias buffer (64 × 24-bit, 1 entry per OFM channel) ----
+    reg [PSUM_W-1:0] bias_buf [0:63];
+    always @(posedge clk) begin
+        if (bias_wr_en) bias_buf[bias_wr_addr] <= bias_wr_data;
+    end
+
+    // ---- PSUM top: bias (first pass) or 0 (subsequent passes) ----
+    wire [COLS*2*PSUM_W-1:0] psum_top_init;
+    genvar i;
+    generate
+        for (i = 0; i < COLS*2; i = i + 1) begin : bias_mux
+            assign psum_top_init[(i+1)*PSUM_W-1 : i*PSUM_W] =
+                is_first_pass ? bias_buf[i] : {PSUM_W{1'b0}};
+        end
+    endgenerate
+
     // ---- Systolic array ----
     wire [COLS*2*PSUM_W-1:0] psum_bot;
     wire [COLS*2-1:0]        valid_v_bot;
 
-    // Top-row valid: always 1 for first pass (psum_top=0 is "always valid")
+    // Top-row valid: always 1 (bias or partial sum are always valid)
     wire [COLS*2-1:0] valid_v_top = {COLS*2{1'b1}};
     // Left-edge horizontal valid: IFM FIFO rd_en (data being read is valid)
     wire [ROWS-1:0]   valid_h_left = ifm_fifo_rd_en;
@@ -109,7 +131,7 @@ module systolic_top #(
         .w_row_data(wgt_fifo_rd_data),
         .ifm_in_flat(ifm_fifo_rd_data),
         .valid_h_left(valid_h_left),
-        .psum_top_flat({COLS*2*PSUM_W{1'b0}}),
+        .psum_top_flat(psum_top_init),
         .valid_v_top(valid_v_top),
         .psum_bot_flat(psum_bot),
         .valid_v_bot(valid_v_bot)

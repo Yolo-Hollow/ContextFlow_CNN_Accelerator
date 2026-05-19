@@ -18,11 +18,15 @@ module tb_systolic_top;
     wire [COLS*PSUM_W*2-1:0]  psum_rd_data;
     wire [31:0]               psum_empty;
 
+    reg [5:0] bias_addr; reg [PSUM_W-1:0] bias_data; reg bias_en, is_first;
+
     systolic_top #(.ROWS(ROWS),.COLS(COLS), .IFM_FIFO_DEPTH(IFM_D), .IFM_FIFO_AW(IFM_AW)) u_top (
         .clk(clk),.rst(rst),.start(start),.done(done),
         .ifm_fifo_wr_en(ifm_wr_en),.ifm_fifo_wr_data(ifm_wr_data),.ifm_fifo_full(ifm_full),
         .wgt_fifo_wr_en(wgt_wr_en),.wgt_fifo_wr_data(wgt_wr_data),.wgt_fifo_full(wgt_full),
-        .psum_fifo_rd_en(psum_rd_en),.psum_fifo_rd_data(psum_rd_data),.psum_fifo_empty(psum_empty)
+        .psum_fifo_rd_en(psum_rd_en),.psum_fifo_rd_data(psum_rd_data),.psum_fifo_empty(psum_empty),
+        .bias_wr_addr(bias_addr),.bias_wr_data(bias_data),.bias_wr_en(bias_en),
+        .is_first_pass(is_first)
     );
 
     always #5 clk = ~clk;
@@ -36,9 +40,17 @@ module tb_systolic_top;
     initial begin
         clk=0; rst=1; start=0; pass=0; fail=0;
         ifm_wr_en=0; ifm_wr_data=0; wgt_wr_en=0; wgt_wr_data=0; psum_rd_en=0;
+        bias_en=0; bias_addr=0; bias_data=0; is_first=1;  // bias=0, first pass
         col_rd=0;
 
         repeat(3) @(negedge clk); rst=0; repeat(2) @(negedge clk);
+
+        // Init bias buffer
+        bias_en=1;
+        for (ii=0; ii<64; ii=ii+1) begin
+            bias_addr=ii[5:0]; bias_data=100; @(negedge clk);
+        end
+        bias_en=0;
 
         // ---- 1: Fill Weight FIFOs ----
         $display("=== 1: Fill Weight FIFOs ===");
@@ -108,8 +120,9 @@ module tb_systolic_top;
 
             // First FIFO entry is garbage (timing artifact), skip it.
             // pix_d=2 → pixel 0, pix_d=3 → pixel 1, ...
-            wire [PSUM_W-1:0] exp_lo = (pix_d >= 2) ? (pix_d - 1) * 32 * (c + 1) : 0;
-            wire [PSUM_W-1:0] exp_hi = (pix_d >= 2) ? (pix_d - 1) * 528 : 0;
+            // pix_d=1: garbage entry (bias only), pix_d>=2: valid pixels + bias
+            wire [PSUM_W-1:0] exp_lo = (pix_d >= 2) ? (pix_d - 1) * 32 * (c + 1) + 100 : 100;
+            wire [PSUM_W-1:0] exp_hi = (pix_d >= 2) ? (pix_d - 1) * 528 + 100 : 100;
 
             reg check_me, check_me_d;
             always @(posedge clk) begin
