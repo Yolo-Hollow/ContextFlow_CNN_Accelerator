@@ -22,7 +22,9 @@ module systolic_top #(
     input  [5:0]                bias_wr_addr,
     input  [PSUM_W-1:0]         bias_wr_data,
     input                       bias_wr_en,
-    input                       is_first_pass,  // 1: use bias as psum_top; 0: use 0
+    input                       is_first_pass,   // 1: bias → psum_top; 0: external or 0
+    input  [COLS*2*PSUM_W-1:0]  psum_top_ext,    // external psum_top (multi-pass feedback)
+    input                       use_ext_psum,     // 1: use psum_top_ext; 0: use internal
 
     // ---- Weight FIFO write ports (fill externally) ----
     input  [31:0]               wgt_fifo_wr_en,
@@ -101,15 +103,16 @@ module systolic_top #(
         if (bias_wr_en) bias_buf[bias_wr_addr] <= bias_wr_data;
     end
 
-    // ---- PSUM top: bias (first pass) or 0 (subsequent passes) ----
-    wire [COLS*2*PSUM_W-1:0] psum_top_init;
+    // ---- PSUM top: bias (first pass), external (multi-pass), or 0 ----
+    wire [COLS*2*PSUM_W-1:0] psum_top_int;
     genvar i;
     generate
         for (i = 0; i < COLS*2; i = i + 1) begin : bias_mux
-            assign psum_top_init[(i+1)*PSUM_W-1 : i*PSUM_W] =
+            assign psum_top_int[(i+1)*PSUM_W-1 : i*PSUM_W] =
                 is_first_pass ? bias_buf[i] : {PSUM_W{1'b0}};
         end
     endgenerate
+    wire [COLS*2*PSUM_W-1:0] psum_top_init = use_ext_psum ? psum_top_ext : psum_top_int;
 
     // ---- Systolic array ----
     wire [COLS*2*PSUM_W-1:0] psum_bot;

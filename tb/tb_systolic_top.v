@@ -18,7 +18,8 @@ module tb_systolic_top;
     wire [COLS*PSUM_W*2-1:0]  psum_rd_data;
     wire [31:0]               psum_empty;
 
-    reg [5:0] bias_addr; reg [PSUM_W-1:0] bias_data; reg bias_en, is_first;
+    reg [5:0] bias_addr; reg [PSUM_W-1:0] bias_data; reg bias_en, is_first, use_ext;
+    reg [COLS*2*PSUM_W-1:0] psum_top_ext;
 
     systolic_top #(.ROWS(ROWS),.COLS(COLS), .IFM_FIFO_DEPTH(IFM_D), .IFM_FIFO_AW(IFM_AW)) u_top (
         .clk(clk),.rst(rst),.start(start),.done(done),
@@ -26,7 +27,8 @@ module tb_systolic_top;
         .wgt_fifo_wr_en(wgt_wr_en),.wgt_fifo_wr_data(wgt_wr_data),.wgt_fifo_full(wgt_full),
         .psum_fifo_rd_en(psum_rd_en),.psum_fifo_rd_data(psum_rd_data),.psum_fifo_empty(psum_empty),
         .bias_wr_addr(bias_addr),.bias_wr_data(bias_data),.bias_wr_en(bias_en),
-        .is_first_pass(is_first)
+        .is_first_pass(is_first),
+        .psum_top_ext(psum_top_ext),.use_ext_psum(use_ext)
     );
 
     always #5 clk = ~clk;
@@ -40,7 +42,7 @@ module tb_systolic_top;
     initial begin
         clk=0; rst=1; start=0; pass=0; fail=0;
         ifm_wr_en=0; ifm_wr_data=0; wgt_wr_en=0; wgt_wr_data=0; psum_rd_en=0;
-        bias_en=0; bias_addr=0; bias_data=0; is_first=1;  // bias=0, first pass
+        bias_en=0; bias_addr=0; bias_data=0; is_first=1; use_ext=0; psum_top_ext=0;
         col_rd=0;
 
         repeat(3) @(negedge clk); rst=0; repeat(2) @(negedge clk);
@@ -97,7 +99,45 @@ module tb_systolic_top;
 
         // Let checker finish
         repeat (3) @(negedge clk);
-        $display("=== Result: %0d pass, %0d fail ===", pass, fail);
+        // ---- 7: Clean test: ext psum_top=500, IFM=1, is_first=0 ----
+        // Reset and re-init
+        $display("=== 7: ext psum_top=500 (fresh) ===");
+        rst=1; repeat(3) @(negedge clk); rst=0; repeat(2) @(negedge clk);
+
+        // Fill WGT, IFM, bias=0
+        for (cc=0; cc<32; cc=cc+1) begin
+            wtmp=0;
+            for (rr=0; rr<32; rr=rr+1) begin w0b=cc+1; w1b=rr+1; wtmp = wtmp | ({w1b,w0b} << (rr*16)); end
+            wgt_wr_data=wtmp; wgt_wr_en={32{1'b1}}; @(negedge clk);
+        end
+        wgt_wr_en=0;
+
+        bias_en=1; bias_data=0;
+        for (ii=0; ii<64; ii=ii+1) begin bias_addr=ii[5:0]; @(negedge clk); end
+        bias_en=0;
+
+        ifm_wr_data = {ROWS{8'd1}}; ifm_wr_en={32{1'b1}};
+        for (ii=0; ii<64; ii=ii+1) @(negedge clk);
+        ifm_wr_en=0;
+
+        // Set ext=500, is_first=0, use_ext=1
+        psum_top_ext = {COLS*2{24'd500}};
+        is_first=0; use_ext=1;
+
+        @(negedge clk); start=1; @(negedge clk); start=0;
+        repeat(350) @(negedge clk);
+
+        // Read pixel 0 (skip 1 garbage)
+        psum_rd_en={32{1'b1}}; @(negedge clk); psum_rd_en=0; @(negedge clk);
+        for (cc=0; cc<32; cc=cc+1) begin
+            psum_rd_en=(1'b1<<cc); @(negedge clk); psum_rd_en=0; @(negedge clk);
+        end
+        $display("  col0: lo=%0d exp=532  hi=%0d exp=1028",
+                 psum_rd_data[PSUM_W-1:0], psum_rd_data[PSUM_W*2-1:PSUM_W]);
+        if(psum_rd_data[PSUM_W-1:0] !== 532) begin $display("[FAIL] ext-a"); fail=fail+1; end else pass=pass+1;
+        if(psum_rd_data[PSUM_W*2-1:PSUM_W] !== 1028) begin $display("[FAIL] ext-b"); fail=fail+1; end else pass=pass+1;
+
+        $display("=== Final: %0d pass, %0d fail ===", pass, fail);
         $finish;
     end
 
