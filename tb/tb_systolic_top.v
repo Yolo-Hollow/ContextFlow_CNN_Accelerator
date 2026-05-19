@@ -132,10 +132,14 @@ module tb_systolic_top;
         for (cc=0; cc<32; cc=cc+1) begin
             psum_rd_en=(1'b1<<cc); @(negedge clk); psum_rd_en=0; @(negedge clk);
         end
-        $display("  col0: lo=%0d exp=532  hi=%0d exp=1028",
-                 psum_rd_data[PSUM_W-1:0], psum_rd_data[PSUM_W*2-1:PSUM_W]);
-        if(psum_rd_data[PSUM_W-1:0] !== 532) begin $display("[FAIL] ext-a"); fail=fail+1; end else pass=pass+1;
-        if(psum_rd_data[PSUM_W*2-1:PSUM_W] !== 1028) begin $display("[FAIL] ext-b"); fail=fail+1; end else pass=pass+1;
+        for (cc=0; cc<32; cc=cc+1) begin
+            if(psum_rd_data[cc*PSUM_W*2 +: PSUM_W] !== 32*(cc+1)+500) begin
+                $display("[FAIL] ext col%0d a", cc); fail=fail+1;
+            end else pass=pass+1;
+            if(psum_rd_data[cc*PSUM_W*2+PSUM_W +: PSUM_W] !== 528+500) begin
+                $display("[FAIL] ext col%0d b", cc); fail=fail+1;
+            end else pass=pass+1;
+        end
 
         $display("=== Final: %0d pass, %0d fail ===", pass, fail);
         $finish;
