@@ -1,47 +1,57 @@
 `timescale 1ns / 1ps
-// 5-bank × 3-line streaming line buffer for 3×3 convolution
-// DMA writes 5 banks simultaneously at same x position (different channels)
-// Window reads 5 banks × 3 lines each = 15 values per read
+// 5-bank x 3-line line buffer for 3x3 convolution
+// 3 BRAM copies per line for 3 concurrent read ports (kx=0,1,2 → fx)
+// DMA writes all 3 copies simultaneously
 module line_buffer_5bank #(
-    parameter FM_W = 416,      // max feature map width
-    parameter AW   = 9         // clog2(FM_W)
+    parameter FM_W = 416, AW = 9
 ) (
     input  clk, rst,
-    // DMA write interface (40-bit: 5 banks × 8-bit per cycle)
-    input  [4:0]  bank_wr_en,        // per-bank write enable
-    input  [AW-1:0] wr_x,             // x position (column address)
-    input  [7:0]  wr_data [0:4],     // data per bank (5 × 8-bit)
-    input         line_advance,       // pulse: advance to next row (wr_ptr++)
-    // Window read interface (5 banks × 24-bit = 3 lines × 8-bit per bank)
-    input  [AW-1:0] rd_x,             // x position to read
-    output [7:0] rd_data [0:4][0:2]  // [bank][line] = 5×3 = 15 values
+    input  [4:0]      bank_wr_en,
+    input  [AW-1:0]   wr_x,
+    input  [7:0]      wr_data [0:4],
+    input             line_advance,
+    input  [AW:0]     wr_fy,              // IFM row being written
+    // 3 read ports for 3 kernel columns
+    input  [AW-1:0]   rd_x0, rd_x1, rd_x2,
+    output [7:0]      rd_data [0:4][0:2][0:2],  // [bank][line][kx]
+    output [AW:0]     line_fy_out [0:2]          // physical line → IFM row map
 );
-    // Per-bank: 3 lines × BRAM (512×8 or FM_W×8)
-    // wr_ptr: which physical line gets written by DMA
-    reg [1:0] wr_ptr;  // 0,1,2 rotating
+    reg [1:0]  wr_ptr;
+    reg [AW:0] line_fy [0:2];   // line_fy[phys_line] = IFM row stored there
+    reg [AW:0] prev_fy;          // previous wr_fy, to detect change
 
     always @(posedge clk) begin
-        if (rst)           wr_ptr <= 2'd0;
-        else if (line_advance) wr_ptr <= (wr_ptr + 1) % 3;
+        if (rst) begin
+            wr_ptr <= 2'd0; prev_fy <= -1;
+            line_fy[0] <= -1; line_fy[1] <= -1; line_fy[2] <= -1;
+        end else begin
+            // Update line_fy every cycle: current line has wr_fy
+            line_fy[wr_ptr] <= wr_fy;
+            if (line_advance)
+                wr_ptr <= (wr_ptr + 1) % 3;
+        end
     end
+
+    assign line_fy_out[0] = line_fy[0];
+    assign line_fy_out[1] = line_fy[1];
+    assign line_fy_out[2] = line_fy[2];
 
     genvar b, l;
     generate
         for (b = 0; b < 5; b = b + 1) begin : bank
             for (l = 0; l < 3; l = l + 1) begin : line
-                // Simple reg-based line buffer (BRAM18 in real implementation)
-                reg [7:0] line_mem [0:FM_W-1];
-                integer i;
-
-                // Write: only when this line is the active write target
-                wire this_line_wr = (wr_ptr == l[1:0]);
-                always @(posedge clk) begin
-                    if (bank_wr_en[b] && this_line_wr)
-                        line_mem[wr_x] <= wr_data[b];
+                reg [7:0] m0 [0:FM_W-1];
+                reg [7:0] m1 [0:FM_W-1];
+                reg [7:0] m2 [0:FM_W-1];
+                wire we = bank_wr_en[b] && (wr_ptr == l[1:0]);
+                always @(posedge clk) if (we) begin
+                    m0[wr_x] <= wr_data[b];
+                    m1[wr_x] <= wr_data[b];
+                    m2[wr_x] <= wr_data[b];
                 end
-
-                // Read: combinational (BRAM read in real implementation)
-                assign rd_data[b][l] = line_mem[rd_x];
+                assign rd_data[b][l][0] = m0[rd_x0];
+                assign rd_data[b][l][1] = m1[rd_x1];
+                assign rd_data[b][l][2] = m2[rd_x2];
             end
         end
     endgenerate
