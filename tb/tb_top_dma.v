@@ -73,26 +73,62 @@ module tb_top_dma;
         end
         dma_bank_wr_en=0;
 
-        // ---- Start compute + iterate windows ----
+        // ---- Start compute ----
         $display("=== Start compute ===");
         @(negedge clk); start=1; @(negedge clk); start=0;
-        repeat(5) @(negedge clk);  // let weight load pipeline settle
 
-        // Slide window across 3×3 output (valid: oy=0..2, ox=0..2)
-        // Manually: oy=0, ox=0,1,2 → oy=1, ox=0,1,2 → oy=2, ox=0,1,2
-        for (int py=0; py<3; py=py+1) begin
-            for (int px=0; px<3; px=px+1) begin
-                oy=py[8:0]; ox=px[8:0];
-                @(negedge clk);
-            end
+        // Wait for weight load (32 cycles) + compute_active start
+        // Then IFM stagger begins: row 0 reads at compute_active posedge
+        // Window positions must arrive during compute_active
+        repeat (60) @(negedge clk);  // wait for weight load + pipeline init
+        $display("  compute_active=%0d", u_top.done);
+
+        // Slide window for oy=0 only (only 3 rows in line buffer)
+        // Probe window extractor output BEFORE feeding window positions
+        $display("  we_ifm_data[7:0]=%0d we_valid=%0d", u_top.we_ifm_data[7:0], u_top.we_ifm_valid);
+        $display("  ifm_empty[0]=%0d ifm_full[0]=%0d", u_top.ifm_fifo_empty[0], ifm_full[0]);
+
+        for (int px=0; px<3; px=px+1) begin
+            oy=0; ox=px[8:0];
+            @(negedge clk);
         end
 
-        // Wait for pipeline drain
-        repeat (200) @(negedge clk);
+        // Wait for pipeline to process and drain
+        repeat (400) @(negedge clk);
 
         // ---- Verify PSUM FIFOs ----
-        $display("=== Drain PSUM FIFOs ===");
-        // TODO: read PSUM entries and verify
+        // Only oy=0 has valid data (fy=0,1,2 all in line buffer).
+        // 3 pixels: (0,0),(0,1),(0,2), each 1 IFM FIFO entry.
+        // Drain garbage entries from pipeline fill, then verify 3 pixels.
+        $display("=== Drain & Verify PSUM FIFOs ===");
+
+        // Skip pipeline fill entries (~220, data arrives ~220 cycles in)
+        for (i=0; i<220; i=i+1) begin psum_rd_en={32{1'b1}}; @(negedge clk); end
+        psum_rd_en=0; @(negedge clk);
+
+        // Pixel (0,0): IFM sum = 0+1+2+10+11+12+20+21+22 = 99
+        // psuma[c]=(c+1)*99, psumb[c]=1*0+2*1+3*2+4*10+5*11+6*12+7*20+8*21+9*22=681
+        $display("=== Pixel (0,0) ===");
+        psum_rd_en=5'b00001; @(negedge clk); psum_rd_en=0; @(negedge clk);
+        $display("  col0: a=%0d exp=99  b=%0d exp=681", psum_rd_data[23:0], psum_rd_data[47:24]);
+        if(psum_rd_data[23:0]  !== 99)  begin $display("[FAIL] p0a"); fail=fail+1; end else pass=pass+1;
+        if(psum_rd_data[47:24] !== 681) begin $display("[FAIL] p0b"); fail=fail+1; end else pass=pass+1;
+
+        // Pixel (0,1): IFM sum = 1+2+3+11+12+13+21+22+23 = 108
+        // psumb = 1*1+2*2+3*3+4*11+5*12+6*13+7*21+8*22+9*23 = 726
+        $display("=== Pixel (0,1) ===");
+        psum_rd_en=5'b00001; @(negedge clk); psum_rd_en=0; @(negedge clk);
+        $display("  col0: a=%0d exp=108  b=%0d exp=726", psum_rd_data[23:0], psum_rd_data[47:24]);
+        if(psum_rd_data[23:0]  !== 108) begin $display("[FAIL] p1a"); fail=fail+1; end else pass=pass+1;
+        if(psum_rd_data[47:24] !== 726) begin $display("[FAIL] p1b"); fail=fail+1; end else pass=pass+1;
+
+        // Pixel (0,2): IFM sum = 2+3+4+12+13+14+22+23+24 = 117
+        // psumb = 1*2+2*3+3*4+4*12+5*13+6*14+7*22+8*23+9*24 = 771
+        $display("=== Pixel (0,2) ===");
+        psum_rd_en=5'b00001; @(negedge clk); psum_rd_en=0; @(negedge clk);
+        $display("  col0: a=%0d exp=117  b=%0d exp=771", psum_rd_data[23:0], psum_rd_data[47:24]);
+        if(psum_rd_data[23:0]  !== 117) begin $display("[FAIL] p2a"); fail=fail+1; end else pass=pass+1;
+        if(psum_rd_data[47:24] !== 771) begin $display("[FAIL] p2b"); fail=fail+1; end else pass=pass+1;
 
         $display("=== %0d pass, %0d fail ===", pass, fail); $finish;
     end

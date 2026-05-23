@@ -80,7 +80,7 @@ module systolic_top #(
         .clk(clk), .rst(rst),
         .bank_wr_en(dma_bank_wr_en), .wr_x(dma_wr_x),
         .wr_data(dma_wr_data), .line_advance(dma_line_advance), .wr_fy(dma_wr_fy),
-        .rd_x0(ox - 9'd1), .rd_x1(ox), .rd_x2(ox + 9'd1),
+        .rd_x0(ox), .rd_x1(ox + 9'd1), .rd_x2(ox + 9'd2),
         .rd_data(lb_rd), .line_fy_out(line_fy)
     );
 
