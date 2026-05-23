@@ -1,52 +1,182 @@
-# Systolic Accelerator — 存储调度器设计
+# Systolic Accelerator — 设计与实现文档
 
-## 整体架构
+> 最后更新: 2026-05-24
 
-```
-  全局 IFM RAM (L2)          全局 WGT RAM (L2)          全局 PSUM RAM (L2)
-       │                           │                           ▲
-       ▼                           ▼                           │
-  ┌─────────┐               ┌─────────┐               ┌─────────┐
-  │IFM_FIFO │               │WGT_FIFO │               │PSUM_FIFO│
-  │  A | B  │               │  A | B  │               │  A | B  │
-  │ (乒乓)  │               │ (乒乓)  │               │ (乒乓)  │
-  └────┬────┘               └────┬────┘               └────┬────┘
-       │                         │                         │
-       ▼                         ▼                         │
-  ┌────────────────────────────────────────────────────┐   │
-  │              32×32 Systolic Array                  │   │
-  │  ┌──────┐   valid-based compute                   │───┘
-  │  │ ctrl │   IDLE → WEIGHT_LOAD → COMPUTE           │
-  │  └──────┘                                         │
-  └────────────────────────────────────────────────────┘
-```
+---
 
-## 分块策略
-
-### 行分块（IFM 通道方向）
+## 一、整体架构
 
 ```
-32 行 = 32 个 IFM 通道并行，超 32 通道分多轮:
-
-Pass 1: IFM[0..31]   + psum_top=0       → PSUM_A
-Pass 2: IFM[32..63]  + psum_top=PSUM_A  → PSUM_B
-Pass N: IFM[...]      + psum_top=交替    → 最终 PSUM
+DDR (AXI-Stream)
+  │
+  ▼
+Line Buffer (5 bank × 3 line × 3 read port)
+  │  每拍 DMA 写 5 bank × 8-bit
+  │  窗口提取器每拍读 45 值 → 选 32 值 → 256-bit
+  │
+  ▼
+IFM FIFO (32 × 8-bit, 深 256)
+  │  错开注入: Row r 延迟 r×5 拍
+  │
+  ▼
+┌──────────────────────────────────────────┐
+│        32×32 Systolic Array               │
+│  ┌──────┐  valid-based compute           │
+│  │ ctrl │  IDLE → WEIGHT_LOAD → COMPUTE   │
+│  └──────┘                                │
+│  psum_top ← bias_buf / ext / 0           │
+│  PE 内部: DSP48E2 (INT8×2) + valid 传播   │
+└──────────────┬───────────────────────────┘
+               │
+               ▼
+PSUM FIFO (32 × 48-bit, 深 256)
+  │  valid_v_bot → wr_en
+  │
+  ▼
+requant (乘 mult + 移 shift + zp + clamp)
+  │  2 拍流水线, INT8 输出
+  │
+  ▼
+LeakyReLU LUT (256×8-bit)
+  │  组合读
+  │
+  ▼
+DDR (AXI-Stream 写回)
 ```
 
-A 和 B 轮流做「部分和源」和「累加目标」。
-
-### 列分块（OFM 通道方向）
+### 数据流
 
 ```
-32 列 × 2 OFM/列 = 64 OFM 通道并行，超 64 通道分多轮:
-
-OFM[0..63]   完成 → PSUM → 后处理 → 全局 RAM
-OFM[64..127] 开始 → 换 WGT → IFM 重新遍历 → 复用 PSUM_A/B
+DDR → DMA(40-bit/拍) → Line Buffer(5bank×3line) → Window Extract → IFM FIFO(32路)
+  → Array(32×32) → PSUM FIFO(32路) → requant → LUT → DDR
 ```
 
 ---
 
-## 存储调度 FSM
+## 二、已完成模块
+
+| 模块 | 文件 | 测试 | 说明 |
+|------|------|------|------|
+| PE | `systolic_pe.v` | 78/78 | 双权重 DSP + valid 传播 (水平4拍/垂直5拍) |
+| 32×32 阵列 | `systolic_array_32x32.v` | 320/320 | valid 链 + 列并行权重加载 |
+| FIFO | `systolic_fifo.v` | 45/45 | 空满保护, 同时读写 |
+| 阵列控制 | `systolic_ctrl.v` | — | IDLE→WEIGHT_LOAD→COMPUTE |
+| 顶层 | `systolic_top.v` | 4160/4160 | FIFO+阵列+valid+偏置集成 |
+| requant | `requant.v` | 14/14 | 乘 mult + 移 shift + zp + clamp, 2拍流水线 |
+| LeakyReLU LUT | `leaky_lut.v` | 260/260 | 256×8-bit 分布式 RAM, 组合读 |
+| 偏置注入 | `bias_buf` in top | 4160/4160 | 64×24-bit bias buffer + psum_top mux |
+| 外部 psum_top | `psuma_top_ext` in top | 64/64 | 多轮累加注入 |
+| im2col 计数器 | `im2col_addr_gen.v` | 66/66 | 顺序像素计数 (用于预排好的 IFM) |
+| 行缓存 | `line_buffer_5bank.v` | 11/11 | 5 bank × 3 line × 3 读口, 环行覆盖 |
+| 窗口提取器 | `window_extract.v` | 11/11 | pass_base_k → row → (ch,ker) → 32 IFM 值 |
+
+### 全部测试汇总
+
+```
+PE          78/78    ✅
+阵列         320/320   ✅
+FIFO        45/45    ✅
+顶层(集成)   4160/4160 ✅
+requant     14/14    ✅
+LUT         260/260  ✅
+偏置注入     4160/4160 ✅ (含 ext psum_top 64/64)
+im2col      66/66    ✅
+行缓存+窗口   11/11    ✅
+───────────────────────
+Total       5114/5114 ✅
+```
+
+---
+
+## 三、行缓存 + 窗口提取器设计
+
+### 行缓存规格
+
+| 参数 | 值 |
+|------|-----|
+| Bank 数量 | 5 (每 Pass 最多 5 通道) |
+| 每 bank 行数 | 3 (3×3 核) |
+| 每行深度 | FM_W (最大 416) |
+| 读口数 | 3 (独立 x 地址, 对应 kx=0,1,2) |
+| 每读口位宽 | 120-bit (5 bank × 3 line × 8-bit) |
+| 三读口合计 | 45 值 = 360-bit |
+| 实现 | 每 line 3 BRAM 副本 → 45 BRAM18 总计 (XCK26 占 16%) |
+
+### 行缓存接口
+
+```verilog
+// DMA 写 (40-bit/拍)
+input  [4:0]  bank_wr_en,       // 5 bank 写使能
+input  [8:0]  wr_x,             // 列地址
+input  [7:0]  wr_data [0:4],   // 5 bank × 8-bit
+input  [9:0]  wr_fy,            // IFM 行号
+input         line_advance,     // 行切换脉冲
+
+// 窗口读 (360-bit/拍)
+input  [8:0]  rd_x0, rd_x1, rd_x2,  // kx=0,1,2 的列地址
+output [7:0]  rd_data [0:4][0:2][0:2], // [bank][line][kx]
+output [9:0]  line_fy_out [0:2]     // 物理行→IFM行号映射
+```
+
+### 窗口提取器接口
+
+```verilog
+input  [8:0]  oy, ox,            // 输出像素位置
+input  [10:0] pass_base_k,       // Pass 起始 kernel 索引
+input  [7:0]  lb_data [0:4][0:2][0:2], // 行缓存输出
+input  [9:0]  line_fy [0:2],     // 行号映射
+output [255:0] ifm_data,          // 32 IFM 值 → IFM FIFO
+output        ifm_valid
+```
+
+### 窗口提取逻辑
+
+```verilog
+for row = 0..31:
+    global_k = pass_base_k + row
+    ch       = global_k / 9
+    ker      = global_k % 9
+    ky       = ker / 3
+    kx       = ker % 3
+    bank     = ch % 5
+    fy       = oy*stride + ky - pad
+    fx       = ox*stride + kx - pad
+    line_idx = (line_fy[0]==fy)? 0 : (line_fy[1]==fy)? 1 : 2
+
+    if (in_bounds): value = lb_data[bank][line_idx][kx]
+    else:           value = 0  // padding
+```
+
+---
+
+## 四、Pass 分块策略
+
+### 行分块 (IFM 通道)
+
+```
+每 Pass: 3 全通道 (27行) + 部分通道 (5行) = 32 行
+3×3 核 = 9 kernel 位置/通道
+
+Pass 1 (base=0):  ch0×9 + ch1×9 + ch2×9 + ch3×5 = 32
+Pass 2 (base=32): ch3×4 + ch4×9 + ch5×9 + ch6×9 + ch7×1 = 32
+Pass 3 (base=64): ch7×8 + ch8×9 + ch9×9 + ch10×6 = 32
+
+每 Pass 消耗 32 kernel 位置 → base += 32
+DDR 每 Pass 重发: 5 通道 × FM_H × FM_W 字节
+```
+
+### 列分块 (OFM 通道)
+
+```
+32 列 × 2 OFM/列 = 64 OFM 通道并行
+
+OFM[0..63]   完成 → PSUM → requant → LUT → DDR
+OFM[64..127] 开始 → 换 WGT → IFM 重遍历 → PSUM 复用
+```
+
+---
+
+## 五、存储调度 FSM (待实现)
 
 ```
                           ┌─────────────┐
@@ -63,7 +193,7 @@ OFM[64..127] 开始 → 换 WGT → IFM 重新遍历 → 复用 PSUM_A/B
               ┌──────────────────────────────────────────┐
               │              LAUNCH_A                    │
               │  start → 阵列 WEIGHT_LOAD + COMPUTE      │
-              │  psum_top = 0 (第一轮)                   │
+              │  psum_top = bias (第一轮)                │
               │  → PSUM 写入 PSUM_FIFO_A                 │
               └────────┬─────────────┬───────────────────┘
                        │             │
@@ -71,185 +201,46 @@ OFM[64..127] 开始 → 换 WGT → IFM 重新遍历 → 复用 PSUM_A/B
           ▼                                       ▼
  ┌─────────────────────┐             ┌──────────────────────┐
  │  FILL_IFM_B+WGT_B   │             │   WAIT_COMPUTE_A     │
- │  (下一块 IFM/Weight) │             │ (监测 ifm_last_empty) │
  └──────────┬──────────┘             └────────────┬─────────┘
             │                                     │
             │ bank_B_ready + compute_A_done        │
             └──────────────┬──────────────────────┘
                            ▼
-              ┌──────────────────────────────────────────┐
-              │              LAUNCH_B                    │
-              │  start → 阵列 WEIGHT_LOAD + COMPUTE      │
-              │  psum_top = PSUM_FIFO_A 输出 (部分和)     │
-              │  → PSUM 写入 PSUM_FIFO_B                 │
-              └────────┬─────────────┬───────────────────┘
-                       │             │
-          ┌────────────┘             └────────────┐
-          ▼                                       ▼
- ┌─────────────────────┐             ┌──────────────────────┐
- │  FILL_IFM_A+WGT_A   │             │   WAIT_COMPUTE_B     │
- │  (下一块)            │             │                      │
- └──────────┬──────────┘             └────────────┬─────────┘
-            │                                     │
-            │ ready + compute_B_done               │
-            └──────────────┬──────────────────────┘
+                      LAUNCH_B (psum_top = PSUM_FIFO_A 输出)
+                           │
                            ▼
                       ┌─────────┐
-                      │ ifm_done?│── 否 ──► LAUNCH_A (循环)
+                      │ifm_done?│── 否 ──► LAUNCH_A (循环)
                       └────┬─────┘
-                           │ 是 (当前 OFM 块全部 IFM 通道完成)
+                           │ 是
                            ▼
-              ┌──────────────────────────────────────┐
-              │           DRAIN_PSUM                 │
-              │  最终 PSUM FIFO → 后处理 → 全局 RAM   │
-              └────────────┬─────────────────────────┘
-                           │
-                      ┌────┴─────┐
-                      │ ofm_done? │── 否 ──► 换 WGT, IFM 复位 → FILL_IFM_A+FILL_WGT_A
-                      └────┬─────┘
-                           │ 是 (整层推理完成)
-                           ▼
-                          IDLE
+                        DRAIN_PSUM → 后处理 → DDR
 ```
 
-### 关键控制点
-
-| 阶段 | IFM_FIFO_A | IFM_FIFO_B | WGT_FIFO_A | WGT_FIFO_B | PSUM_FIFO_A | PSUM_FIFO_B |
-|------|-----------|-----------|-----------|-----------|------------|------------|
-| LAUNCH_A | 读 (→阵列) | 空闲/填充 | 读 (→阵列) | 空闲/填充 | 写 (←阵列) | 空闲 |
-| LAUNCH_B | 空闲/填充 | 读 (→阵列) | 空闲/填充 | 读 (→阵列) | 读 (→psuma_top) | 写 (←阵列) |
-
-### IFM 边界检测
-
-```
-Row 31 的 IFM_FIFO 空 → ifm_last_empty 上升沿
-→ valid 随管道传播归零 → compute 自然结束
-→ 调度器收到完成信号, 可启动下一轮
-```
-
-### 参数化
-
-| 参数 | 值 | 说明 |
-|------|-----|------|
-| 行分块粒度 | 32 | 固定 (阵列行数) |
-| 列分块粒度 | 64 | = COLS × 2 (阵列 OFM 并行数) |
-| IFM FIFO 深度 | 等于 OFM 空间尺寸 | 如 8×8 输出 = 64 |
-| WGT FIFO 深度 | 32 | 一列 PE 的权重条数 |
-| PSUM FIFO 深度 | ≥ IFM FIFO 深度 | 容纳完整输出 |
 
 ---
 
-## im2col 地址生成器
+## 六、关键设计决策
 
-### 问题
-
-特征图 RAM 按逻辑坐标 `IFM[ch][y][x]` 存储，阵列需要 im2col 重排后的 32 路并行输入。必须有一个地址生成器把 `(pixel_y, pixel_x, kernel_row, channel)` 映射到 RAM 地址，并把读出的数据拼接成 IFM FIFO 写口格式。
-
-### 配置寄存器
-
-| 参数 | 位宽 | 说明 |
+| 决策 | 选择 | 原因 |
 |------|------|------|
-| `FM_H` | 9 | 输入特征图高度 |
-| `FM_W` | 9 | 输入特征图宽度 |
-| `FM_C` | 10 | 输入通道数 |
-| `K_H` | 2 | 卷积核高度 |
-| `K_W` | 2 | 卷积核宽度 |
-| `STRIDE` | 2 | 步长 |
-| `PAD` | 2 | 边缘填充 |
+| 阵列架构 | Weight-stationary 脉动阵列 | 权重复用, 减少 BRAM 读取 |
+| IFM 注入 | 5 bank 行缓存 + DDR 重发 | 不膨胀存储, 带宽充足 |
+| 行缓存读口 | 3 副本 (45 BRAM18) | 3×3 核需同时读 3 列 |
+| 窗口提取 | 组合逻辑 mux | 无延迟, 每拍 1 像素 |
+| 3×3 核映射 | 每通道 9 行, 3 通道/Pass + 部分 | 最大化阵列利用率 |
+| PSUM 写使能 | 阵列底部 valid 信号 | 无需魔法数字, 自动对齐 |
+| 量化 | post-PSUM requant | 中间轮 24-bit 精度保持 |
+| 激活 | LUT 查表 | 256 条目覆盖全部 INT8 值 |
+| 偏置 | psum_top mux (Pass 1) | 和部分和共用注入口 |
 
-### 输出像素遍历顺序
+### 与参考项目 (Angel-Eye) 的主要区别
 
-```
-OFM 尺寸: OFM_H = (FM_H + 2PAD - K_H) / STRIDE + 1
-          OFM_W = (FM_W + 2PAD - K_W) / STRIDE + 1
-
-for oy = 0..OFM_H-1:
-  for ox = 0..OFM_W-1:                         // 外层: 每个输出像素
-    for ky = 0..K_H-1:                          // 中内层: 核行
-      for kx = 0..K_W-1:                        // 内层: 核列
-        for ch = 0..FM_C-1:                     // 最内: 通道
-          fy = oy*STRIDE + ky - PAD
-          fx = ox*STRIDE + kx - PAD
-          if (fy < 0 || fy >= FM_H || fx < 0 || fx >= FM_W):
-            ifm_val = 0                         // padding: 零填充
-          else:
-            addr = ch * FM_H * FM_W + fy * FM_W + fx
-            读 RAM → 拼入 ifm_wr_data 对应位置
-```
-
-### 并行度映射
-
-每拍生成 32 个值，各自由 (ky, kx, ch) 决定，每 8 通道为一块：
-
-```
-k_group = row / 4           (0..3: ky*2+kx 的核位置, 4..7: 另一组通道)
-ch_base = (row % 4) * 8     (8 通道一组，分 4 组)
-ch      = ch_base + ch_sub  (ch_sub 0..7)
-
-if row < 32:
-  地址 = ch * FM_H * FM_W + fy * FM_W + fx
-else:
-  地址 = 0  (未用行, 输出 0)
-```
-
-### 地址生成器 FSM
-
-```
-                          ┌─────────────┐
-               start=1     │    IDLE     │
-              ────────────►│             │
-                           └──────┬──────┘
-                                  │
-                                  ▼
-                         ┌────────────────┐
-                         │    COMPUTE     │
-                         │  oy,ox=0       │
-                         │  ky,kx,ch=0    │
-                         └───────┬────────┘
-                                 │
-                    ┌────────────┴─────────────────┐
-                    │  生成 32 地址                  │
-                    │  发送 IFM RAM 读请求            │
-                    │  (可能需要多拍读, 视 RAM 位宽) │
-                    └────────────┬─────────────────┘
-                                 │ RAM 数据返回
-                                 ▼
-                    ┌────────────────────┐
-                    │  拼接 + 写入 IFM FIFO │
-                    │  ifm_wr_en[31:0]=1 │
-                    └────────┬───────────┘
-                             │
-                    ┌────────┴─────────┐
-                    │   ch += 8        │── ch < FM_C ──► 生成下批地址
-                    └────────┬─────────┘
-                             │ ch 达到 FM_C
-                    ┌────────┴─────────┐
-                    │ kx++, 或 ky++    │── kx<KW,ky<KH ──► 生成下批地址
-                    └────────┬─────────┘
-                             │ 核遍历完
-                    ┌────────┴─────────┐
-                    │ ox++, 或 oy++    │── ox<OFM_W, oy<OFM_H ──► 生成下批地址
-                    └────────┬─────────┘
-                             │ 全部输出像素完成
-                             ▼
-                            DONE
-```
-
-### 时序
-
-```
-每个输出像素需要 ceil(FM_C / 8) × K_H × K_W 个 IFM FIFO 写周期
-
-例: 8 通道 × 2×2 核 = 1 × 4 = 4 拍/像素
-    64 像素 → 256 拍
-
-IFM FIFO 深 64, 填满后暂停, 等阵列消费后继续填
-```
-
-### 零填充处理
-
-```
-fy < 0 || fy >= FM_H || fx < 0 || fx >= FM_W  → ifm_val = 0
-
-不读 RAM (节省带宽), 直接向 IFM FIFO 写 0
-```
+| 要点 | 参考项目 | 本设计 |
+|------|---------|--------|
+| 阵列架构 | 单引擎时分复用 | 32×32 脉动阵列 |
+| 计算并行度 | 8 IFM × 8 OFM | 32 IFM × 64 OFM |
+| PSUM 控制 | 魔法数字计时器 | valid 传播自定时 |
+| IFM 路径 | AXI-Stream 直连 | 行缓存 + 窗口提取器 |
+| 通道分块 | 无 (只用单尺度) | 5 bank 多 Pass |
+| 量化位置 | PE 内部 | PSUM FIFO 出口 |
