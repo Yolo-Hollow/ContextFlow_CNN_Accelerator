@@ -8,7 +8,8 @@ module systolic_ctrl #(
     output reg w_load,
     output reg [4:0] w_col,
     output reg compute_active,
-    output reg compute_start_pulse   // 1-cycle pulse when COMPUTE begins
+    output reg compute_start_pulse,   // 1-cycle pulse when COMPUTE begins
+    output reg pre_write              // 1 cycle before compute_active (FIFO pre-fill)
 );
     localparam IDLE        = 2'd0;
     localparam WEIGHT_LOAD = 2'd1;
@@ -56,5 +57,10 @@ module systolic_ctrl #(
     always @(posedge clk) begin
         if (rst) compute_start_pulse <= 1'b0;
         else     compute_start_pulse <= (state == COMPUTE) && !was_compute;
+    end
+    // Pre-write: 1 cycle before COMPUTE, compensates FIFO read latency
+    always @(posedge clk) begin
+        if (rst) pre_write <= 1'b0;
+        else     pre_write <= (state == WEIGHT_LOAD) && (w_col == COLS-1);
     end
 endmodule

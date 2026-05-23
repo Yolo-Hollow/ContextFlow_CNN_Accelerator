@@ -7,13 +7,19 @@ module systolic_top #(
     parameter IFM_W = 8, parameter WEIGHT_W = 8, parameter PSUM_W = 24,
     parameter IFM_FIFO_DEPTH = 256, parameter IFM_FIFO_AW = 8,
     parameter WGT_FIFO_DEPTH = 64,  parameter WGT_FIFO_AW = 6,
-    parameter PSUM_FIFO_DEPTH = 256, parameter PSUM_FIFO_AW = 8
+    parameter PSUM_FIFO_DEPTH = 256, parameter PSUM_FIFO_AW = 8,
+    parameter USE_DMA_IFM = 1   // 1: DMA line buffer, 0: manual IFM FIFO fill
 ) (
     input  clk, rst,
-    input  start,           // pulse: begin weight load → compute
-    output done,            // high during COMPUTE (informational)
+    input  start,
+    output done,
 
-    // ---- DMA / line buffer interface (replaces manual IFM FIFO fill) ----
+    // ---- Manual IFM FIFO fill (USE_DMA_IFM=0) ----
+    input  [31:0]               ifm_fifo_wr_en,
+    input  [ROWS*IFM_W-1:0]     ifm_fifo_wr_data,
+    output [31:0]               ifm_fifo_full_legacy,
+
+    // ---- DMA / line buffer interface (USE_DMA_IFM=1) ----
     input  [4:0]    dma_bank_wr_en,
     input  [8:0]    dma_wr_x,
     input  [9:0]    dma_wr_fy,
@@ -44,7 +50,7 @@ module systolic_top #(
     output [31:0]               psum_fifo_empty
 );
     // ---- Control ----
-    wire ctrl_w_load, ctrl_compute_start;
+    wire ctrl_w_load, ctrl_compute_start, ctrl_pre_write;
     wire [4:0] ctrl_w_col;
     wire compute_active;
 
@@ -52,7 +58,8 @@ module systolic_top #(
         .clk(clk), .rst(rst), .start(start),
         .w_load(ctrl_w_load), .w_col(ctrl_w_col),
         .compute_active(compute_active),
-        .compute_start_pulse(ctrl_compute_start)
+        .compute_start_pulse(ctrl_compute_start),
+        .pre_write(ctrl_pre_write)
     );
     assign done = compute_active;
 
@@ -90,7 +97,7 @@ module systolic_top #(
     window_extract #(.FM_W(416), .FM_H(416), .AW(9)) u_we (
         .stride(conv_stride), .pad(conv_pad), .oy(oy), .ox(ox),
         .pass_base_k(pass_base_k), .lb_data(lb_rd), .line_fy(line_fy),
-        .lb_valid(1'b1),
+        .lb_valid(compute_active || ctrl_pre_write),
         .ifm_data(we_ifm_data), .ifm_valid(we_ifm_valid)
     );
 
@@ -114,10 +121,12 @@ module systolic_top #(
 
             systolic_fifo #(.WIDTH(IFM_W), .DEPTH(IFM_FIFO_DEPTH), .AW(IFM_FIFO_AW))
             u_ifm_fifo (.clk(clk), .rst(rst),
-                .wr_en(we_ifm_valid), .rd_en(ifm_fifo_rd_en[r]),
-                .data_in(we_ifm_data[(r+1)*IFM_W-1 : r*IFM_W]),
+                .wr_en(USE_DMA_IFM ? we_ifm_valid : ifm_fifo_wr_en[r]),
+                .rd_en(ifm_fifo_rd_en[r]),
+                .data_in(USE_DMA_IFM ? we_ifm_data[(r+1)*IFM_W-1 : r*IFM_W]
+                                     : ifm_fifo_wr_data[(r+1)*IFM_W-1 : r*IFM_W]),
                 .data_out(ifm_fifo_rd_data[(r+1)*IFM_W-1 : r*IFM_W]),
-                .empty(ifm_fifo_empty[r]), .full(ifm_fifo_full[r]));
+                .empty(ifm_fifo_empty[r]), .full(ifm_full_int[r]));
         end
     endgenerate
 
@@ -137,6 +146,11 @@ module systolic_top #(
         end
     endgenerate
     wire [COLS*2*PSUM_W-1:0] psum_top_init = use_ext_psum ? psum_top_ext : psum_top_int;
+
+    // Route IFM full to correct port
+    wire [31:0] ifm_full_int;
+    assign ifm_fifo_full = USE_DMA_IFM ? ifm_full_int : 32'd0;
+    assign ifm_fifo_full_legacy = USE_DMA_IFM ? 32'd0 : ifm_full_int;
 
     // ---- Systolic array ----
     wire [COLS*2*PSUM_W-1:0] psum_bot;
