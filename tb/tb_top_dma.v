@@ -1,5 +1,4 @@
-// DMA streaming line buffer test — single pixel verification
-// 5x5 IFM ch0, 3x3 kernel, pad=0, stride=1
+// DMA streaming test — one pixel per compute pass, 3 passes for (0,0),(0,1),(0,2)
 `timescale 1ns / 1ps
 module tb_top_dma;
     localparam ROWS=32, COLS=32, IFM_W=8, WGT_W=8, PSUM_W=24;
@@ -31,80 +30,74 @@ module tb_top_dma;
     always #5 clk=~clk;
     integer pass,fail,i,rr,cc;
     reg [7:0] w0b,w1b; reg [511:0] wtmp;
+    integer px;  // which pixel index to test
+
+    // Run one pixel test
+    task test_pixel;
+        input [8:0] py, px_in;
+        input [PSUM_W-1:0] exp_a, exp_b;
+        begin
+            // Reset
+            rst=1; repeat(3)@(negedge clk); rst=0; repeat(2)@(negedge clk);
+
+            // Weights
+            for (cc=0; cc<32; cc=cc+1) begin
+                wtmp=0;
+                for (rr=0; rr<32; rr=rr+1) begin
+                    w0b=(rr<9)?(cc+1):0; w1b=(rr<9)?(rr+1):0;
+                    wtmp = wtmp | ({w1b,w0b} << (rr*16));
+                end
+                wgt_wr_data=wtmp; wgt_wr_en={32{1'b1}}; @(negedge clk);
+            end
+            wgt_wr_en=0;
+
+            // Bias=0
+            bias_en=1; bias_data=0;
+            for(i=0;i<64;i=i+1) begin bias_addr=i[5:0]; @(negedge clk); end
+            bias_en=0;
+
+            // DMA: 3 IFM lines
+            dma_bank_wr_en = 5'b11111;
+            for (int y=0; y<3; y=y+1) begin
+                dma_wr_fy = y;
+                for (int x=0; x<FM_W; x=x+1) begin
+                    dma_wr_x=x[8:0]; dma_wr_data[0]=y*10+x;
+                    dma_wr_data[1]=0; dma_wr_data[2]=0; dma_wr_data[3]=0; dma_wr_data[4]=0;
+                    @(negedge clk);
+                end
+                if (y<2) begin dma_line_advance=1; @(negedge clk); dma_line_advance=0; end
+            end
+            dma_bank_wr_en=0;
+
+            // Set window position
+            oy=py; ox=px_in;
+
+            // Start compute
+            @(negedge clk); start=1; @(negedge clk); start=0;
+            repeat(500) @(negedge clk);  // wait compute+drain
+
+            // Drain PSUM: skip pipe fill (~230)
+            for (i=0; i<230; i=i+1) begin psum_rd_en={32{1'b1}}; @(negedge clk); end
+            psum_rd_en=0; @(negedge clk);
+
+            // Read and check one pixel
+            psum_rd_en=5'b00001; @(negedge clk); psum_rd_en=0; @(negedge clk);
+            if(psum_rd_data[23:0]!==exp_a)begin $display("[FAIL]p(%0d,%0d)a=%0d exp=%0d",py,px_in,psum_rd_data[23:0],exp_a); fail=fail+1; end else pass=pass+1;
+            if(psum_rd_data[47:24]!==exp_b)begin $display("[FAIL]p(%0d,%0d)b=%0d exp=%0d",py,px_in,psum_rd_data[47:24],exp_b); fail=fail+1; end else pass=pass+1;
+        end
+    endtask
 
     initial begin
-        $dumpfile("dma_tb.vcd");
-        $dumpvars(0, tb_top_dma);
-        clk=0; rst=1; start=0; pass=0; fail=0;
+        clk=0; pass=0; fail=0;
         dma_bank_wr_en=0; dma_wr_x=0; dma_wr_fy=0; dma_line_advance=0;
         for(i=0;i<5;i=i+1) dma_wr_data[i]=0;
         fm_h=FM_H; fm_w=FM_W; cs=1; cp=0; base=0; oy=0; ox=0;
-        wgt_wr_en=0; wgt_wr_data=0; psum_rd_en=0;
+        wgt_wr_en=0; wgt_wr_data=0; psum_rd_en=0; start=0;
         bias_en=0; bias_addr=0; bias_data=0; is_first=1; use_ext=0;
-        repeat(3)@(negedge clk); rst=0; repeat(2)@(negedge clk);
-        #1; $display("  init: we_data0=%0d we_data9=%0d", u_top.we_ifm_data[7:0], u_top.we_ifm_data[79:72]);
 
-        // Load weights: ch0 only (rows 0-8), rest 0
-        for (cc=0; cc<32; cc=cc+1) begin
-            wtmp=0;
-            for (rr=0; rr<32; rr=rr+1) begin
-                w0b=(rr<9)?(cc+1):0; w1b=(rr<9)?(rr+1):0;
-                wtmp = wtmp | ({w1b,w0b} << (rr*16));
-            end
-            wgt_wr_data=wtmp; wgt_wr_en={32{1'b1}}; @(negedge clk);
-        end
-        wgt_wr_en=0;
-
-        // Bias=0
-        bias_en=1; bias_data=0;
-        for(i=0;i<64;i=i+1) begin bias_addr=i[5:0]; @(negedge clk); end
-        bias_en=0;
-
-        // DMA: 3 IFM lines to bank0, fill banks 1-4 with zeros
-        dma_bank_wr_en = 5'b11111;  // all 5 banks
-        for (int y=0; y<3; y=y+1) begin
-            dma_wr_fy = y;
-            for (int x=0; x<FM_W; x=x+1) begin
-                dma_wr_x=x[8:0]; dma_wr_data[0]=y*10+x;
-                dma_wr_data[1]=0; dma_wr_data[2]=0; dma_wr_data[3]=0; dma_wr_data[4]=0;
-                @(negedge clk);
-            end
-            if (y<2) begin dma_line_advance=1; @(negedge clk); dma_line_advance=0; end
-        end
-        dma_bank_wr_en=0;
-        #1; $display("  after DMA fill: we_data0=%0d we_data9=%0d", u_top.we_ifm_data[7:0], u_top.we_ifm_data[79:72]);
-
-        // pixel (0,0) static
-        oy=0; ox=0;
-        #1; $display("  after set oy/ox: we_data0=%0d we_data9=%0d", u_top.we_ifm_data[7:0], u_top.we_ifm_data[79:72]);
-
-        // Start compute
-        @(negedge clk); start=1; @(negedge clk); start=0;
-
-        // Check after weight load
-        repeat(35) @(negedge clk);
-        // Monitor around valid_bot expected window (~160)
-        $display("=== Monitoring valid window ===");
-        repeat(150) @(negedge clk);  // skip to ~cycle 185
-        for (int cyc=185; cyc<200; cyc=cyc+1) begin
-            @(negedge clk);
-            $display("  c%0d: valid=%0d psum0=%0d we9=%0d ifm9=%0d rd9=%0d",
-                cyc, u_top.valid_v_bot[0], u_top.psum_bot[23:0],
-                u_top.we_ifm_data[79:72], u_top.ifm_fifo_rd_data[79:72],
-                u_top.ifm_fifo_rd_en[9]);
-        end
-
-        repeat(300) @(negedge clk);  // rest of wait
-
-        // Drain PSUM FIFO, verify pixel (0,0): psuma=99, psumb=681
-        // Skip pipeline fill (~220)
-        for (i=0; i<220; i=i+1) begin psum_rd_en={32{1'b1}}; @(negedge clk); end
-        psum_rd_en=0; @(negedge clk);
-
-        psum_rd_en=5'b00001; @(negedge clk); psum_rd_en=0; @(negedge clk);
-        $display("col0: a=%0d exp=99  b=%0d exp=681", psum_rd_data[23:0], psum_rd_data[47:24]);
-        if(psum_rd_data[23:0]  !== 99)  begin $display("[FAIL] p0a"); fail=fail+1; end else pass=pass+1;
-        if(psum_rd_data[47:24] !== 681) begin $display("[FAIL] p0b"); fail=fail+1; end else pass=pass+1;
+        test_pixel(0,0,99,681);
+        test_pixel(0,1,108,726);
+        test_pixel(0,2,117,771);
 
         $display("=== %0d pass, %0d fail ===", pass, fail); $finish;
     end
