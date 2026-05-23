@@ -33,6 +33,8 @@ module tb_top_dma;
     reg [7:0] w0b,w1b; reg [511:0] wtmp;
 
     initial begin
+        $dumpfile("dma_tb.vcd");
+        $dumpvars(0, tb_top_dma);
         clk=0; rst=1; start=0; pass=0; fail=0;
         dma_bank_wr_en=0; dma_wr_x=0; dma_wr_fy=0; dma_line_advance=0;
         for(i=0;i<5;i=i+1) dma_wr_data[i]=0;
@@ -40,6 +42,7 @@ module tb_top_dma;
         wgt_wr_en=0; wgt_wr_data=0; psum_rd_en=0;
         bias_en=0; bias_addr=0; bias_data=0; is_first=1; use_ext=0;
         repeat(3)@(negedge clk); rst=0; repeat(2)@(negedge clk);
+        #1; $display("  init: we_data0=%0d we_data9=%0d", u_top.we_ifm_data[7:0], u_top.we_ifm_data[79:72]);
 
         // Load weights: ch0 only (rows 0-8), rest 0
         for (cc=0; cc<32; cc=cc+1) begin
@@ -67,21 +70,29 @@ module tb_top_dma;
             if (y<2) begin dma_line_advance=1; @(negedge clk); dma_line_advance=0; end
         end
         dma_bank_wr_en=0;
+        #1; $display("  after DMA fill: we_data0=%0d we_data9=%0d", u_top.we_ifm_data[7:0], u_top.we_ifm_data[79:72]);
 
         // pixel (0,0) static
         oy=0; ox=0;
+        #1; $display("  after set oy/ox: we_data0=%0d we_data9=%0d", u_top.we_ifm_data[7:0], u_top.we_ifm_data[79:72]);
 
         // Start compute
         @(negedge clk); start=1; @(negedge clk); start=0;
 
         // Check after weight load
         repeat(35) @(negedge clk);
-        $display("  after WL: done=%0d we_valid=%0d we_data0=%0d empty0=%0d",
-                 done, u_top.we_ifm_valid, u_top.we_ifm_data[7:0], u_top.ifm_fifo_empty[0]);
-        $display("  psum_bot[1:0]=%0d valid_bot[0]=%0d",
-                 u_top.psum_bot[1:0], u_top.valid_v_bot[0]);
+        // Monitor around valid_bot expected window (~160)
+        $display("=== Monitoring valid window ===");
+        repeat(150) @(negedge clk);  // skip to ~cycle 185
+        for (int cyc=185; cyc<200; cyc=cyc+1) begin
+            @(negedge clk);
+            $display("  c%0d: valid=%0d psum0=%0d we9=%0d ifm9=%0d rd9=%0d",
+                cyc, u_top.valid_v_bot[0], u_top.psum_bot[23:0],
+                u_top.we_ifm_data[79:72], u_top.ifm_fifo_rd_data[79:72],
+                u_top.ifm_fifo_rd_en[9]);
+        end
 
-        repeat(465) @(negedge clk);  // rest of wait
+        repeat(300) @(negedge clk);  // rest of wait
 
         // Drain PSUM FIFO, verify pixel (0,0): psuma=99, psumb=681
         // Skip pipeline fill (~220)

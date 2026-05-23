@@ -1,46 +1,43 @@
 `timescale 1ns / 1ps
-// 3x3 sliding window → 32 IFM values per cycle
-// lb_data: [bank][line][kx] from line_buffer_5bank (3-port)
-// pass_base_k → row → (ch,ker) → (bank, fy_line, kx) → IFM row value
+// 3x3 window → 32 IFM values — generate-based, no always @(*) / LHS +:
 module window_extract #(
     parameter FM_W = 416, FM_H = 416, AW = 9
 ) (
     input  [1:0]  stride, pad,
     input  [AW-1:0] oy, ox,
     input  [10:0] pass_base_k,
-    input  [7:0]  lb_data [0:4][0:2][0:2],  // [bank][line][kx]
-    input  [AW:0] line_fy [0:2],            // physical line → IFM row
+    input  [7:0]  lb_data [0:4][0:2][0:2],
+    input  [AW:0] line_fy [0:2],
     input         lb_valid,
-    output reg [255:0] ifm_data,
-    output reg         ifm_valid
+    output [255:0] ifm_data,
+    output         ifm_valid
 );
-    integer row;
-    integer ch, ker, ky, kx, bank, fy, fx, line_idx;
+    assign ifm_valid = lb_valid;
 
-    always @(*) begin
-        ifm_valid = lb_valid;
-        ifm_data  = 256'd0;
+    // Per-row computation, generate-based = constant indices, guaranteed to work
+    genvar r;
+    generate
+        for (r = 0; r < 32; r = r + 1) begin : row_logic
+            wire [3:0]  ch   = (pass_base_k + r) / 9;
+            wire [3:0]  ker  = (pass_base_k + r) % 9;
+            wire [1:0]  ky   = ker / 3;
+            wire [1:0]  kx   = ker % 3;
+            wire [2:0]  bank = ch % 5;
 
-        for (row = 0; row < 32; row = row + 1) begin
-            ch   = (pass_base_k + row) / 9;
-            ker  = (pass_base_k + row) % 9;
-            ky   = ker / 3;
-            kx   = ker % 3;
-            bank = ch % 5;
+            wire [AW:0] fy = oy * stride + ky - pad;
+            wire [AW:0] fx = ox * stride + kx - pad;
 
-            fy = oy * stride + ky - pad;
-            fx = ox * stride + kx - pad;
+            wire [1:0] line_idx = (line_fy[0] == fy) ? 2'd0 :
+                                  (line_fy[1] == fy) ? 2'd1 :
+                                  (line_fy[2] == fy) ? 2'd2 : 2'd0;
 
-            // Map fy to physical line via lookup
-            line_idx = (line_fy[0] == fy) ? 0 :
-                       (line_fy[1] == fy) ? 1 :
-                       (line_fy[2] == fy) ? 2 : 0;
+            wire in_bounds = (fy >= 0 && fy < FM_H && fx >= 0 && fx < FM_W);
+            wire fy_match  = (line_fy[0] == fy || line_fy[1] == fy || line_fy[2] == fy);
+            wire valid_row = in_bounds && fy_match;
 
-            if (fy >= 0 && fy < FM_H && fx >= 0 && fx < FM_W &&
-                (line_fy[0] == fy || line_fy[1] == fy || line_fy[2] == fy))
-                ifm_data[row*8 +: 8] = lb_data[bank][line_idx][kx];
-            else
-                ifm_data[row*8 +: 8] = 8'd0;
+            wire [7:0] row_val = valid_row ? lb_data[bank][line_idx][kx] : 8'd0;
+
+            assign ifm_data[(r+1)*8-1 : r*8] = row_val;
         end
-    end
+    endgenerate
 endmodule
