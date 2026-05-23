@@ -13,10 +13,17 @@ module systolic_top #(
     input  start,           // pulse: begin weight load → compute
     output done,            // high during COMPUTE (informational)
 
-    // ---- IFM FIFO write ports (fill externally) ----
-    input  [31:0]               ifm_fifo_wr_en,
-    input  [ROWS*IFM_W-1:0]     ifm_fifo_wr_data,
-    output [31:0]               ifm_fifo_full,
+    // ---- DMA / line buffer interface (replaces manual IFM FIFO fill) ----
+    input  [4:0]    dma_bank_wr_en,
+    input  [8:0]    dma_wr_x,
+    input  [9:0]    dma_wr_fy,
+    input  [7:0]    dma_wr_data [0:4],
+    input           dma_line_advance,
+    input  [8:0]    fm_h, fm_w,
+    input  [1:0]    conv_stride, conv_pad,
+    input  [10:0]   pass_base_k,
+    input  [8:0]    oy, ox,
+    output [31:0]   ifm_fifo_full,
 
     // ---- Bias buffer write port (64 entries × 24-bit, loaded once per layer) ----
     input  [5:0]                bias_wr_addr,
@@ -66,23 +73,40 @@ module systolic_top #(
         end
     endgenerate
 
+    // ---- Line buffer (5 bank × 3 line × 3 port) ----
+    wire [7:0]  lb_rd [0:4][0:2][0:2];       // [bank][line][kx]
+    wire [9:0]  line_fy [0:2];
+    line_buffer_5bank #(.FM_W(416), .AW(9)) u_linebuf (
+        .clk(clk), .rst(rst),
+        .bank_wr_en(dma_bank_wr_en), .wr_x(dma_wr_x),
+        .wr_data(dma_wr_data), .line_advance(dma_line_advance), .wr_fy(dma_wr_fy),
+        .rd_x0(ox - 9'd1), .rd_x1(ox), .rd_x2(ox + 9'd1),
+        .rd_data(lb_rd), .line_fy_out(line_fy)
+    );
+
+    // ---- Window extractor → IFM FIFO write ----
+    wire [255:0] we_ifm_data;
+    wire         we_ifm_valid;
+    window_extract #(.FM_W(416), .FM_H(416), .AW(9)) u_we (
+        .stride(conv_stride), .pad(conv_pad), .oy(oy), .ox(ox),
+        .pass_base_k(pass_base_k), .lb_data(lb_rd), .line_fy(line_fy),
+        .lb_valid(1'b1),
+        .ifm_data(we_ifm_data), .ifm_valid(we_ifm_valid)
+    );
+
     // ---- IFM FIFOs (32 × 8-bit) + stagger chain ----
     wire [ROWS*IFM_W-1:0] ifm_fifo_rd_data;
     wire [31:0] ifm_fifo_empty;
 
-    // Stagger: compute_active delayed by r*5 cycles per row
-    // Row r starts reading IFM 5*r cycles after compute_active goes high
     wire [ROWS-1:0] ifm_rd_stagger;
-    wire            compute_active_level = compute_active;  // rename for clarity
-    assign ifm_rd_stagger[0] = compute_active_level;
+    assign ifm_rd_stagger[0] = compute_active;
     generate
         for (r = 1; r < ROWS; r = r + 1) begin : stagger_gen
             com_shift_reg #(.DEPTH(r*5), .WIDTH(1)) u_stag (
-                .clk(clk), .si(compute_active_level), .so(ifm_rd_stagger[r]));
+                .clk(clk), .si(compute_active), .so(ifm_rd_stagger[r]));
         end
     endgenerate
 
-    // IFM FIFO rd_en = stagger AND not empty
     wire [31:0] ifm_fifo_rd_en;
     generate
         for (r = 0; r < ROWS; r = r + 1) begin : ifm_fifo_gen
@@ -90,8 +114,8 @@ module systolic_top #(
 
             systolic_fifo #(.WIDTH(IFM_W), .DEPTH(IFM_FIFO_DEPTH), .AW(IFM_FIFO_AW))
             u_ifm_fifo (.clk(clk), .rst(rst),
-                .wr_en(ifm_fifo_wr_en[r]), .rd_en(ifm_fifo_rd_en[r]),
-                .data_in(ifm_fifo_wr_data[(r+1)*IFM_W-1 : r*IFM_W]),
+                .wr_en(we_ifm_valid), .rd_en(ifm_fifo_rd_en[r]),
+                .data_in(we_ifm_data[(r+1)*IFM_W-1 : r*IFM_W]),
                 .data_out(ifm_fifo_rd_data[(r+1)*IFM_W-1 : r*IFM_W]),
                 .empty(ifm_fifo_empty[r]), .full(ifm_fifo_full[r]));
         end
