@@ -60,12 +60,14 @@ module tb_top_dma;
         for(i=0;i<64;i=i+1) begin bias_addr=i[5:0]; @(negedge clk); end
         bias_en=0;
 
-        // DMA: 3 IFM lines to bank0, 5x5 pattern
-        dma_bank_wr_en = 5'b00001;
+        // DMA: 3 IFM lines to bank0, fill banks 1-4 with zeros
+        dma_bank_wr_en = 5'b11111;  // all 5 banks
         for (int y=0; y<3; y=y+1) begin
             dma_wr_fy = y;
             for (int x=0; x<FM_W; x=x+1) begin
-                dma_wr_x=x[8:0]; dma_wr_data[0]=y*10+x; @(negedge clk);
+                dma_wr_x=x[8:0]; dma_wr_data[0]=y*10+x;
+                dma_wr_data[1]=0; dma_wr_data[2]=0; dma_wr_data[3]=0; dma_wr_data[4]=0;
+                @(negedge clk);
             end
             if (y<2) begin dma_line_advance=1; @(negedge clk); dma_line_advance=0; end
         end
