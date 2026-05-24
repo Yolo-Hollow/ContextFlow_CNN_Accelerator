@@ -5,6 +5,7 @@ module tb_line_stream_ctrl;
 
     reg clk, rst, start;
     reg [AW-1:0] fm_h, ofm_h;
+    reg [1:0] stride, pad;
     reg fill_done, compute_done;
     wire fill_req, compute_start, busy, done;
     wire [AW-1:0] fill_fy, compute_oy;
@@ -12,6 +13,7 @@ module tb_line_stream_ctrl;
     line_stream_ctrl #(.AW(AW)) dut (
         .clk(clk), .rst(rst), .start(start),
         .fm_h(fm_h), .ofm_h(ofm_h),
+        .stride(stride), .pad(pad),
         .fill_done(fill_done), .compute_done(compute_done),
         .fill_req(fill_req), .fill_fy(fill_fy),
         .compute_start(compute_start), .compute_oy(compute_oy),
@@ -55,6 +57,8 @@ module tb_line_stream_ctrl;
         start = 0;
         fm_h = 5;
         ofm_h = 3;
+        stride = 1;
+        pad = 0;
         fill_done = 0;
         compute_done = 0;
         pass = 0;

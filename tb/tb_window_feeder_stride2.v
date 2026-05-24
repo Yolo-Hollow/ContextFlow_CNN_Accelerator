@@ -1,0 +1,177 @@
+`timescale 1ns / 1ps
+
+module tb_window_feeder_stride2;
+    localparam FM_W = 5;
+    localparam FM_H = 5;
+    localparam AW = 3;
+
+    reg clk, rst, start;
+    reg [AW-1:0] fm_h, fm_w, ofm_h, ofm_w;
+    reg [1:0] stride, pad;
+    reg [10:0] pass_base_k;
+    wire fill_req;
+    wire [AW-1:0] fill_fy;
+    reg [4:0] dma_bank_wr_en;
+    reg [AW-1:0] dma_wr_x;
+    reg [AW:0] dma_wr_fy;
+    reg [7:0] dma_wr_data [0:4];
+    reg dma_line_advance;
+    wire [255:0] ifm_data;
+    wire ifm_valid, window_ready, busy, done;
+    wire [AW-1:0] cur_oy, cur_ox;
+
+    window_feeder #(.FM_W(FM_W), .FM_H(FM_H), .AW(AW)) dut (
+        .clk(clk), .rst(rst), .start(start),
+        .fm_h(fm_h), .fm_w(fm_w), .ofm_h(ofm_h), .ofm_w(ofm_w),
+        .stride(stride), .pad(pad), .pass_base_k(pass_base_k),
+        .fill_req(fill_req), .fill_fy(fill_fy),
+        .dma_bank_wr_en(dma_bank_wr_en), .dma_wr_x(dma_wr_x),
+        .dma_wr_fy(dma_wr_fy), .dma_wr_data(dma_wr_data),
+        .dma_line_advance(dma_line_advance),
+        .ifm_fifo_full_any(1'b0),
+        .ifm_data(ifm_data), .ifm_valid(ifm_valid),
+        .cur_oy(cur_oy), .cur_ox(cur_ox),
+        .window_ready(window_ready), .busy(busy), .done(done)
+    );
+
+    always #5 clk = ~clk;
+
+    integer pass, fail;
+    integer b, x, lane, ch, ker, ky, kx;
+    integer push_count, exp_oy, exp_ox, fy, fx, exp_val;
+    integer fill_count;
+    reg [7:0] feat [0:4][0:FM_H-1][0:FM_W-1];
+
+    task write_row;
+        input integer row_y;
+        begin
+            @(negedge clk);
+            dma_wr_fy = row_y[AW:0];
+            dma_bank_wr_en = 5'b11111;
+            for (x = 0; x < FM_W; x = x + 1) begin
+                dma_wr_x = x[AW-1:0];
+                for (b = 0; b < 5; b = b + 1)
+                    dma_wr_data[b] = feat[b][row_y][x];
+                @(negedge clk);
+            end
+            dma_line_advance = 1'b1;
+            @(negedge clk);
+            dma_line_advance = 1'b0;
+            dma_bank_wr_en = 5'b00000;
+            @(negedge clk);
+        end
+    endtask
+
+    initial begin
+        clk = 0;
+        rst = 1;
+        start = 0;
+        fm_h = FM_H;
+        fm_w = FM_W;
+        ofm_h = 2;
+        ofm_w = 2;
+        stride = 2;
+        pad = 0;
+        pass_base_k = 0;
+        dma_bank_wr_en = 0;
+        dma_wr_x = 0;
+        dma_wr_fy = 0;
+        dma_line_advance = 0;
+        pass = 0;
+        fail = 0;
+        push_count = 0;
+        fill_count = 0;
+
+        for (b = 0; b < 5; b = b + 1) begin
+            dma_wr_data[b] = 0;
+            for (fy = 0; fy < FM_H; fy = fy + 1)
+                for (x = 0; x < FM_W; x = x + 1)
+                    feat[b][fy][x] = b*40 + fy*8 + x;
+        end
+
+        repeat (3) @(negedge clk);
+        rst = 0;
+        @(negedge clk);
+        start = 1'b1;
+        @(negedge clk);
+        start = 1'b0;
+    end
+
+    initial begin
+        @(negedge rst);
+        forever begin
+            wait(fill_req);
+            if (fill_fy !== fill_count[AW-1:0]) begin
+                $display("[FAIL] fill%0d got fy=%0d exp=%0d", fill_count, fill_fy, fill_count);
+                fail = fail + 1;
+            end else begin
+                pass = pass + 1;
+            end
+            write_row(fill_fy);
+            fill_count = fill_count + 1;
+            @(posedge clk);
+            #1;
+        end
+    end
+
+    always @(posedge clk) begin
+        if (ifm_valid) begin
+            exp_oy = push_count / 2;
+            exp_ox = push_count % 2;
+            if (cur_oy !== exp_oy[AW-1:0] || cur_ox !== exp_ox[AW-1:0]) begin
+                $display("[FAIL] push%0d coord got=(%0d,%0d) exp=(%0d,%0d)",
+                    push_count, cur_oy, cur_ox, exp_oy, exp_ox);
+                fail = fail + 1;
+            end else begin
+                pass = pass + 1;
+            end
+
+            for (lane = 0; lane < 32; lane = lane + 1) begin
+                ch = lane / 9;
+                ker = lane % 9;
+                ky = ker / 3;
+                kx = ker % 3;
+                if (ch < 5) begin
+                    fy = exp_oy*2 + ky;
+                    fx = exp_ox*2 + kx;
+                    exp_val = feat[ch][fy][fx];
+                    if (ifm_data[lane*8 +: 8] !== exp_val[7:0]) begin
+                        $display("[FAIL] push%0d lane%0d got=%0d exp=%0d",
+                            push_count, lane, ifm_data[lane*8 +: 8], exp_val);
+                        fail = fail + 1;
+                    end else begin
+                        pass = pass + 1;
+                    end
+                end
+            end
+            push_count = push_count + 1;
+        end
+    end
+
+    initial begin
+        wait(done);
+        @(negedge clk);
+        if (push_count != 4) begin
+            $display("[FAIL] push count got=%0d exp=4", push_count);
+            fail = fail + 1;
+        end else begin
+            pass = pass + 1;
+        end
+        if (fill_count != 5) begin
+            $display("[FAIL] fill count got=%0d exp=5", fill_count);
+            fail = fail + 1;
+        end else begin
+            pass = pass + 1;
+        end
+        $display("=== tb_window_feeder_stride2: %0d pass, %0d fail ===", pass, fail);
+        if (fail != 0) $fatal(1);
+        $finish;
+    end
+
+    initial begin
+        repeat (400) @(negedge clk);
+        $display("[FAIL] timeout push_count=%0d fill_count=%0d busy=%0d done=%0d oy=%0d ox=%0d ready=%0d",
+            push_count, fill_count, busy, done, cur_oy, cur_ox, window_ready);
+        $fatal(1);
+    end
+endmodule

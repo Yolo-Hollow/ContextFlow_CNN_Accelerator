@@ -32,6 +32,7 @@ $tests = @(
     @{ Top = "tb_line_stream_ctrl"; Files = @("tb/tb_line_stream_ctrl.v") },
     @{ Top = "tb_window_stream_ctrl"; Files = @("tb/tb_window_stream_ctrl.v") },
     @{ Top = "tb_window_feeder"; Files = @("tb/tb_window_feeder.v") },
+    @{ Top = "tb_window_feeder_stride2"; Files = @("tb/tb_window_feeder_stride2.v") },
     @{ Top = "tb_window_extract"; Files = @("tb/tb_window_extract.v") },
     @{ Top = "tb_linebuf_stream"; Files = @("tb/tb_linebuf_stream.v") },
     @{ Top = "tb_requant"; Files = @("tb/tb_requant.v") }

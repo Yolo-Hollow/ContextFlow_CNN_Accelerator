@@ -102,6 +102,8 @@ module window_feeder #(
         .start(start),
         .fm_h(fm_h),
         .ofm_h(ofm_h),
+        .stride(stride),
+        .pad(pad),
         .fill_done(dma_line_advance),
         .compute_done(row_done),
         .fill_req(fill_req),
