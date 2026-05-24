@@ -10,8 +10,7 @@ module systolic_top_feeder #(
     parameter WGT_FIFO_DEPTH = 64,  parameter WGT_FIFO_AW = 6,
     parameter PSUM_FIFO_DEPTH = 256, parameter PSUM_FIFO_AW = 8,
     parameter FM_W_MAX = 416,
-    parameter FM_H_MAX = 416,
-    parameter IFM_REPEAT = 3
+    parameter FM_H_MAX = 416
 ) (
     input  clk,
     input  rst,
@@ -61,23 +60,6 @@ module systolic_top_feeder #(
     wire feeder_ifm_valid;
     wire feeder_window_ready;
     wire [8:0] feeder_oy, feeder_ox;
-    reg [255:0] repeat_ifm_data;
-    reg [3:0] repeat_left;
-    wire repeat_busy = (repeat_left != 0);
-    wire core_ifm_valid = feeder_ifm_valid || repeat_busy;
-    wire [255:0] core_ifm_data = repeat_busy ? repeat_ifm_data : feeder_ifm_data;
-
-    always @(posedge clk) begin
-        if (rst) begin
-            repeat_ifm_data <= 256'd0;
-            repeat_left <= 4'd0;
-        end else if (repeat_busy) begin
-            repeat_left <= repeat_left - 4'd1;
-        end else if (feeder_ifm_valid && IFM_REPEAT > 1) begin
-            repeat_ifm_data <= feeder_ifm_data;
-            repeat_left <= IFM_REPEAT[3:0] - 4'd1;
-        end
-    end
 
     window_feeder #(.FM_W(FM_W_MAX), .FM_H(FM_H_MAX), .AW(9)) u_feeder (
         .clk(clk),
@@ -97,7 +79,7 @@ module systolic_top_feeder #(
         .dma_wr_fy(dma_wr_fy),
         .dma_wr_data(dma_wr_data),
         .dma_line_advance(dma_line_advance),
-        .ifm_fifo_full_any((|ifm_fifo_full) || repeat_busy),
+        .ifm_fifo_full_any(|ifm_fifo_full),
         .ifm_data(feeder_ifm_data),
         .ifm_valid(feeder_ifm_valid),
         .cur_oy(feeder_oy),
@@ -129,8 +111,8 @@ module systolic_top_feeder #(
         .start(compute_start),
         .num_pixels(num_pixels),
         .done(compute_done),
-        .ifm_fifo_wr_en({ROWS{core_ifm_valid}}),
-        .ifm_fifo_wr_data(core_ifm_data),
+        .ifm_fifo_wr_en({ROWS{feeder_ifm_valid}}),
+        .ifm_fifo_wr_data(feeder_ifm_data),
         .ifm_fifo_full_legacy(ifm_fifo_full_legacy),
         .dma_bank_wr_en(5'd0),
         .dma_wr_x(9'd0),

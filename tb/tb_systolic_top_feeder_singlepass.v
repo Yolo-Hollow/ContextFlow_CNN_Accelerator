@@ -44,12 +44,12 @@ module tb_systolic_top_feeder_singlepass;
         .IFM_FIFO_DEPTH(IFM_D), .IFM_FIFO_AW(IFM_AW),
         .WGT_FIFO_DEPTH(WGT_D), .WGT_FIFO_AW(WGT_AW),
         .PSUM_FIFO_DEPTH(PSUM_D), .PSUM_FIFO_AW(PSUM_AW),
-        .FM_W_MAX(FM_W), .FM_H_MAX(FM_H), .IFM_REPEAT(3)
+        .FM_W_MAX(FM_W), .FM_H_MAX(FM_H)
     ) dut (
         .clk(clk), .rst(rst),
         .feeder_start(feeder_start), .feeder_done(feeder_done), .feeder_busy(feeder_busy),
         .feeder_fill_req(feeder_fill_req), .feeder_fill_fy(feeder_fill_fy),
-        .compute_start(compute_start), .num_pixels(16'd3), .compute_done(compute_done),
+        .compute_start(compute_start), .num_pixels(16'd1), .compute_done(compute_done),
         .fm_h(9'd5), .fm_w(9'd5), .ofm_h(9'd1), .ofm_w(9'd1),
         .conv_stride(2'd1), .conv_pad(2'd0), .pass_base_k(11'd0),
         .dma_bank_wr_en(dma_bank_wr_en), .dma_wr_x(dma_wr_x), .dma_wr_fy(dma_wr_fy),

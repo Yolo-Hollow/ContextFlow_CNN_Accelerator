@@ -144,6 +144,12 @@ module systolic_top #(
         end
     endgenerate
 
+    reg [ROWS-1:0] ifm_fifo_rd_valid;
+    always @(posedge clk) begin
+        if (rst) ifm_fifo_rd_valid <= {ROWS{1'b0}};
+        else     ifm_fifo_rd_valid <= ifm_fifo_rd_en;
+    end
+
     // ---- Bias buffer (64 × 24-bit, 1 entry per OFM channel) ----
     reg [PSUM_W-1:0] bias_buf [0:63];
     always @(posedge clk) begin
@@ -173,7 +179,7 @@ module systolic_top #(
     // Top-row valid: always 1 (bias or partial sum are always valid)
     wire [COLS*2-1:0] valid_v_top = {COLS*2{1'b1}};
     // Left-edge horizontal valid: IFM FIFO rd_en (data being read is valid)
-    wire [ROWS-1:0]   valid_h_left = ifm_fifo_rd_en;
+    wire [ROWS-1:0]   valid_h_left = ifm_fifo_rd_valid;
 
     // Register w_col to align with FIFO read latency (1 cycle)
     // w_load stays unregistered — PE loads on the cycle where w_load=1 AND w_col matches
