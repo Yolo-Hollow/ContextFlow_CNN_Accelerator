@@ -37,11 +37,13 @@ module tb_systolic_array;
             end else begin : rN
                 com_shift_reg #(.DEPTH(r*5), .WIDTH(IFM_W)) u_skew (
                     .clk(clk),
+                    .rst(rst),
                     .si (ifm_in_raw[r*IFM_W +: IFM_W]),
                     .so (ifm_in_skewed[r*IFM_W +: IFM_W])
                 );
                 com_shift_reg #(.DEPTH(r*5), .WIDTH(1)) u_vskew (
                     .clk(clk),
+                    .rst(rst),
                     .si (valid_h_left_raw[r]),
                     .so (valid_h_left[r])
                 );

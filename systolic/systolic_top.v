@@ -117,7 +117,7 @@ module systolic_top #(
     generate
         for (r = 1; r < ROWS; r = r + 1) begin : stagger_gen
             com_shift_reg #(.DEPTH(r*5), .WIDTH(1)) u_stag (
-                .clk(clk), .si(compute_active), .so(ifm_rd_stagger[r]));
+                .clk(clk), .rst(rst), .si(compute_active), .so(ifm_rd_stagger[r]));
         end
     endgenerate
 

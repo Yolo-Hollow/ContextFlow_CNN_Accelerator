@@ -93,9 +93,9 @@ module tb_systolic_top_multipass;
             wgt_wr_data = 0;
             psum_rd_en = 0;
             bias_en = 0;
-            repeat (220) @(negedge clk);
+            repeat (3) @(negedge clk);
             rst = 1'b0;
-            repeat (220) @(negedge clk);
+            repeat (2) @(negedge clk);
         end
     endtask
 

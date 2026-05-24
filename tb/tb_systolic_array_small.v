@@ -29,11 +29,11 @@ module tb_systolic_array_small;
                 assign valid_skewed[0] = valid_raw[0];
             end else begin : yes_skew
                 com_shift_reg #(.DEPTH(gr*5), .WIDTH(IFM_W)) u_ifm (
-                    .clk(clk), .si(ifm_raw[gr*IFM_W +: IFM_W]),
+                    .clk(clk), .rst(rst), .si(ifm_raw[gr*IFM_W +: IFM_W]),
                     .so(ifm_skewed[gr*IFM_W +: IFM_W])
                 );
                 com_shift_reg #(.DEPTH(gr*5), .WIDTH(1)) u_valid (
-                    .clk(clk), .si(valid_raw[gr]), .so(valid_skewed[gr])
+                    .clk(clk), .rst(rst), .si(valid_raw[gr]), .so(valid_skewed[gr])
                 );
             end
         end

@@ -7,6 +7,7 @@ module com_shift_reg
 )
 (
 	input clk,
+	input rst,
 	input [WIDTH-1:0] si,
 	output [WIDTH-1:0] so
 );
@@ -32,7 +33,10 @@ module com_shift_reg
 		begin
 			always@(posedge clk)
 			begin
-					sreg[i]<=sreg[i-1];
+					if (rst)
+						sreg[i]<={WIDTH{1'b0}};
+					else
+						sreg[i]<=sreg[i-1];
 			end
 		end
 	endgenerate
