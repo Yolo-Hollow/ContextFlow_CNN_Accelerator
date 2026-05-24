@@ -25,13 +25,16 @@ module conv_layer_top_stream #(
     parameter PSUM_BUF_DEPTH = 1024,
     parameter MULT_W = 16,
     parameter SHIFT_W = 4,
-    parameter ZP_W = 8
+    parameter ZP_W = 8,
+    parameter OFM_ADDR_W = 24,
+    parameter OFM_FIFO_DEPTH = 32,
+    parameter OFM_FIFO_AW = 5
 ) (
     input  clk,
     input  rst,
     input  start,
     output busy,
-    output done,
+    output reg done,
 
     input  [8:0] fm_h,
     input  [8:0] fm_w,
@@ -79,7 +82,12 @@ module conv_layer_top_stream #(
     output [PSUM_BUF_AW-1:0]    ofm_addr,
     output [10:0]               ofm_cout_base,
     output [COLS*2-1:0]         ofm_channel_valid,
-    output [COLS*2*8-1:0]       ofm_data
+    output [COLS*2*8-1:0]       ofm_data,
+
+    output                      ofm_mem_wr_en,
+    output [OFM_ADDR_W-1:0]     ofm_mem_wr_addr,
+    output [7:0]                ofm_mem_wr_data,
+    output                      ofm_packet_full
 );
     wire [10:0] sched_pass_base_k;
     wire [10:0] sched_cout_base;
@@ -94,6 +102,8 @@ module conv_layer_top_stream #(
     wire sched_feeder_start;
     wire sched_compute_start;
     wire sched_drain_start;
+    wire sched_busy;
+    wire sched_done;
     reg  sched_weight_done;
     wire feeder_done;
     wire compute_done;
@@ -102,9 +112,13 @@ module conv_layer_top_stream #(
     assign current_cout_base = sched_cout_base;
     assign current_pass_base_k = sched_pass_base_k;
     assign bias_load_req = sched_bias_start;
+    wire ofm_wb_busy;
+    reg done_pending;
+    reg [3:0] done_drain_cnt;
+    assign busy = sched_busy || done_pending || ofm_wb_busy;
 
     layer_scheduler_stream #(.K_TILE(K_TILE), .COUT_TILE(COUT_TILE)) u_sched (
-        .clk(clk), .rst(rst), .start(start), .busy(busy), .done(done),
+        .clk(clk), .rst(rst), .start(start), .busy(sched_busy), .done(sched_done),
         .k_total(k_total), .cout_total(cout_total), .num_pixels(num_pixels),
         .pass_base_k(sched_pass_base_k), .cout_base(sched_cout_base),
         .cout_valid(sched_cout_valid),
@@ -118,6 +132,27 @@ module conv_layer_top_stream #(
         .compute_start(sched_compute_start), .compute_done(compute_done),
         .psum_drain_start(sched_drain_start), .psum_drain_done(drain_done)
     );
+
+    always @(posedge clk) begin
+        if (rst) begin
+            done <= 1'b0;
+            done_pending <= 1'b0;
+            done_drain_cnt <= 4'd0;
+        end else begin
+            done <= 1'b0;
+            if (sched_done) begin
+                done_pending <= 1'b1;
+                done_drain_cnt <= 4'd4;
+            end else if (done_pending) begin
+                if (done_drain_cnt != 4'd0) begin
+                    done_drain_cnt <= done_drain_cnt - 4'd1;
+                end else if (!ofm_wb_busy && !ofm_valid) begin
+                    done_pending <= 1'b0;
+                    done <= 1'b1;
+                end
+            end
+        end
+    end
 
     reg weight_req_r;
     reg wgt_loader_start;
@@ -273,5 +308,18 @@ module conv_layer_top_stream #(
         .ofm_valid(ofm_valid), .ofm_addr(ofm_addr),
         .ofm_cout_base(ofm_cout_base), .ofm_channel_valid(ofm_channel_valid),
         .ofm_data(ofm_data)
+    );
+
+    ofm_writeback #(
+        .COUT_TILE(COLS*2), .PIXEL_AW(PSUM_BUF_AW), .ADDR_W(OFM_ADDR_W),
+        .FIFO_DEPTH(OFM_FIFO_DEPTH), .FIFO_AW(OFM_FIFO_AW)
+    ) u_ofm_writeback (
+        .clk(clk), .rst(rst),
+        .packet_valid(ofm_valid), .packet_pixel(ofm_addr),
+        .packet_cout_base(ofm_cout_base),
+        .packet_channel_valid(ofm_channel_valid), .packet_data(ofm_data),
+        .packet_full(ofm_packet_full), .cout_total(cout_total),
+        .wr_en(ofm_mem_wr_en), .wr_addr(ofm_mem_wr_addr), .wr_data(ofm_mem_wr_data),
+        .busy(ofm_wb_busy)
     );
 endmodule

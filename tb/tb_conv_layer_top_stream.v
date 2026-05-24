@@ -56,6 +56,10 @@ module tb_conv_layer_top_stream;
     wire [10:0] ofm_cout_base;
     wire [COLS*2-1:0] ofm_channel_valid;
     wire [COLS*2*8-1:0] ofm_data;
+    wire ofm_mem_wr_en;
+    wire [15:0] ofm_mem_wr_addr;
+    wire [7:0] ofm_mem_wr_data;
+    wire ofm_packet_full;
 
     conv_layer_top_stream #(
         .ROWS(ROWS), .COLS(COLS), .IFM_W(IFM_W), .WEIGHT_W(WGT_W), .PSUM_W(PSUM_W),
@@ -64,7 +68,8 @@ module tb_conv_layer_top_stream;
         .PSUM_FIFO_DEPTH(PSUM_D), .PSUM_FIFO_AW(PSUM_AW),
         .FM_W_MAX(FM_W), .FM_H_MAX(FM_H),
         .K_TILE(32), .COUT_TILE(COUT_TILE),
-        .WGT_TILE_AW(WGT_TILE_AW), .PSUM_BUF_AW(PSUM_A), .PSUM_BUF_DEPTH(PIXELS)
+        .WGT_TILE_AW(WGT_TILE_AW), .PSUM_BUF_AW(PSUM_A), .PSUM_BUF_DEPTH(PIXELS),
+        .OFM_ADDR_W(16)
     ) dut (
         .clk(clk), .rst(rst), .start(start), .busy(busy), .done(done),
         .fm_h(9'd5), .fm_w(9'd5), .ofm_h(9'd3), .ofm_w(9'd3),
@@ -85,19 +90,23 @@ module tb_conv_layer_top_stream;
         .quant_zp_flat(quant_zp_flat),
         .ofm_valid(ofm_valid), .ofm_addr(ofm_addr),
         .ofm_cout_base(ofm_cout_base), .ofm_channel_valid(ofm_channel_valid),
-        .ofm_data(ofm_data)
+        .ofm_data(ofm_data),
+        .ofm_mem_wr_en(ofm_mem_wr_en), .ofm_mem_wr_addr(ofm_mem_wr_addr),
+        .ofm_mem_wr_data(ofm_mem_wr_data), .ofm_packet_full(ofm_packet_full)
     );
 
     always #5 clk = ~clk;
 
     integer pass, fail;
     integer b, y, x, r, c, co, k, ch, ker, ky, kx, idx;
-    integer final_count, ofm_count, valid_ofm_lanes, ifm_write_count, compute_fire_count, psum_wr_count;
+    integer final_count, ofm_count, ofm_mem_wr_count, valid_ofm_lanes, ifm_write_count, compute_fire_count, psum_wr_count;
     integer drain_capture_count;
     reg signed [7:0] feat [0:CIN-1][0:FM_H-1][0:FM_W-1];
     reg signed [7:0] weight [0:K_TOTAL-1][0:COUT_TOTAL-1];
     reg signed [PSUM_W-1:0] bias [0:COUT_TOTAL-1];
     reg signed [PSUM_W-1:0] golden [0:PIXELS-1][0:COUT_TOTAL-1];
+    reg [7:0] golden_q [0:PIXELS-1][0:COUT_TOTAL-1];
+    reg [7:0] ofm_mem [0:PIXELS*COUT_TOTAL-1];
     reg [COLS*2*PSUM_W-1:0] final_pkt [0:COUT_BLOCKS-1][0:PIXELS-1];
     reg signed [PSUM_W-1:0] got0, got1;
 
@@ -239,6 +248,22 @@ module tb_conv_layer_top_stream;
             drain_capture_count <= drain_capture_count + 1;
     end
 
+    always @(negedge clk) begin
+        if (!rst && ofm_mem_wr_en) begin
+            ofm_mem[ofm_mem_wr_addr] <= ofm_mem_wr_data;
+            ofm_mem_wr_count <= ofm_mem_wr_count + 1;
+        end
+    end
+
+    function [7:0] clamp8;
+        input signed [PSUM_W-1:0] v;
+        begin
+            if (v > 127) clamp8 = 8'd127;
+            else if (v < -128) clamp8 = 8'd128;
+            else clamp8 = v[7:0];
+        end
+    endfunction
+
     initial begin
         clk = 0;
         rst = 1;
@@ -246,12 +271,15 @@ module tb_conv_layer_top_stream;
         fail = 0;
         final_count = 0;
         ofm_count = 0;
+        ofm_mem_wr_count = 0;
         valid_ofm_lanes = 0;
         ifm_write_count = 0;
         compute_fire_count = 0;
         psum_wr_count = 0;
         drain_capture_count = 0;
         clear_inputs();
+        for (idx = 0; idx < PIXELS*COUT_TOTAL; idx = idx + 1)
+            ofm_mem[idx] = 8'hxx;
 
         for (ch = 0; ch < CIN; ch = ch + 1)
             for (y = 0; y < FM_H; y = y + 1)
@@ -275,6 +303,7 @@ module tb_conv_layer_top_stream;
                     kx = ker % 3;
                     golden[idx][co] = golden[idx][co] + feat[ch][y+ky][x+kx] * weight[k][co];
                 end
+                golden_q[idx][co] = clamp8(golden[idx][co]);
             end
         end
 
@@ -299,6 +328,10 @@ module tb_conv_layer_top_stream;
             $display("[FAIL] valid_ofm_lanes got=%0d exp=%0d", valid_ofm_lanes, PIXELS * COUT_TOTAL);
             fail = fail + 1;
         end else pass = pass + 1;
+        if (ofm_mem_wr_count != PIXELS * COUT_TOTAL) begin
+            $display("[FAIL] ofm_mem_wr_count got=%0d exp=%0d", ofm_mem_wr_count, PIXELS * COUT_TOTAL);
+            fail = fail + 1;
+        end else pass = pass + 1;
 
         for (idx = 0; idx < PIXELS; idx = idx + 1) begin
             for (co = 0; co < COUT_TOTAL; co = co + 2) begin
@@ -315,6 +348,16 @@ module tb_conv_layer_top_stream;
                         fail = fail + 1;
                     end else pass = pass + 1;
                 end
+            end
+        end
+
+        for (idx = 0; idx < PIXELS; idx = idx + 1) begin
+            for (co = 0; co < COUT_TOTAL; co = co + 1) begin
+                if (ofm_mem[idx*COUT_TOTAL + co] !== golden_q[idx][co]) begin
+                    $display("[FAIL] ofm_mem pixel%0d cout%0d got=%0d exp=%0d",
+                        idx, co, ofm_mem[idx*COUT_TOTAL + co], golden_q[idx][co]);
+                    fail = fail + 1;
+                end else pass = pass + 1;
             end
         end
 
