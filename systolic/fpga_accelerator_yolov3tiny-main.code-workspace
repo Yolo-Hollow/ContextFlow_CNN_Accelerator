@@ -1,10 +1,12 @@
 {
 	"folders": [
 		{
-			"path": "../../fpga_accelerator_yolov3tiny-main"
+			"name": "accelerator_systolic",
+			"path": ".."
 		},
 		{
-			"path": ".."
+			"name": "fpga_accelerator_yolov3tiny-main",
+			"path": "../../fpga_accelerator_yolov3tiny-main"
 		}
 	],
 	"settings": {}
