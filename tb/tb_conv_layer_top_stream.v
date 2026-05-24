@@ -46,6 +46,13 @@ module tb_conv_layer_top_stream;
     wire [PSUM_A-1:0] final_addr;
     wire [COLS*2*PSUM_W-1:0] final_data;
     wire [10:0] final_cout_base;
+    reg [COLS*2*16-1:0] quant_mult_flat;
+    reg [COLS*2*4-1:0] quant_shift_flat;
+    reg [COLS*2*8-1:0] quant_zp_flat;
+    wire ofm_valid;
+    wire [PSUM_A-1:0] ofm_addr;
+    wire [10:0] ofm_cout_base;
+    wire [COLS*2*8-1:0] ofm_data;
 
     conv_layer_top_stream #(
         .ROWS(ROWS), .COLS(COLS), .IFM_W(IFM_W), .WEIGHT_W(WGT_W), .PSUM_W(PSUM_W),
@@ -69,14 +76,18 @@ module tb_conv_layer_top_stream;
         .dma_bank_wr_en(dma_bank_wr_en), .dma_wr_x(dma_wr_x), .dma_wr_fy(dma_wr_fy),
         .dma_wr_data(dma_wr_data), .dma_line_advance(dma_line_advance),
         .final_valid(final_valid), .final_addr(final_addr),
-        .final_data(final_data), .final_cout_base(final_cout_base)
+        .final_data(final_data), .final_cout_base(final_cout_base),
+        .quant_mult_flat(quant_mult_flat), .quant_shift_flat(quant_shift_flat),
+        .quant_zp_flat(quant_zp_flat),
+        .ofm_valid(ofm_valid), .ofm_addr(ofm_addr),
+        .ofm_cout_base(ofm_cout_base), .ofm_data(ofm_data)
     );
 
     always #5 clk = ~clk;
 
     integer pass, fail;
     integer b, y, x, r, c, co, k, ch, ker, ky, kx, idx;
-    integer final_count, ifm_write_count, compute_fire_count, psum_wr_count;
+    integer final_count, ofm_count, ifm_write_count, compute_fire_count, psum_wr_count;
     integer drain_capture_count;
     reg signed [7:0] feat [0:CIN-1][0:FM_H-1][0:FM_W-1];
     reg signed [7:0] weight [0:K_TOTAL-1][0:COUT_TOTAL-1];
@@ -101,6 +112,9 @@ module tb_conv_layer_top_stream;
             dma_wr_fy = 0;
             dma_line_advance = 0;
             for (b = 0; b < 5; b = b + 1) dma_wr_data[b] = 0;
+            quant_mult_flat = {COLS*2{16'd1}};
+            quant_shift_flat = {COLS*2{4'd0}};
+            quant_zp_flat = {COLS*2{8'd0}};
         end
     endtask
 
@@ -202,6 +216,8 @@ module tb_conv_layer_top_stream;
             final_pkt[final_cout_base / COUT_TILE][final_addr] <= final_data;
             final_count <= final_count + 1;
         end
+        if (!rst && ofm_valid)
+            ofm_count <= ofm_count + 1;
         if (!rst && dut.u_top.feeder_ifm_valid)
             ifm_write_count <= ifm_write_count + 1;
         if (!rst && dut.compute_fire)
@@ -218,6 +234,7 @@ module tb_conv_layer_top_stream;
         pass = 0;
         fail = 0;
         final_count = 0;
+        ofm_count = 0;
         ifm_write_count = 0;
         compute_fire_count = 0;
         psum_wr_count = 0;
@@ -262,6 +279,10 @@ module tb_conv_layer_top_stream;
             $display("[FAIL] final_count got=%0d exp=%0d", final_count, PIXELS * (COUT_TOTAL / COUT_TILE));
             fail = fail + 1;
         end else pass = pass + 1;
+        if (ofm_count != PIXELS * (COUT_TOTAL / COUT_TILE)) begin
+            $display("[FAIL] ofm_count got=%0d exp=%0d", ofm_count, PIXELS * (COUT_TOTAL / COUT_TILE));
+            fail = fail + 1;
+        end else pass = pass + 1;
 
         for (idx = 0; idx < PIXELS; idx = idx + 1) begin
             for (co = 0; co < COUT_TOTAL; co = co + 2) begin
@@ -286,8 +307,8 @@ module tb_conv_layer_top_stream;
 
     initial begin
         repeat (12000) @(negedge clk);
-        $display("[FAIL] timeout done=%0d busy=%0d final_count=%0d ifm_wr=%0d fire=%0d psum_wr=%0d bias_req=%0d wgt_req=%0d fill_req=%0d cout=%0d k=%0d sched_state=%0d feeder_done=%0d compute_done=%0d drain_done=%0d drain_state=%0d psum_empty=%h rd_en=%h wptr0=%0d rptr0=%0d empty0=%0d",
-            done, busy, final_count, ifm_write_count, compute_fire_count, psum_wr_count,
+        $display("[FAIL] timeout done=%0d busy=%0d final_count=%0d ofm_count=%0d ifm_wr=%0d fire=%0d psum_wr=%0d bias_req=%0d wgt_req=%0d fill_req=%0d cout=%0d k=%0d sched_state=%0d feeder_done=%0d compute_done=%0d drain_done=%0d drain_state=%0d psum_empty=%h rd_en=%h wptr0=%0d rptr0=%0d empty0=%0d",
+            done, busy, final_count, ofm_count, ifm_write_count, compute_fire_count, psum_wr_count,
             bias_load_req, weight_load_req, feeder_fill_req,
             current_cout_base, current_pass_base_k, dut.u_sched.state, dut.feeder_done, dut.compute_done, dut.drain_done,
             dut.u_drain.state, dut.psum_fifo_empty, dut.psum_fifo_rd_en,

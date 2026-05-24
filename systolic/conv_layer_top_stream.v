@@ -22,7 +22,10 @@ module conv_layer_top_stream #(
     parameter COUT_TILE = 64,
     parameter WGT_TILE_AW = 11,
     parameter PSUM_BUF_AW = 10,
-    parameter PSUM_BUF_DEPTH = 1024
+    parameter PSUM_BUF_DEPTH = 1024,
+    parameter MULT_W = 16,
+    parameter SHIFT_W = 4,
+    parameter ZP_W = 8
 ) (
     input  clk,
     input  rst,
@@ -66,7 +69,15 @@ module conv_layer_top_stream #(
     output final_valid,
     output [PSUM_BUF_AW-1:0] final_addr,
     output [COLS*2*PSUM_W-1:0] final_data,
-    output [10:0] final_cout_base
+    output [10:0] final_cout_base,
+
+    input  [COLS*2*MULT_W-1:0]  quant_mult_flat,
+    input  [COLS*2*SHIFT_W-1:0] quant_shift_flat,
+    input  [COLS*2*ZP_W-1:0]    quant_zp_flat,
+    output                      ofm_valid,
+    output [PSUM_BUF_AW-1:0]    ofm_addr,
+    output [10:0]               ofm_cout_base,
+    output [COLS*2*8-1:0]       ofm_data
 );
     wire [10:0] sched_pass_base_k;
     wire [10:0] sched_cout_base;
@@ -239,4 +250,16 @@ module conv_layer_top_stream #(
     assign final_addr = drain_packet_addr;
     assign final_data = drain_packet_data;
     assign final_cout_base = sched_cout_base;
+
+    ofm_requant_writer #(
+        .COLS(COLS), .PSUM_W(PSUM_W), .MULT_W(MULT_W), .SHIFT_W(SHIFT_W),
+        .ZP_W(ZP_W), .ADDR_W(PSUM_BUF_AW)
+    ) u_ofm_requant (
+        .clk(clk), .rst(rst),
+        .packet_valid(final_valid), .packet_addr(final_addr),
+        .packet_cout_base(final_cout_base), .packet_data(final_data),
+        .mult_flat(quant_mult_flat), .shift_flat(quant_shift_flat), .zp_flat(quant_zp_flat),
+        .ofm_valid(ofm_valid), .ofm_addr(ofm_addr),
+        .ofm_cout_base(ofm_cout_base), .ofm_data(ofm_data)
+    );
 endmodule
