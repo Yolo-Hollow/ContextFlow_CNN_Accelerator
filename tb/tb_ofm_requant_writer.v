@@ -12,6 +12,7 @@ module tb_ofm_requant_writer;
     reg packet_valid;
     reg [ADDR_W-1:0] packet_addr;
     reg [10:0] packet_cout_base;
+    reg [COLS*2-1:0] packet_channel_valid;
     reg [COLS*2*PSUM_W-1:0] packet_data;
     reg [COLS*2*MULT_W-1:0] mult_flat;
     reg [COLS*2*SHIFT_W-1:0] shift_flat;
@@ -19,6 +20,7 @@ module tb_ofm_requant_writer;
     wire ofm_valid;
     wire [ADDR_W-1:0] ofm_addr;
     wire [10:0] ofm_cout_base;
+    wire [COLS*2-1:0] ofm_channel_valid;
     wire [COLS*2*8-1:0] ofm_data;
 
     ofm_requant_writer #(
@@ -27,10 +29,12 @@ module tb_ofm_requant_writer;
     ) dut (
         .clk(clk), .rst(rst),
         .packet_valid(packet_valid), .packet_addr(packet_addr),
-        .packet_cout_base(packet_cout_base), .packet_data(packet_data),
+        .packet_cout_base(packet_cout_base), .packet_channel_valid(packet_channel_valid),
+        .packet_data(packet_data),
         .mult_flat(mult_flat), .shift_flat(shift_flat), .zp_flat(zp_flat),
         .ofm_valid(ofm_valid), .ofm_addr(ofm_addr),
-        .ofm_cout_base(ofm_cout_base), .ofm_data(ofm_data)
+        .ofm_cout_base(ofm_cout_base), .ofm_channel_valid(ofm_channel_valid),
+        .ofm_data(ofm_data)
     );
 
     always #5 clk = ~clk;
@@ -79,6 +83,7 @@ module tb_ofm_requant_writer;
         packet_valid = 0;
         packet_addr = 0;
         packet_cout_base = 0;
+        packet_channel_valid = 8'b0000_0011;
         packet_data = 0;
         mult_flat = 0;
         shift_flat = 0;
@@ -111,6 +116,10 @@ module tb_ofm_requant_writer;
         end else pass = pass + 1;
         if (ofm_cout_base !== 11'd8) begin
             $display("[FAIL] cout_base got=%0d", ofm_cout_base);
+            fail = fail + 1;
+        end else pass = pass + 1;
+        if (ofm_channel_valid !== 8'b0000_0011) begin
+            $display("[FAIL] channel mask got=%b", ofm_channel_valid);
             fail = fail + 1;
         end else pass = pass + 1;
         for (i = 0; i < COLS*2; i = i + 1)

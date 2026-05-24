@@ -70,6 +70,7 @@ module conv_layer_top_stream #(
     output [PSUM_BUF_AW-1:0] final_addr,
     output [COLS*2*PSUM_W-1:0] final_data,
     output [10:0] final_cout_base,
+    output [COLS*2-1:0] final_channel_valid,
 
     input  [COLS*2*MULT_W-1:0]  quant_mult_flat,
     input  [COLS*2*SHIFT_W-1:0] quant_shift_flat,
@@ -77,10 +78,12 @@ module conv_layer_top_stream #(
     output                      ofm_valid,
     output [PSUM_BUF_AW-1:0]    ofm_addr,
     output [10:0]               ofm_cout_base,
+    output [COLS*2-1:0]         ofm_channel_valid,
     output [COLS*2*8-1:0]       ofm_data
 );
     wire [10:0] sched_pass_base_k;
     wire [10:0] sched_cout_base;
+    wire [10:0] sched_cout_valid;
     wire [15:0] sched_num_pixels;
     wire sched_first_pass;
     wire sched_final_pass;
@@ -104,6 +107,7 @@ module conv_layer_top_stream #(
         .clk(clk), .rst(rst), .start(start), .busy(busy), .done(done),
         .k_total(k_total), .cout_total(cout_total), .num_pixels(num_pixels),
         .pass_base_k(sched_pass_base_k), .cout_base(sched_cout_base),
+        .cout_valid(sched_cout_valid),
         .num_pixels_out(sched_num_pixels),
         .is_first_pass(sched_first_pass), .is_final_pass(sched_final_pass),
         .use_ext_psum(sched_use_ext_psum), .use_psum_stream(sched_use_psum_stream),
@@ -250,6 +254,12 @@ module conv_layer_top_stream #(
     assign final_addr = drain_packet_addr;
     assign final_data = drain_packet_data;
     assign final_cout_base = sched_cout_base;
+    genvar vc;
+    generate
+        for (vc = 0; vc < COLS*2; vc = vc + 1) begin : final_mask_gen
+            assign final_channel_valid[vc] = (vc < sched_cout_valid);
+        end
+    endgenerate
 
     ofm_requant_writer #(
         .COLS(COLS), .PSUM_W(PSUM_W), .MULT_W(MULT_W), .SHIFT_W(SHIFT_W),
@@ -257,9 +267,11 @@ module conv_layer_top_stream #(
     ) u_ofm_requant (
         .clk(clk), .rst(rst),
         .packet_valid(final_valid), .packet_addr(final_addr),
-        .packet_cout_base(final_cout_base), .packet_data(final_data),
+        .packet_cout_base(final_cout_base), .packet_channel_valid(final_channel_valid),
+        .packet_data(final_data),
         .mult_flat(quant_mult_flat), .shift_flat(quant_shift_flat), .zp_flat(quant_zp_flat),
         .ofm_valid(ofm_valid), .ofm_addr(ofm_addr),
-        .ofm_cout_base(ofm_cout_base), .ofm_data(ofm_data)
+        .ofm_cout_base(ofm_cout_base), .ofm_channel_valid(ofm_channel_valid),
+        .ofm_data(ofm_data)
     );
 endmodule

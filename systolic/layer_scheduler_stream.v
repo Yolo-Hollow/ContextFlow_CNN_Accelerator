@@ -25,6 +25,7 @@ module layer_scheduler_stream #(
 
     output reg [10:0] pass_base_k,
     output reg [10:0] cout_base,
+    output reg [10:0] cout_valid,
     output reg [15:0] num_pixels_out,
     output reg        is_first_pass,
     output reg        is_final_pass,
@@ -63,8 +64,10 @@ module layer_scheduler_stream #(
     localparam [10:0] COUT_STEP = COUT_TILE;
     wire last_k = (pass_base_k + K_STEP >= k_total);
     wire last_cout = (cout_base + COUT_STEP >= cout_total);
+    wire [10:0] cout_remaining = cout_total - cout_base;
 
     always @(*) begin
+        cout_valid = (cout_remaining < COUT_STEP) ? cout_remaining : COUT_STEP;
         is_first_pass = (pass_base_k == 11'd0);
         is_final_pass = last_k;
         use_ext_psum = (pass_base_k != 11'd0);

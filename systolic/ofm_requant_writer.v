@@ -14,6 +14,7 @@ module ofm_requant_writer #(
     input  packet_valid,
     input  [ADDR_W-1:0] packet_addr,
     input  [10:0] packet_cout_base,
+    input  [COLS*2-1:0] packet_channel_valid,
     input  [COLS*2*PSUM_W-1:0] packet_data,
 
     input  [COLS*2*MULT_W-1:0]  mult_flat,
@@ -23,23 +24,29 @@ module ofm_requant_writer #(
     output                      ofm_valid,
     output reg [ADDR_W-1:0]     ofm_addr,
     output reg [10:0]           ofm_cout_base,
+    output reg [COLS*2-1:0]     ofm_channel_valid,
     output [COLS*2*8-1:0]       ofm_data
 );
     reg [ADDR_W-1:0] addr_r1;
     reg [10:0] cout_r1;
+    reg [COLS*2-1:0] mask_r1;
     always @(posedge clk) begin
         if (rst) begin
             addr_r1 <= {ADDR_W{1'b0}};
             cout_r1 <= 11'd0;
+            mask_r1 <= {COLS*2{1'b0}};
             ofm_addr <= {ADDR_W{1'b0}};
             ofm_cout_base <= 11'd0;
+            ofm_channel_valid <= {COLS*2{1'b0}};
         end else begin
             if (packet_valid) begin
                 addr_r1 <= packet_addr;
                 cout_r1 <= packet_cout_base;
+                mask_r1 <= packet_channel_valid;
             end
             ofm_addr <= addr_r1;
             ofm_cout_base <= cout_r1;
+            ofm_channel_valid <= mask_r1;
         end
     end
 
