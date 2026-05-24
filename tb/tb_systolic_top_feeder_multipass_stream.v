@@ -1,6 +1,6 @@
 `timescale 1ns / 1ps
 
-module tb_systolic_top_feeder_multipass_pingpong;
+module tb_systolic_top_feeder_multipass_stream;
     localparam ROWS = 32;
     localparam COLS = 4;
     localparam IFM_W = 8;
@@ -14,6 +14,9 @@ module tb_systolic_top_feeder_multipass_pingpong;
     localparam PSUM_AW = 4;
     localparam FM_W = 5;
     localparam FM_H = 5;
+    localparam OFM_W = 3;
+    localparam OFM_H = 3;
+    localparam PIXELS = OFM_W * OFM_H;
     localparam CIN = 5;
     localparam K_TOTAL = CIN * 3 * 3;
     localparam COUT = COLS * 2;
@@ -21,7 +24,7 @@ module tb_systolic_top_feeder_multipass_pingpong;
     localparam [31:0] ROW_MASK = (32'h1 << ROWS) - 1;
 
     reg clk, rst, feeder_start, compute_start;
-    wire feeder_done, feeder_busy, compute_done;
+    wire feeder_done, feeder_busy, compute_done, compute_fire;
     wire feeder_fill_req;
     wire [8:0] feeder_fill_fy;
     reg [4:0] dma_bank_wr_en;
@@ -32,8 +35,10 @@ module tb_systolic_top_feeder_multipass_pingpong;
     reg [10:0] pass_base_k;
     reg [5:0] bias_wr_addr;
     reg [PSUM_W-1:0] bias_wr_data;
-    reg bias_wr_en, is_first_pass, use_ext_psum;
+    reg bias_wr_en, is_first_pass, use_ext_psum, use_psum_stream;
     reg [COLS*2*PSUM_W-1:0] psum_top_ext;
+    wire [COLS*2*PSUM_W-1:0] psum_stream_data;
+    wire psum_stream_valid;
     reg [31:0] wgt_fifo_wr_en;
     reg [ROWS*WGT_W*2-1:0] wgt_fifo_wr_data;
     wire [31:0] wgt_fifo_full;
@@ -52,46 +57,62 @@ module tb_systolic_top_feeder_multipass_pingpong;
         .clk(clk), .rst(rst),
         .feeder_start(feeder_start), .feeder_done(feeder_done), .feeder_busy(feeder_busy),
         .feeder_fill_req(feeder_fill_req), .feeder_fill_fy(feeder_fill_fy),
-        .compute_start(compute_start), .num_pixels(16'd1), .compute_done(compute_done),
-        .fm_h(9'd5), .fm_w(9'd5), .ofm_h(9'd1), .ofm_w(9'd1),
+        .compute_start(compute_start), .num_pixels(16'd9), .compute_done(compute_done),
+        .compute_fire_out(compute_fire),
+        .fm_h(9'd5), .fm_w(9'd5), .ofm_h(9'd3), .ofm_w(9'd3),
         .conv_stride(2'd1), .conv_pad(2'd0), .pass_base_k(pass_base_k),
         .dma_bank_wr_en(dma_bank_wr_en), .dma_wr_x(dma_wr_x), .dma_wr_fy(dma_wr_fy),
         .dma_wr_data(dma_wr_data), .dma_line_advance(dma_line_advance),
         .bias_wr_addr(bias_wr_addr), .bias_wr_data(bias_wr_data), .bias_wr_en(bias_wr_en),
         .is_first_pass(is_first_pass), .psum_top_ext(psum_top_ext), .use_ext_psum(use_ext_psum),
-        .psum_stream_data({COLS*2*PSUM_W{1'b0}}), .psum_stream_valid(1'b0), .use_psum_stream(1'b0),
+        .psum_stream_data(psum_stream_data), .psum_stream_valid(psum_stream_valid),
+        .use_psum_stream(use_psum_stream),
         .wgt_fifo_wr_en(wgt_fifo_wr_en), .wgt_fifo_wr_data(wgt_fifo_wr_data),
         .wgt_fifo_full(wgt_fifo_full),
         .psum_fifo_rd_en(psum_fifo_rd_en), .psum_fifo_rd_data(psum_fifo_rd_data),
         .psum_fifo_empty(psum_fifo_empty), .ifm_fifo_full(ifm_fifo_full)
     );
 
-    reg pp_wr_en, pp_wr_bank, pp_rd_en, pp_rd_bank;
-    reg [3:0] pp_wr_addr, pp_rd_addr;
+    reg pp_wr_en, pp_wr_bank;
+    reg [3:0] pp_wr_addr;
     reg [COLS*2*PSUM_W-1:0] pp_wr_data;
+    wire pp_rd_en, pp_rd_bank;
+    wire [3:0] pp_rd_addr;
     wire [COLS*2*PSUM_W-1:0] pp_rd_data;
     wire pp_rd_valid;
+    wire [3:0] psum_pixel_addr;
 
-    psum_pingpong_buffer #(
-        .DATA_W(COLS*2*PSUM_W), .DEPTH(1), .AW(4)
-    ) u_pp (
+    psum_pingpong_buffer #(.DATA_W(COLS*2*PSUM_W), .DEPTH(PIXELS), .AW(4)) u_pp (
         .clk(clk), .rst(rst),
         .wr_en(pp_wr_en), .wr_bank(pp_wr_bank), .wr_addr(pp_wr_addr), .wr_data(pp_wr_data),
         .rd_en(pp_rd_en), .rd_bank(pp_rd_bank), .rd_addr(pp_rd_addr),
         .rd_data(pp_rd_data), .rd_valid(pp_rd_valid)
     );
 
+    psum_stream_feeder #(.DATA_W(COLS*2*PSUM_W), .AW(4)) u_psum_stream (
+        .clk(clk), .rst(rst), .start(compute_start), .compute_fire(compute_fire),
+        .is_first_pass(is_first_pass), .use_ext_psum(use_ext_psum),
+        .bias_data({COLS*2*PSUM_W{1'b0}}),
+        .rd_bank(1'b0), .rd_en(pp_rd_en), .rd_bank_out(pp_rd_bank), .rd_addr(pp_rd_addr),
+        .rd_data(pp_rd_data), .rd_valid(pp_rd_valid),
+        .psum_top_data(psum_stream_data), .psum_top_valid(psum_stream_valid),
+        .pixel_addr(psum_pixel_addr)
+    );
+
     always #5 clk = ~clk;
 
     integer pass, fail;
-    integer b, y, x, r, c, co, k, lane, ch, ker, ky, kx, ch_i, n;
+    integer b, y, x, r, c, co, k, lane, ch, ker, ky, kx, ch_i, n, idx;
+    integer phase;
     reg signed [7:0] feat [0:CIN-1][0:FM_H-1][0:FM_W-1];
     reg signed [7:0] weight [0:K_TOTAL-1][0:COUT-1];
     reg signed [PSUM_W-1:0] bias [0:COUT-1];
-    reg signed [PSUM_W-1:0] golden_partial [0:COUT-1];
-    reg signed [PSUM_W-1:0] golden_final [0:COUT-1];
+    reg signed [PSUM_W-1:0] golden_partial [0:PIXELS-1][0:COUT-1];
+    reg signed [PSUM_W-1:0] golden_final [0:PIXELS-1][0:COUT-1];
     reg [ROWS*WGT_W*2-1:0] wtmp;
-    reg [COLS*2*PSUM_W-1:0] pass0_pkt, final_pkt;
+    reg [COLS*2*PSUM_W-1:0] pass0_pkt [0:PIXELS-1];
+    reg [COLS*2*PSUM_W-1:0] final_pkt [0:PIXELS-1];
+    integer out_count;
     reg signed [PSUM_W-1:0] got0, got1;
 
     task clear_inputs;
@@ -112,9 +133,6 @@ module tb_systolic_top_feeder_multipass_pingpong;
             pp_wr_bank = 0;
             pp_wr_addr = 0;
             pp_wr_data = 0;
-            pp_rd_en = 0;
-            pp_rd_bank = 0;
-            pp_rd_addr = 0;
             for (b = 0; b < 5; b = b + 1) dma_wr_data[b] = 0;
         end
     endtask
@@ -190,27 +208,54 @@ module tb_systolic_top_feeder_multipass_pingpong;
         end
     endtask
 
-    task read_non_bias_result;
+    task read_results;
         input [PSUM_W-1:0] baseline_col0;
-        output [COLS*2*PSUM_W-1:0] pkt;
-        integer found;
+        integer found_guard;
         begin
-            pkt = 0;
-            found = 0;
-            for (n = 0; n < 64 && found == 0; n = n + 1) begin
+            out_count = 0;
+            found_guard = 0;
+            while (out_count < PIXELS && found_guard < 256) begin
                 wait ((psum_fifo_empty & COL_MASK) == 0);
                 psum_fifo_rd_en = COL_MASK;
                 @(negedge clk);
                 psum_fifo_rd_en = 0;
                 @(negedge clk);
                 if (psum_fifo_rd_data[PSUM_W-1:0] !== baseline_col0) begin
-                    pkt = psum_fifo_rd_data;
-                    found = 1;
+                    if (is_first_pass) pass0_pkt[out_count] = psum_fifo_rd_data;
+                    else final_pkt[out_count] = psum_fifo_rd_data;
+                    out_count = out_count + 1;
                 end
+                found_guard = found_guard + 1;
             end
-            if (found == 0) begin
-                $display("[FAIL] no non-baseline psum result found");
+            if (out_count != PIXELS) begin
+                $display("[FAIL] read result count got=%0d exp=%0d", out_count, PIXELS);
                 fail = fail + 1;
+            end
+        end
+    endtask
+
+    task check_packets;
+        input integer final_check;
+        begin
+            for (idx = 0; idx < PIXELS; idx = idx + 1) begin
+                for (c = 0; c < COLS; c = c + 1) begin
+                    got0 = final_check ? final_pkt[idx][(2*c)*PSUM_W +: PSUM_W]
+                                       : pass0_pkt[idx][(2*c)*PSUM_W +: PSUM_W];
+                    got1 = final_check ? final_pkt[idx][(2*c+1)*PSUM_W +: PSUM_W]
+                                       : pass0_pkt[idx][(2*c+1)*PSUM_W +: PSUM_W];
+                    if (got0 !== (final_check ? golden_final[idx][2*c] : golden_partial[idx][2*c])) begin
+                        $display("[FAIL] %s pixel%0d cout%0d got=%0d exp=%0d",
+                            final_check ? "final" : "partial", idx, 2*c, got0,
+                            final_check ? golden_final[idx][2*c] : golden_partial[idx][2*c]);
+                        fail = fail + 1;
+                    end else pass = pass + 1;
+                    if (got1 !== (final_check ? golden_final[idx][2*c+1] : golden_partial[idx][2*c+1])) begin
+                        $display("[FAIL] %s pixel%0d cout%0d got=%0d exp=%0d",
+                            final_check ? "final" : "partial", idx, 2*c+1, got1,
+                            final_check ? golden_final[idx][2*c+1] : golden_partial[idx][2*c+1]);
+                        fail = fail + 1;
+                    end else pass = pass + 1;
+                end
             end
         end
     endtask
@@ -230,9 +275,11 @@ module tb_systolic_top_feeder_multipass_pingpong;
         rst = 1;
         pass = 0;
         fail = 0;
+        phase = 0;
         pass_base_k = 0;
         is_first_pass = 1'b1;
         use_ext_psum = 1'b0;
+        use_psum_stream = 1'b0;
         psum_top_ext = 0;
         clear_inputs();
 
@@ -247,94 +294,71 @@ module tb_systolic_top_feeder_multipass_pingpong;
 
         for (co = 0; co < COUT; co = co + 1) begin
             bias[co] = co*7 - 19;
-            golden_partial[co] = bias[co];
-            golden_final[co] = bias[co];
-            for (k = 0; k < K_TOTAL; k = k + 1) begin
-                ch = k / 9;
-                ker = k % 9;
-                ky = ker / 3;
-                kx = ker % 3;
-                if (k < 32)
-                    golden_partial[co] = golden_partial[co] + feat[ch][ky][kx] * weight[k][co];
-                golden_final[co] = golden_final[co] + feat[ch][ky][kx] * weight[k][co];
+            for (idx = 0; idx < PIXELS; idx = idx + 1) begin
+                y = idx / OFM_W;
+                x = idx % OFM_W;
+                golden_partial[idx][co] = bias[co];
+                golden_final[idx][co] = bias[co];
+                for (k = 0; k < K_TOTAL; k = k + 1) begin
+                    ch = k / 9;
+                    ker = k % 9;
+                    ky = ker / 3;
+                    kx = ker % 3;
+                    if (k < 32)
+                        golden_partial[idx][co] = golden_partial[idx][co] + feat[ch][y+ky][x+kx] * weight[k][co];
+                    golden_final[idx][co] = golden_final[idx][co] + feat[ch][y+ky][x+kx] * weight[k][co];
+                end
             end
         end
 
         repeat (3) @(negedge clk);
         rst = 0;
         repeat (2) @(negedge clk);
-
         load_bias();
 
+        phase = 1;
         pass_base_k = 11'd0;
         is_first_pass = 1'b1;
         use_ext_psum = 1'b0;
-        psum_top_ext = 0;
+        use_psum_stream = 1'b0;
         load_weights_tile(0);
         run_feeder_and_compute();
-        read_non_bias_result(bias[0], pass0_pkt);
+        phase = 2;
+        read_results(bias[0]);
+        phase = 3;
+        check_packets(0);
 
-        pp_wr_en = 1'b1;
-        pp_wr_bank = 1'b0;
-        pp_wr_addr = 4'd0;
-        pp_wr_data = pass0_pkt;
-        @(negedge clk);
-        pp_wr_en = 1'b0;
-
-        for (c = 0; c < COLS; c = c + 1) begin
-            got0 = pass0_pkt[(2*c)*PSUM_W +: PSUM_W];
-            got1 = pass0_pkt[(2*c+1)*PSUM_W +: PSUM_W];
-            if (got0 !== golden_partial[2*c]) begin
-                $display("[FAIL] pass0 cout%0d got=%0d exp=%0d", 2*c, got0, golden_partial[2*c]);
-                fail = fail + 1;
-            end else pass = pass + 1;
-            if (got1 !== golden_partial[2*c+1]) begin
-                $display("[FAIL] pass0 cout%0d got=%0d exp=%0d", 2*c+1, got1, golden_partial[2*c+1]);
-                fail = fail + 1;
-            end else pass = pass + 1;
+        phase = 4;
+        for (idx = 0; idx < PIXELS; idx = idx + 1) begin
+            pp_wr_en = 1'b1;
+            pp_wr_bank = 1'b0;
+            pp_wr_addr = idx[3:0];
+            pp_wr_data = pass0_pkt[idx];
+            @(negedge clk);
+            pp_wr_en = 1'b0;
         end
 
-        pp_rd_en = 1'b1;
-        pp_rd_bank = 1'b0;
-        pp_rd_addr = 4'd0;
-        @(negedge clk);
-        pp_rd_en = 1'b0;
-        if (pp_rd_valid !== 1'b1 || pp_rd_data !== pass0_pkt) begin
-            $display("[FAIL] pingpong readback mismatch");
-            fail = fail + 1;
-        end else begin
-            pass = pass + 1;
-        end
-        psum_top_ext = pp_rd_data;
-
+        phase = 5;
         pass_base_k = 11'd32;
         is_first_pass = 1'b0;
         use_ext_psum = 1'b1;
+        use_psum_stream = 1'b1;
         load_weights_tile(32);
         run_feeder_and_compute();
-        read_non_bias_result(pass0_pkt[PSUM_W-1:0], final_pkt);
+        phase = 6;
+        read_results(pass0_pkt[0][PSUM_W-1:0]);
+        phase = 7;
+        check_packets(1);
 
-        for (c = 0; c < COLS; c = c + 1) begin
-            got0 = final_pkt[(2*c)*PSUM_W +: PSUM_W];
-            got1 = final_pkt[(2*c+1)*PSUM_W +: PSUM_W];
-            if (got0 !== golden_final[2*c]) begin
-                $display("[FAIL] final cout%0d got=%0d exp=%0d", 2*c, got0, golden_final[2*c]);
-                fail = fail + 1;
-            end else pass = pass + 1;
-            if (got1 !== golden_final[2*c+1]) begin
-                $display("[FAIL] final cout%0d got=%0d exp=%0d", 2*c+1, got1, golden_final[2*c+1]);
-                fail = fail + 1;
-            end else pass = pass + 1;
-        end
-
-        $display("=== tb_systolic_top_feeder_multipass_pingpong: %0d pass, %0d fail ===", pass, fail);
+        $display("=== tb_systolic_top_feeder_multipass_stream: %0d pass, %0d fail ===", pass, fail);
         if (fail != 0) $fatal(1);
         $finish;
     end
 
     initial begin
-        repeat (2000) @(negedge clk);
-        $display("[FAIL] timeout feeder_done=%0d compute_done=%0d", feeder_done, compute_done);
+        repeat (3000) @(negedge clk);
+        $display("[FAIL] timeout phase=%0d feeder_done=%0d compute_done=%0d out_count=%0d empty=%h psum_valid=%0d psum_addr=%0d",
+            phase, feeder_done, compute_done, out_count, psum_fifo_empty, psum_stream_valid, psum_pixel_addr);
         $fatal(1);
     end
 endmodule

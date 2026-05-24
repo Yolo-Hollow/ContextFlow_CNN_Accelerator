@@ -33,6 +33,7 @@ $tests = @(
     @{ Top = "tb_window_top_singlepass"; Files = @("tb/tb_window_top_singlepass.v") },
     @{ Top = "tb_systolic_top_feeder_singlepass"; Files = @("tb/tb_systolic_top_feeder_singlepass.v") },
     @{ Top = "tb_systolic_top_feeder_multipass_pingpong"; Files = @("tb/tb_systolic_top_feeder_multipass_pingpong.v") },
+    @{ Top = "tb_systolic_top_feeder_multipass_stream"; Files = @("tb/tb_systolic_top_feeder_multipass_stream.v") },
     @{ Top = "tb_layer_scheduler_small"; Files = @("tb/tb_layer_scheduler_small.v") },
     @{ Top = "tb_psum_pingpong_buffer"; Files = @("tb/tb_psum_pingpong_buffer.v") },
     @{ Top = "tb_psum_stream_feeder"; Files = @("tb/tb_psum_stream_feeder.v") },
