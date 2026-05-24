@@ -1,8 +1,8 @@
 `timescale 1ns / 1ps
 // Drain one spatial block from systolic_top PSUM FIFOs.
 //
-// The systolic array can emit initial top-row bias/previous-psum packets before
-// real accumulated results. baseline_col0 filters those packets by column-0.
+// Drain exactly num_pixels valid packets from the PSUM FIFOs.
+// baseline_col0 is retained for interface compatibility with earlier tests.
 module psum_drain_writer #(
     parameter COLS = 32,
     parameter PSUM_W = 32,
@@ -38,7 +38,6 @@ module psum_drain_writer #(
     reg [AW-1:0] count;
 
     wire fifos_ready = ((psum_fifo_empty & COL_MASK) == 32'd0);
-    wire is_baseline = (psum_fifo_rd_data[PSUM_W-1:0] == baseline_col0);
     wire [15:0] pixels_to_drain = (num_pixels == 16'd0) ? 16'd1 : num_pixels;
 
     assign psum_fifo_rd_en = (state == ST_READ) ? COL_MASK : 32'd0;
@@ -78,19 +77,15 @@ module psum_drain_writer #(
                 end
 
                 ST_CAPTURE: begin
-                    if (!is_baseline) begin
-                        packet_valid <= 1'b1;
-                        packet_addr <= count;
-                        packet_data <= psum_fifo_rd_data;
-                        if (count == pixels_to_drain[AW-1:0] - 1'b1) begin
-                            busy <= 1'b0;
-                            done <= 1'b1;
-                            state <= ST_IDLE;
-                        end else begin
-                            count <= count + 1'b1;
-                            state <= ST_WAIT;
-                        end
+                    packet_valid <= 1'b1;
+                    packet_addr <= count;
+                    packet_data <= psum_fifo_rd_data;
+                    if (count == pixels_to_drain[AW-1:0] - 1'b1) begin
+                        busy <= 1'b0;
+                        done <= 1'b1;
+                        state <= ST_IDLE;
                     end else begin
+                        count <= count + 1'b1;
                         state <= ST_WAIT;
                     end
                 end

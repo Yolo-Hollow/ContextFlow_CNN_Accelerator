@@ -1,3 +1,8 @@
+param(
+    [string[]] $Top = @(),
+    [switch] $IncludeLong
+)
+
 $ErrorActionPreference = "Stop"
 
 $root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
@@ -67,6 +72,29 @@ $tests = @(
     @{ Top = "tb_linebuf_stream"; Files = @("tb/tb_linebuf_stream.v") },
     @{ Top = "tb_requant"; Files = @("tb/tb_requant.v") }
 )
+
+$longTests = @(
+    @{ Top = "tb_conv_accel_core_realistic_small"; Files = @("tb/tb_conv_accel_core_realistic_small.v") }
+)
+
+if ($IncludeLong) {
+    $tests += $longTests
+}
+
+if ($Top.Count -gt 0) {
+    $allTests = $tests + $longTests
+    $topNames = @()
+    foreach ($entry in $Top) {
+        $topNames += ($entry -split "," | Where-Object { $_ -ne "" })
+    }
+    $selected = @()
+    foreach ($name in $topNames) {
+        $match = $allTests | Where-Object { $_.Top -eq $name }
+        if ($null -eq $match) { throw "unknown test top: $name" }
+        $selected += $match
+    }
+    $tests = $selected
+}
 
 foreach ($test in $tests) {
     $top = $test.Top

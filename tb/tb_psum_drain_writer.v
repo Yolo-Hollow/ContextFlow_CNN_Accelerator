@@ -104,9 +104,9 @@ module tb_psum_drain_writer;
         put_word(4, 0, 32'd31);
         put_word(4, 1, 32'd32);
 
-        expected_pkt[0] = source_pkt[1];
-        expected_pkt[1] = source_pkt[3];
-        expected_pkt[2] = source_pkt[4];
+        expected_pkt[0] = source_pkt[0];
+        expected_pkt[1] = source_pkt[1];
+        expected_pkt[2] = source_pkt[2];
 
         repeat (3) @(negedge clk);
         rst = 0;
@@ -123,7 +123,7 @@ module tb_psum_drain_writer;
         repeat (2) @(negedge clk);
 
         check_equal(pkt_count, 3, "packet count");
-        check_equal(rd_count, 5, "read count");
+        check_equal(rd_count, 3, "read count");
         check_equal(busy, 0, "busy clear");
 
         $display("=== tb_psum_drain_writer: %0d pass, %0d fail ===", pass, fail);
