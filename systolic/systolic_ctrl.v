@@ -6,10 +6,12 @@ module systolic_ctrl #(
     input  clk, rst,
     input  start,
     input  [15:0] num_pixels,
+    input  compute_ready,
     output reg done,
     output reg w_load,
     output reg [4:0] w_col,
     output reg compute_active,
+    output compute_fire,
     output reg compute_start_pulse,   // 1-cycle pulse when COMPUTE begins
     output reg pre_write              // 1 cycle before compute_active (FIFO pre-fill)
 );
@@ -23,6 +25,7 @@ module systolic_ctrl #(
     reg [15:0] compute_cnt;
     reg [15:0] drain_cnt;
     wire [15:0] pixels_to_run = (num_pixels == 16'd0) ? 16'd1 : num_pixels;
+    assign compute_fire = (state == COMPUTE) && compute_ready;
 
     always @(posedge clk) begin
         if (rst) state <= IDLE;
@@ -34,7 +37,7 @@ module systolic_ctrl #(
         case (state)
             IDLE:         if (start)            next_state = WEIGHT_LOAD;
             WEIGHT_LOAD:  if (w_col == COLS-1)  next_state = COMPUTE;
-            COMPUTE:      if (compute_cnt == pixels_to_run - 1'b1) next_state = DRAIN;
+            COMPUTE:      if (compute_fire && compute_cnt == pixels_to_run - 1'b1) next_state = DRAIN;
             DRAIN:        if (drain_cnt == TAIL_CYCLES - 1) next_state = IDLE;
             default:                            next_state = IDLE;
         endcase
@@ -48,7 +51,7 @@ module systolic_ctrl #(
     end
     always @(posedge clk) begin
         if (rst) compute_cnt <= 16'd0;
-        else if (state == COMPUTE) compute_cnt <= compute_cnt + 16'd1;
+        else if (compute_fire) compute_cnt <= compute_cnt + 16'd1;
         else compute_cnt <= 16'd0;
     end
     always @(posedge clk) begin

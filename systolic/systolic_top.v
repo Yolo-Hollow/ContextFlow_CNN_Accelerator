@@ -54,11 +54,17 @@ module systolic_top #(
     wire ctrl_w_load, ctrl_compute_start, ctrl_pre_write;
     wire [4:0] ctrl_w_col;
     wire compute_active;
+    wire compute_fire;
+    wire [ROWS*IFM_W-1:0] ifm_fifo_rd_data;
+    wire [31:0] ifm_fifo_empty;
+    wire compute_ready = !ifm_fifo_empty[0];
 
     systolic_ctrl #(.ROWS(ROWS), .COLS(COLS)) u_ctrl (
-        .clk(clk), .rst(rst), .start(start), .num_pixels(num_pixels), .done(done),
+        .clk(clk), .rst(rst), .start(start), .num_pixels(num_pixels),
+        .compute_ready(compute_ready), .done(done),
         .w_load(ctrl_w_load), .w_col(ctrl_w_col),
         .compute_active(compute_active),
+        .compute_fire(compute_fire),
         .compute_start_pulse(ctrl_compute_start),
         .pre_write(ctrl_pre_write)
     );
@@ -113,15 +119,12 @@ module systolic_top #(
     );
 
     // ---- IFM FIFOs (32 × 8-bit) + stagger chain ----
-    wire [ROWS*IFM_W-1:0] ifm_fifo_rd_data;
-    wire [31:0] ifm_fifo_empty;
-
     wire [ROWS-1:0] ifm_rd_stagger;
-    assign ifm_rd_stagger[0] = compute_active;
+    assign ifm_rd_stagger[0] = compute_fire;
     generate
         for (r = 1; r < ROWS; r = r + 1) begin : stagger_gen
             com_shift_reg #(.DEPTH(r*5), .WIDTH(1)) u_stag (
-                .clk(clk), .rst(rst), .si(compute_active), .so(ifm_rd_stagger[r]));
+                .clk(clk), .rst(rst), .si(compute_fire), .so(ifm_rd_stagger[r]));
         end
     endgenerate
 
