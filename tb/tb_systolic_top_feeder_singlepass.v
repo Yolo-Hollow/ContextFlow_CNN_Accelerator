@@ -14,8 +14,8 @@ module tb_systolic_top_feeder_singlepass;
     localparam PSUM_AW = 4;
     localparam FM_W = 5;
     localparam FM_H = 5;
-    localparam OFM_W = 1;
-    localparam OFM_H = 1;
+    localparam OFM_W = 3;
+    localparam OFM_H = 3;
     localparam [31:0] COL_MASK = (32'h1 << COLS) - 1;
     localparam [31:0] ROW_MASK = (32'h1 << ROWS) - 1;
 
@@ -49,8 +49,8 @@ module tb_systolic_top_feeder_singlepass;
         .clk(clk), .rst(rst),
         .feeder_start(feeder_start), .feeder_done(feeder_done), .feeder_busy(feeder_busy),
         .feeder_fill_req(feeder_fill_req), .feeder_fill_fy(feeder_fill_fy),
-        .compute_start(compute_start), .num_pixels(16'd1), .compute_done(compute_done),
-        .fm_h(9'd5), .fm_w(9'd5), .ofm_h(9'd1), .ofm_w(9'd1),
+        .compute_start(compute_start), .num_pixels(16'd9), .compute_done(compute_done),
+        .fm_h(9'd5), .fm_w(9'd5), .ofm_h(9'd3), .ofm_w(9'd3),
         .conv_stride(2'd1), .conv_pad(2'd0), .pass_base_k(11'd0),
         .dma_bank_wr_en(dma_bank_wr_en), .dma_wr_x(dma_wr_x), .dma_wr_fy(dma_wr_fy),
         .dma_wr_data(dma_wr_data), .dma_line_advance(dma_line_advance),
@@ -71,11 +71,11 @@ module tb_systolic_top_feeder_singlepass;
     reg signed [7:0] w1 [0:ROWS-1][0:COLS-1];
     reg signed [PSUM_W-1:0] bias0 [0:COLS-1];
     reg signed [PSUM_W-1:0] bias1 [0:COLS-1];
-    reg signed [PSUM_W-1:0] exp0 [0:OFM_W-1][0:COLS-1];
-    reg signed [PSUM_W-1:0] exp1 [0:OFM_W-1][0:COLS-1];
+    reg signed [PSUM_W-1:0] exp0 [0:OFM_H-1][0:OFM_W-1][0:COLS-1];
+    reg signed [PSUM_W-1:0] exp1 [0:OFM_H-1][0:OFM_W-1][0:COLS-1];
     reg signed [PSUM_W-1:0] got0, got1;
     reg [ROWS*WGT_W*2-1:0] wtmp;
-    reg [COLS*PSUM_W*2-1:0] got_packed [0:OFM_W-1];
+    reg [COLS*PSUM_W*2-1:0] got_packed [0:OFM_H*OFM_W-1];
     integer out_count;
 
     task write_row;
@@ -129,13 +129,13 @@ module tb_systolic_top_feeder_singlepass;
     task read_non_bias_results;
         begin
             out_count = 0;
-            for (n = 0; n < 64 && out_count < OFM_W; n = n + 1) begin
+            for (n = 0; n < 128 && out_count < OFM_H*OFM_W; n = n + 1) begin
                 wait ((psum_fifo_empty & COL_MASK) == 0);
                 psum_fifo_rd_en = COL_MASK;
                 @(negedge clk);
                 psum_fifo_rd_en = 0;
                 @(negedge clk);
-                if (psum_fifo_rd_data[PSUM_W-1:0] !== bias0[0] && out_count < OFM_W) begin
+                if (psum_fifo_rd_data[PSUM_W-1:0] !== bias0[0] && out_count < OFM_H*OFM_W) begin
                     got_packed[out_count] = psum_fifo_rd_data;
                     out_count = out_count + 1;
                 end
@@ -187,16 +187,18 @@ module tb_systolic_top_feeder_singlepass;
         for (c = 0; c < COLS; c = c + 1) begin
             bias0[c] = 17 + c;
             bias1[c] = -23 - c;
-            for (x = 0; x < OFM_W; x = x + 1) begin
-                exp0[x][c] = bias0[c];
-                exp1[x][c] = bias1[c];
-                for (lane = 0; lane < ROWS; lane = lane + 1) begin
-                    ch = (lane / 9) % 5;
-                    ker = lane % 9;
-                    ky = ker / 3;
-                    kx = ker % 3;
-                    exp0[x][c] = exp0[x][c] + feat[ch][ky][kx + x] * w0[lane][c];
-                    exp1[x][c] = exp1[x][c] + feat[ch][ky][kx + x] * w1[lane][c];
+            for (y = 0; y < OFM_H; y = y + 1) begin
+                for (x = 0; x < OFM_W; x = x + 1) begin
+                    exp0[y][x][c] = bias0[c];
+                    exp1[y][x][c] = bias1[c];
+                    for (lane = 0; lane < ROWS; lane = lane + 1) begin
+                        ch = (lane / 9) % 5;
+                        ker = lane % 9;
+                        ky = ker / 3;
+                        kx = ker % 3;
+                        exp0[y][x][c] = exp0[y][x][c] + feat[ch][y + ky][x + kx] * w0[lane][c];
+                        exp1[y][x][c] = exp1[y][x][c] + feat[ch][y + ky][x + kx] * w1[lane][c];
+                    end
                 end
             end
         end
@@ -221,23 +223,27 @@ module tb_systolic_top_feeder_singlepass;
         @(negedge clk);
         read_non_bias_results();
 
-        if (out_count != OFM_W) begin
-            $display("[FAIL] output count got=%0d exp=%0d", out_count, OFM_W);
+        if (out_count != OFM_H*OFM_W) begin
+            $display("[FAIL] output count got=%0d exp=%0d", out_count, OFM_H*OFM_W);
             fail = fail + 1;
         end else pass = pass + 1;
 
-        for (x = 0; x < OFM_W; x = x + 1) begin
-            for (c = 0; c < COLS; c = c + 1) begin
-                got0 = got_packed[x][(2*c)*PSUM_W +: PSUM_W];
-                got1 = got_packed[x][(2*c+1)*PSUM_W +: PSUM_W];
-                if (got0 !== exp0[x][c]) begin
-                    $display("[FAIL] ox%0d col%0d a got=%0d exp=%0d", x, c, got0, exp0[x][c]);
-                    fail = fail + 1;
-                end else pass = pass + 1;
-                if (got1 !== exp1[x][c]) begin
-                    $display("[FAIL] ox%0d col%0d b got=%0d exp=%0d", x, c, got1, exp1[x][c]);
-                    fail = fail + 1;
-                end else pass = pass + 1;
+        for (y = 0; y < OFM_H; y = y + 1) begin
+            for (x = 0; x < OFM_W; x = x + 1) begin
+                for (c = 0; c < COLS; c = c + 1) begin
+                    got0 = got_packed[y*OFM_W+x][(2*c)*PSUM_W +: PSUM_W];
+                    got1 = got_packed[y*OFM_W+x][(2*c+1)*PSUM_W +: PSUM_W];
+                    if (got0 !== exp0[y][x][c]) begin
+                        $display("[FAIL] pixel(%0d,%0d) col%0d a got=%0d exp=%0d",
+                            y, x, c, got0, exp0[y][x][c]);
+                        fail = fail + 1;
+                    end else pass = pass + 1;
+                    if (got1 !== exp1[y][x][c]) begin
+                        $display("[FAIL] pixel(%0d,%0d) col%0d b got=%0d exp=%0d",
+                            y, x, c, got1, exp1[y][x][c]);
+                        fail = fail + 1;
+                    end else pass = pass + 1;
+                end
             end
         end
 
