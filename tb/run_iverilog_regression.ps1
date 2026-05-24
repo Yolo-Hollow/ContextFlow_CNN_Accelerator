@@ -74,7 +74,8 @@ $tests = @(
 )
 
 $longTests = @(
-    @{ Top = "tb_conv_accel_core_realistic_small"; Files = @("tb/tb_conv_accel_core_realistic_small.v") }
+    @{ Top = "tb_conv_accel_core_realistic_small"; Files = @("tb/tb_conv_accel_core_realistic_small.v") },
+    @{ Top = "tb_layer_scheduler_cout64_fulltile"; Files = @("tb/tb_layer_scheduler_cout64_fulltile.v") }
 )
 
 if ($IncludeLong) {

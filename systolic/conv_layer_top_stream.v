@@ -112,6 +112,10 @@ module conv_layer_top_stream #(
     wire feeder_done;
     wire compute_done;
     wire drain_done;
+    wire drain_packet_valid;
+    wire [PSUM_BUF_AW-1:0] drain_packet_addr;
+    wire [COLS*2*PSUM_W-1:0] drain_packet_data;
+    wire drain_packet_is_final;
 
     assign current_cout_base = sched_cout_base;
     assign current_pass_base_k = sched_pass_base_k;
@@ -273,10 +277,6 @@ module conv_layer_top_stream #(
         .psum_fifo_empty(psum_fifo_empty), .ifm_fifo_full(ifm_fifo_full)
     );
 
-    wire drain_packet_valid;
-    wire [PSUM_BUF_AW-1:0] drain_packet_addr;
-    wire [COLS*2*PSUM_W-1:0] drain_packet_data;
-    wire drain_packet_is_final;
     wire [PSUM_W-1:0] drain_baseline = sched_use_ext_psum ? partial_col0 : bias_col0;
 
     psum_drain_writer #(.COLS(COLS), .PSUM_W(PSUM_W), .AW(PSUM_BUF_AW)) u_drain (
