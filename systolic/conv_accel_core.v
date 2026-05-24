@@ -66,7 +66,6 @@ module conv_accel_core #(
     input  [31:0] quant_wr_data,
     input  [5:0]  quant_rd_addr,
     output [31:0] quant_rd_data,
-    input  [1:0]  activation_mode,
     input         act_lut_wr_en,
     input  [7:0]  act_lut_wr_addr,
     input  [7:0]  act_lut_wr_data,
@@ -85,6 +84,7 @@ module conv_accel_core #(
     wire [8:0] ofm_w;
     wire [1:0] conv_stride;
     wire [1:0] conv_pad;
+    wire [1:0] activation_mode;
     wire [10:0] k_total;
     wire [10:0] cout_total;
     wire [15:0] num_pixels;
@@ -99,6 +99,7 @@ module conv_accel_core #(
         .layer_busy(layer_busy), .layer_done(layer_done), .start_pulse(start_pulse),
         .fm_h(fm_h), .fm_w(fm_w), .ofm_h(ofm_h), .ofm_w(ofm_w),
         .conv_stride(conv_stride), .conv_pad(conv_pad),
+        .activation_mode(activation_mode),
         .k_total(k_total), .cout_total(cout_total), .num_pixels(num_pixels)
     );
 

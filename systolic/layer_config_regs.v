@@ -9,6 +9,7 @@
 //   0x04 K_TOTAL:     [10:0]=k_total
 //   0x05 COUT_TOTAL:  [10:0]=cout_total
 //   0x06 NUM_PIXELS:  [15:0]=num_pixels
+//   0x07 ACT_CFG:     [1:0]=activation_mode, 0=bypass, 1=ReLU, 2=Leaky LUT
 module layer_config_regs (
     input  clk,
     input  rst,
@@ -29,6 +30,7 @@ module layer_config_regs (
     output reg [8:0]  ofm_w,
     output reg [1:0]  conv_stride,
     output reg [1:0]  conv_pad,
+    output reg [1:0]  activation_mode,
     output reg [10:0] k_total,
     output reg [10:0] cout_total,
     output reg [15:0] num_pixels
@@ -45,6 +47,7 @@ module layer_config_regs (
             ofm_w <= 9'd0;
             conv_stride <= 2'd1;
             conv_pad <= 2'd0;
+            activation_mode <= 2'd0;
             k_total <= 11'd0;
             cout_total <= 11'd0;
             num_pixels <= 16'd0;
@@ -78,6 +81,7 @@ module layer_config_regs (
                     6'h04: k_total <= cfg_wdata[10:0];
                     6'h05: cout_total <= cfg_wdata[10:0];
                     6'h06: num_pixels <= cfg_wdata[15:0];
+                    6'h07: activation_mode <= cfg_wdata[1:0];
                     default: begin end
                 endcase
             end
@@ -93,6 +97,7 @@ module layer_config_regs (
             6'h04: cfg_rdata = {21'd0, k_total};
             6'h05: cfg_rdata = {21'd0, cout_total};
             6'h06: cfg_rdata = {16'd0, num_pixels};
+            6'h07: cfg_rdata = {30'd0, activation_mode};
             default: cfg_rdata = 32'd0;
         endcase
     end

@@ -11,6 +11,7 @@ module tb_layer_config_regs;
     wire start_pulse;
     wire [8:0] fm_h, fm_w, ofm_h, ofm_w;
     wire [1:0] conv_stride, conv_pad;
+    wire [1:0] activation_mode;
     wire [10:0] k_total, cout_total;
     wire [15:0] num_pixels;
 
@@ -21,6 +22,7 @@ module tb_layer_config_regs;
         .layer_busy(layer_busy), .layer_done(layer_done), .start_pulse(start_pulse),
         .fm_h(fm_h), .fm_w(fm_w), .ofm_h(ofm_h), .ofm_w(ofm_w),
         .conv_stride(conv_stride), .conv_pad(conv_pad),
+        .activation_mode(activation_mode),
         .k_total(k_total), .cout_total(cout_total), .num_pixels(num_pixels)
     );
 
@@ -74,6 +76,7 @@ module tb_layer_config_regs;
         write_reg(6'h04, 32'd45);
         write_reg(6'h05, 32'd10);
         write_reg(6'h06, 32'd12);
+        write_reg(6'h07, 32'd2);
 
         check_value(fm_h, 7, "fm_h");
         check_value(fm_w, 5, "fm_w");
@@ -84,6 +87,14 @@ module tb_layer_config_regs;
         check_value(k_total, 45, "k_total");
         check_value(cout_total, 10, "cout_total");
         check_value(num_pixels, 12, "num_pixels");
+        check_value(activation_mode, 2, "activation");
+
+        cfg_addr = 6'h07;
+        #1;
+        if (cfg_rdata !== 32'd2) begin
+            $display("[FAIL] act cfg read got=%h exp=2", cfg_rdata);
+            fail = fail + 1;
+        end else pass = pass + 1;
 
         @(negedge clk);
         cfg_addr = 6'h00;

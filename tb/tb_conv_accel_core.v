@@ -50,7 +50,6 @@ module tb_conv_accel_core;
     reg [31:0] quant_wr_data;
     reg [5:0] quant_rd_addr;
     wire [31:0] quant_rd_data;
-    reg [1:0] activation_mode;
     reg act_lut_wr_en;
     reg [7:0] act_lut_wr_addr, act_lut_wr_data;
     wire ofm_mem_wr_en;
@@ -81,7 +80,7 @@ module tb_conv_accel_core;
         .dma_wr_data(dma_wr_data), .dma_line_advance(dma_line_advance),
         .quant_wr_en(quant_wr_en), .quant_wr_addr(quant_wr_addr), .quant_wr_data(quant_wr_data),
         .quant_rd_addr(quant_rd_addr), .quant_rd_data(quant_rd_data),
-        .activation_mode(activation_mode), .act_lut_wr_en(act_lut_wr_en),
+        .act_lut_wr_en(act_lut_wr_en),
         .act_lut_wr_addr(act_lut_wr_addr), .act_lut_wr_data(act_lut_wr_data),
         .ofm_mem_wr_en(ofm_mem_wr_en), .ofm_mem_wr_addr(ofm_mem_wr_addr),
         .ofm_mem_wr_data(ofm_mem_wr_data), .ofm_packet_full(ofm_packet_full)
@@ -104,6 +103,13 @@ module tb_conv_accel_core;
             if (v > 127) clamp8 = 8'd127;
             else if (v < -128) clamp8 = 8'd128;
             else clamp8 = v[7:0];
+        end
+    endfunction
+
+    function [7:0] relu8;
+        input [7:0] v;
+        begin
+            relu8 = ($signed(v) < 0) ? 8'd0 : v;
         end
     endfunction
 
@@ -143,7 +149,6 @@ module tb_conv_accel_core;
             quant_wr_addr = 0;
             quant_wr_data = 0;
             quant_rd_addr = 0;
-            activation_mode = 2'd0;
             act_lut_wr_en = 1'b0;
             act_lut_wr_addr = 8'd0;
             act_lut_wr_data = 8'd0;
@@ -316,6 +321,7 @@ module tb_conv_accel_core;
         cfg_write(6'h04, K_TOTAL);
         cfg_write(6'h05, COUT_TOTAL);
         cfg_write(6'h06, PIXELS);
+        cfg_write(6'h07, 32'd1);
         cfg_write(6'h00, 32'd1);
 
         cfg_addr = 6'h00;
@@ -329,9 +335,9 @@ module tb_conv_accel_core;
 
         for (idx = 0; idx < PIXELS; idx = idx + 1) begin
             for (co = 0; co < COUT_TOTAL; co = co + 1) begin
-                if (ofm_mem[idx*COUT_TOTAL + co] !== clamp8(golden[idx][co])) begin
+                if (ofm_mem[idx*COUT_TOTAL + co] !== relu8(clamp8(golden[idx][co]))) begin
                     $display("[FAIL] ofm pixel%0d cout%0d got=%0d exp=%0d",
-                        idx, co, ofm_mem[idx*COUT_TOTAL + co], clamp8(golden[idx][co]));
+                        idx, co, ofm_mem[idx*COUT_TOTAL + co], relu8(clamp8(golden[idx][co])));
                     fail = fail + 1;
                 end else pass = pass + 1;
             end
