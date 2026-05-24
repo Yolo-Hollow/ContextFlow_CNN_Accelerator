@@ -51,6 +51,7 @@ set common_files {
 set tests {
     {tb_conv_accel_core_realistic_small tb/tb_conv_accel_core_realistic_small.v}
     {tb_layer_scheduler_cout64_fulltile tb/tb_layer_scheduler_cout64_fulltile.v}
+    {tb_conv_accel_core_cout64_fulltile tb/tb_conv_accel_core_cout64_fulltile.v}
 }
 
 proc abs_files {root rels} {
@@ -98,7 +99,7 @@ foreach test $tests {
     set snapshot "${top}_snap"
 
     cd $run_dir
-    exec {*}$xvlog -sv -L work -log $xvlog_log {*}$srcs >@ stdout 2>@ stderr
+    exec {*}$xvlog -sv -L work -i [file join $root tb] -log $xvlog_log {*}$srcs >@ stdout 2>@ stderr
     exec {*}$xelab -debug typical -top $top -snapshot $snapshot -log $xelab_log >@ stdout 2>@ stderr
 
     puts "=== xsim run $top ==="

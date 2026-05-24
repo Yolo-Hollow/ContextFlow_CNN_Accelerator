@@ -1,8 +1,39 @@
 `timescale 1ns / 1ps
 
-module tb_conv_accel_core_realistic_small;
+`ifndef TB_CONV_ACCEL_CORE_MODULE
+`define TB_CONV_ACCEL_CORE_MODULE tb_conv_accel_core_realistic_small
+`endif
+`ifndef TB_CONV_ACCEL_CORE_COLS
+`define TB_CONV_ACCEL_CORE_COLS 4
+`endif
+`ifndef TB_CONV_ACCEL_CORE_FM_W
+`define TB_CONV_ACCEL_CORE_FM_W 8
+`endif
+`ifndef TB_CONV_ACCEL_CORE_FM_H
+`define TB_CONV_ACCEL_CORE_FM_H 8
+`endif
+`ifndef TB_CONV_ACCEL_CORE_OFM_W
+`define TB_CONV_ACCEL_CORE_OFM_W 8
+`endif
+`ifndef TB_CONV_ACCEL_CORE_OFM_H
+`define TB_CONV_ACCEL_CORE_OFM_H 8
+`endif
+`ifndef TB_CONV_ACCEL_CORE_COUT_TOTAL
+`define TB_CONV_ACCEL_CORE_COUT_TOTAL 18
+`endif
+`ifndef TB_CONV_ACCEL_CORE_PAD
+`define TB_CONV_ACCEL_CORE_PAD 1
+`endif
+`ifndef TB_CONV_ACCEL_CORE_STRIDE
+`define TB_CONV_ACCEL_CORE_STRIDE 1
+`endif
+`ifndef TB_CONV_ACCEL_CORE_TIMEOUT
+`define TB_CONV_ACCEL_CORE_TIMEOUT 120000
+`endif
+
+module `TB_CONV_ACCEL_CORE_MODULE;
     localparam ROWS = 32;
-    localparam COLS = 4;
+    localparam COLS = `TB_CONV_ACCEL_CORE_COLS;
     localparam IFM_W = 8;
     localparam WGT_W = 8;
     localparam PSUM_W = 32;
@@ -12,15 +43,18 @@ module tb_conv_accel_core_realistic_small;
     localparam WGT_AW = 6;
     localparam PSUM_D = 128;
     localparam PSUM_AW = 7;
-    localparam FM_W = 8;
-    localparam FM_H = 8;
-    localparam OFM_W = 8;
-    localparam OFM_H = 8;
+    localparam FM_W = `TB_CONV_ACCEL_CORE_FM_W;
+    localparam FM_H = `TB_CONV_ACCEL_CORE_FM_H;
+    localparam OFM_W = `TB_CONV_ACCEL_CORE_OFM_W;
+    localparam OFM_H = `TB_CONV_ACCEL_CORE_OFM_H;
+    localparam [1:0] CONV_PAD = `TB_CONV_ACCEL_CORE_PAD;
+    localparam [1:0] CONV_STRIDE = `TB_CONV_ACCEL_CORE_STRIDE;
     localparam PIXELS = OFM_W * OFM_H;
     localparam CIN = 16;
     localparam K_TOTAL = CIN * 3 * 3;
+    localparam K_PASSES = (K_TOTAL + 31) / 32;
     localparam COUT_TILE = COLS * 2;
-    localparam COUT_TOTAL = 18;
+    localparam COUT_TOTAL = `TB_CONV_ACCEL_CORE_COUT_TOTAL;
     localparam COUT_BLOCKS = (COUT_TOTAL + COUT_TILE - 1) / COUT_TILE;
     localparam WGT_TILE_AW = 11;
     localparam PSUM_A = 6;
@@ -336,8 +370,8 @@ module tb_conv_accel_core_realistic_small;
                     ker = k % 9;
                     ky = ker / 3;
                     kx = ker % 3;
-                    fy = y + ky - 1;
-                    fx = x + kx - 1;
+                    fy = y * CONV_STRIDE + ky - CONV_PAD;
+                    fx = x * CONV_STRIDE + kx - CONV_PAD;
                     if (fy >= 0 && fy < FM_H && fx >= 0 && fx < FM_W)
                         golden[idx][co] = golden[idx][co] + feat[ch][fy][fx] * weight[k][co];
                 end
@@ -350,9 +384,9 @@ module tb_conv_accel_core_realistic_small;
         for (cc = 0; cc < COUT_TILE; cc = cc + 1)
             quant_write(cc, 16'd1, 4'd0, 8'd0);
 
-        cfg_write(6'h01, {7'd0, 9'd8, 7'd0, 9'd8});
-        cfg_write(6'h02, {7'd0, 9'd8, 7'd0, 9'd8});
-        cfg_write(6'h03, {22'd0, 2'd1, 6'd0, 2'd1});
+        cfg_write(6'h01, {7'd0, FM_W[8:0], 7'd0, FM_H[8:0]});
+        cfg_write(6'h02, {7'd0, OFM_W[8:0], 7'd0, OFM_H[8:0]});
+        cfg_write(6'h03, {22'd0, CONV_PAD, 6'd0, CONV_STRIDE});
         cfg_write(6'h04, K_TOTAL);
         cfg_write(6'h05, COUT_TOTAL);
         cfg_write(6'h06, PIXELS);
@@ -367,6 +401,22 @@ module tb_conv_accel_core_realistic_small;
             $display("[FAIL] ofm writes got=%0d exp=%0d", ofm_mem_wr_count, OFM_WORDS);
             fail = fail + 1;
         end else pass = pass + 1;
+        if (ifm_write_count != PIXELS * K_PASSES * COUT_BLOCKS) begin
+            $display("[FAIL] ifm writes got=%0d exp=%0d", ifm_write_count, PIXELS * K_PASSES * COUT_BLOCKS);
+            fail = fail + 1;
+        end else pass = pass + 1;
+        if (compute_fire_count != PIXELS * K_PASSES * COUT_BLOCKS) begin
+            $display("[FAIL] compute fires got=%0d exp=%0d", compute_fire_count, PIXELS * K_PASSES * COUT_BLOCKS);
+            fail = fail + 1;
+        end else pass = pass + 1;
+        if (psum_wr_count != PIXELS * K_PASSES * COUT_BLOCKS) begin
+            $display("[FAIL] psum writes got=%0d exp=%0d", psum_wr_count, PIXELS * K_PASSES * COUT_BLOCKS);
+            fail = fail + 1;
+        end else pass = pass + 1;
+        if (COUT_TOTAL <= COUT_TILE && current_cout_base !== 11'd0) begin
+            $display("[FAIL] unexpected Cout block advance, cout_base=%0d", current_cout_base);
+            fail = fail + 1;
+        end else pass = pass + 1;
 
         for (idx = 0; idx < PIXELS; idx = idx + 1) begin
             for (co = 0; co < COUT_TOTAL; co = co + 1) begin
@@ -379,13 +429,13 @@ module tb_conv_accel_core_realistic_small;
             end
         end
 
-        $display("=== tb_conv_accel_core_realistic_small: %0d pass, %0d fail ===", pass, fail);
+        $display("=== %m: %0d pass, %0d fail ===", pass, fail);
         if (fail != 0) $fatal(1);
         $finish;
     end
 
     initial begin
-        repeat (120000) @(negedge clk);
+        repeat (`TB_CONV_ACCEL_CORE_TIMEOUT) @(negedge clk);
         $display("[FAIL] timeout status=%b ofm_wr=%0d cout=%0d k=%0d fill_req=%0d sched_state=%0d feeder_done=%0d compute_done=%0d drain_done=%0d ifm_full=%h psum_empty=%h fire=%0d ifm_wr=%0d fire_cnt=%0d psum_wr=%0d",
             cfg_rdata[1:0], ofm_mem_wr_count, current_cout_base, current_pass_base_k, feeder_fill_req,
             dut.u_layer.u_sched.state, dut.u_layer.feeder_done, dut.u_layer.compute_done,
