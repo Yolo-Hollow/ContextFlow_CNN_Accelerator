@@ -21,8 +21,8 @@ module tb_systolic_top_feeder_cout_blocks;
     localparam K_TOTAL = CIN * 3 * 3;
     localparam COUT_TILE = COLS * 2;
     localparam COUT_TOTAL = COUT_TILE * 2;
+    localparam WGT_TILE_AW = 11;
     localparam [31:0] COL_MASK = (32'h1 << COLS) - 1;
-    localparam [31:0] ROW_MASK = (32'h1 << ROWS) - 1;
 
     reg clk, rst, feeder_start, compute_start;
     wire feeder_done, feeder_busy, compute_done, compute_fire;
@@ -38,9 +38,13 @@ module tb_systolic_top_feeder_cout_blocks;
     reg [PSUM_W-1:0] bias_wr_data;
     reg bias_wr_en, is_first_pass, use_ext_psum, use_psum_stream;
     reg [COLS*2*PSUM_W-1:0] psum_top_ext;
-    reg [31:0] wgt_fifo_wr_en;
-    reg [ROWS*WGT_W*2-1:0] wgt_fifo_wr_data;
+    wire [31:0] wgt_fifo_wr_en;
+    wire [ROWS*WGT_W*2-1:0] wgt_fifo_wr_data;
     wire [31:0] wgt_fifo_full;
+    reg wgt_tile_wr_en, wgt_loader_start;
+    reg [WGT_TILE_AW-1:0] wgt_tile_wr_addr;
+    reg [WGT_W-1:0] wgt_tile_wr_data;
+    wire wgt_loader_busy, wgt_loader_done;
     reg [31:0] psum_fifo_rd_en;
     wire [COLS*PSUM_W*2-1:0] psum_fifo_rd_data;
     wire [31:0] psum_fifo_empty;
@@ -72,6 +76,17 @@ module tb_systolic_top_feeder_cout_blocks;
         .psum_fifo_empty(psum_fifo_empty), .ifm_fifo_full(ifm_fifo_full)
     );
 
+    weight_tile_loader #(
+        .ROWS(ROWS), .COLS(COLS), .WEIGHT_W(WGT_W), .ADDR_W(WGT_TILE_AW)
+    ) u_weight_loader (
+        .clk(clk), .rst(rst),
+        .tile_wr_en(wgt_tile_wr_en), .tile_wr_addr(wgt_tile_wr_addr), .tile_wr_data(wgt_tile_wr_data),
+        .start(wgt_loader_start), .busy(wgt_loader_busy), .done(wgt_loader_done),
+        .wgt_fifo_full(wgt_fifo_full),
+        .wgt_fifo_wr_en(wgt_fifo_wr_en),
+        .wgt_fifo_wr_data(wgt_fifo_wr_data)
+    );
+
     always #5 clk = ~clk;
 
     integer pass, fail;
@@ -81,7 +96,6 @@ module tb_systolic_top_feeder_cout_blocks;
     reg signed [PSUM_W-1:0] bias [0:COUT_TOTAL-1];
     reg signed [PSUM_W-1:0] golden [0:PIXELS-1][0:COUT_TOTAL-1];
     reg [COLS*2*PSUM_W-1:0] result_pkt [0:PIXELS-1];
-    reg [ROWS*WGT_W*2-1:0] wtmp;
     integer out_count;
     reg signed [PSUM_W-1:0] got0, got1;
 
@@ -96,8 +110,10 @@ module tb_systolic_top_feeder_cout_blocks;
             bias_wr_addr = 0;
             bias_wr_data = 0;
             bias_wr_en = 0;
-            wgt_fifo_wr_en = 0;
-            wgt_fifo_wr_data = 0;
+            wgt_tile_wr_en = 0;
+            wgt_tile_wr_addr = 0;
+            wgt_tile_wr_data = 0;
+            wgt_loader_start = 0;
             psum_fifo_rd_en = 0;
             pass_base_k = 0;
             is_first_pass = 1'b1;
@@ -145,23 +161,23 @@ module tb_systolic_top_feeder_cout_blocks;
         input integer co_base;
         integer gk;
         begin
-            for (c = 0; c < COLS; c = c + 1) begin
-                wtmp = 0;
-                for (r = 0; r < ROWS; r = r + 1) begin
+            for (r = 0; r < ROWS; r = r + 1) begin
+                for (c = 0; c < COUT_TILE; c = c + 1) begin
                     gk = r;
-                    if (gk < K_TOTAL) begin
-                        wtmp[r*16 +: 8] = weight[gk][co_base + 2*c];
-                        wtmp[r*16+8 +: 8] = weight[gk][co_base + 2*c + 1];
-                    end else begin
-                        wtmp[r*16 +: 8] = 8'd0;
-                        wtmp[r*16+8 +: 8] = 8'd0;
-                    end
+                    @(negedge clk);
+                    wgt_tile_wr_en = 1'b1;
+                    wgt_tile_wr_addr = r*COUT_TILE + c;
+                    wgt_tile_wr_data = (gk < K_TOTAL) ? weight[gk][co_base + c] : 8'd0;
                 end
-                wgt_fifo_wr_data = wtmp;
-                wgt_fifo_wr_en = ROW_MASK;
-                @(negedge clk);
             end
-            wgt_fifo_wr_en = 0;
+            @(negedge clk);
+            wgt_tile_wr_en = 1'b0;
+
+            wgt_loader_start = 1'b1;
+            @(negedge clk);
+            wgt_loader_start = 1'b0;
+            wait(wgt_loader_done);
+            @(negedge clk);
         end
     endtask
 
