@@ -3,6 +3,7 @@
 module window_extract #(
     parameter FM_W = 416, FM_H = 416, AW = 9
 ) (
+    input  [AW-1:0] fm_h, fm_w,
     input  [1:0]  stride, pad,
     input  [AW-1:0] oy, ox,
     input  [10:0] pass_base_k,
@@ -24,15 +25,22 @@ module window_extract #(
             wire [1:0]  kx   = ker % 3;
             wire [2:0]  bank = ch % 5;
 
-            wire [AW:0] fy = oy * stride + ky - pad;
-            wire [AW:0] fx = ox * stride + kx - pad;
+            wire signed [AW+1:0] fy = $signed({1'b0, oy}) * $signed({{AW{1'b0}}, stride})
+                                     + $signed({{AW{1'b0}}, ky})
+                                     - $signed({{AW{1'b0}}, pad});
+            wire signed [AW+1:0] fx = $signed({1'b0, ox}) * $signed({{AW{1'b0}}, stride})
+                                     + $signed({{AW{1'b0}}, kx})
+                                     - $signed({{AW{1'b0}}, pad});
 
-            wire [1:0] line_idx = (line_fy[0] == fy) ? 2'd0 :
-                                  (line_fy[1] == fy) ? 2'd1 :
-                                  (line_fy[2] == fy) ? 2'd2 : 2'd0;
+            wire [1:0] line_idx = (line_fy[0] == fy[AW:0]) ? 2'd0 :
+                                  (line_fy[1] == fy[AW:0]) ? 2'd1 :
+                                  (line_fy[2] == fy[AW:0]) ? 2'd2 : 2'd0;
 
-            wire in_bounds = (fy >= 0 && fy < FM_H && fx >= 0 && fx < FM_W);
-            wire fy_match  = (line_fy[0] == fy || line_fy[1] == fy || line_fy[2] == fy);
+            wire in_bounds = (fy >= 0 && fy < $signed({1'b0, fm_h}) &&
+                              fx >= 0 && fx < $signed({1'b0, fm_w}));
+            wire fy_match  = (line_fy[0] == fy[AW:0] ||
+                              line_fy[1] == fy[AW:0] ||
+                              line_fy[2] == fy[AW:0]);
             wire valid_row = in_bounds && fy_match;
 
             wire [7:0] row_val = valid_row ? lb_data[bank][line_idx][kx] : 8'd0;

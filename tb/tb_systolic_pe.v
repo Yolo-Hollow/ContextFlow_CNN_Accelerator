@@ -5,13 +5,15 @@
 module tb_systolic_pe;
     localparam IFM_W  = 8;
     localparam WGT_W  = 8;
-    localparam PSUM_W = 24;
+    localparam PSUM_W = 32;
 
     reg clk, rst;
     reg w_load;
     reg signed [WGT_W-1:0] w0_in, w1_in;
     reg signed [IFM_W-1:0]  ifm_in;
     wire signed [IFM_W-1:0] ifm_out;
+    reg valid_in_h, valid_in_va, valid_in_vb;
+    wire valid_out_h, valid_out_va, valid_out_vb;
     reg signed [PSUM_W-1:0] psuma_in, psumb_in;
     wire signed [PSUM_W-1:0] psuma_out, psumb_out;
 
@@ -19,9 +21,12 @@ module tb_systolic_pe;
     u_pe (
         .clk(clk), .rst(rst),
         .w_load(w_load), .w0_in(w0_in), .w1_in(w1_in),
-        .ifm_in(ifm_in), .ifm_out(ifm_out),
-        .psuma_in(psuma_in), .psumb_in(psumb_in),
-        .psuma_out(psuma_out), .psumb_out(psumb_out)
+        .ifm_in(ifm_in), .valid_in_h(valid_in_h),
+        .ifm_out(ifm_out), .valid_out_h(valid_out_h),
+        .psuma_in(psuma_in), .valid_in_va(valid_in_va),
+        .psuma_out(psuma_out), .valid_out_va(valid_out_va),
+        .psumb_in(psumb_in), .valid_in_vb(valid_in_vb),
+        .psumb_out(psumb_out), .valid_out_vb(valid_out_vb)
     );
 
     always #5 clk = ~clk;  // 100 MHz
@@ -90,6 +95,7 @@ module tb_systolic_pe;
     initial begin
         clk = 0; rst = 1;
         w_load = 0; w0_in = 0; w1_in = 0;
+        valid_in_h = 1'b1; valid_in_va = 1'b1; valid_in_vb = 1'b1;
         ifm_in = 0; psuma_in = 0; psumb_in = 0;
         checking = 0; pipeline_fill_cnt = 0; pass = 0; fail = 0;
         test_cycle = 0;

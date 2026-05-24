@@ -1,11 +1,12 @@
 // requant testbench — single-beat, saturation, valid chain
 `timescale 1ns / 1ps
 module tb_requant;
-    localparam PSUM_W=24, MULT_W=16, SHIFT_W=4, ZP_W=8;
+    localparam PSUM_W=32, MULT_W=16, SHIFT_W=4, ZP_W=8;
     reg clk,rst; reg [MULT_W-1:0] m0,m1; reg [SHIFT_W-1:0] s0,s1; reg [ZP_W-1:0] z0,z1;
     reg signed [PSUM_W-1:0] pa,pb; reg v;
     wire signed [7:0] oa,ob; wire vo;
-    requant u(.clk(clk),.rst(rst),.mult0(m0),.mult1(m1),.shift0(s0),.shift1(s1),
+    requant #(.PSUM_W(PSUM_W), .MULT_W(MULT_W), .SHIFT_W(SHIFT_W), .ZP_W(ZP_W))
+    u(.clk(clk),.rst(rst),.mult0(m0),.mult1(m1),.shift0(s0),.shift1(s1),
               .zp_out0(z0),.zp_out1(z1),.psuma_in(pa),.psumb_in(pb),.valid_in(v),
               .ofm_a(oa),.ofm_b(ob),.valid_out(vo));
     always #5 clk=~clk;

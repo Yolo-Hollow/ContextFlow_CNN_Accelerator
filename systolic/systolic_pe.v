@@ -7,7 +7,7 @@
 module systolic_pe #(
     parameter IFM_W    = 8,
     parameter WEIGHT_W = 8,
-    parameter PSUM_W   = 24,
+    parameter PSUM_W   = 32,
     parameter PROD_W   = 16
 ) (
     input  clk, rst,

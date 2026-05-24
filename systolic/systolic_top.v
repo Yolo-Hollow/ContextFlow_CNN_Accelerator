@@ -4,7 +4,7 @@
 // Valid-based control: compute_start → stagger → valid through array → PSUM wr_en
 module systolic_top #(
     parameter ROWS = 32, parameter COLS = 32,
-    parameter IFM_W = 8, parameter WEIGHT_W = 8, parameter PSUM_W = 24,
+    parameter IFM_W = 8, parameter WEIGHT_W = 8, parameter PSUM_W = 32,
     parameter IFM_FIFO_DEPTH = 256, parameter IFM_FIFO_AW = 8,
     parameter WGT_FIFO_DEPTH = 64,  parameter WGT_FIFO_AW = 6,
     parameter PSUM_FIFO_DEPTH = 256, parameter PSUM_FIFO_AW = 8,
@@ -83,11 +83,18 @@ module systolic_top #(
     // ---- Line buffer (5 bank × 3 line × 3 port) ----
     wire [7:0]  lb_rd [0:4][0:2][0:2];       // [bank][line][kx]
     wire [9:0]  line_fy [0:2];
+    wire signed [10:0] rd_fx0_s = $signed({1'b0, ox}) * $signed({9'd0, conv_stride}) -
+                                  $signed({9'd0, conv_pad});
+    wire signed [10:0] rd_fx1_s = rd_fx0_s + 11'sd1;
+    wire signed [10:0] rd_fx2_s = rd_fx0_s + 11'sd2;
+    wire [8:0] rd_x0 = ((rd_fx0_s < 0) || (rd_fx0_s >= $signed({1'b0, fm_w}))) ? 9'd0 : rd_fx0_s[8:0];
+    wire [8:0] rd_x1 = ((rd_fx1_s < 0) || (rd_fx1_s >= $signed({1'b0, fm_w}))) ? 9'd0 : rd_fx1_s[8:0];
+    wire [8:0] rd_x2 = ((rd_fx2_s < 0) || (rd_fx2_s >= $signed({1'b0, fm_w}))) ? 9'd0 : rd_fx2_s[8:0];
     line_buffer_5bank #(.FM_W(416), .AW(9)) u_linebuf (
         .clk(clk), .rst(rst),
         .bank_wr_en(dma_bank_wr_en), .wr_x(dma_wr_x),
         .wr_data(dma_wr_data), .line_advance(dma_line_advance), .wr_fy(dma_wr_fy),
-        .rd_x0(ox), .rd_x1(ox + 9'd1), .rd_x2(ox + 9'd2),
+        .rd_x0(rd_x0), .rd_x1(rd_x1), .rd_x2(rd_x2),
         .rd_data(lb_rd), .line_fy_out(line_fy)
     );
 
@@ -95,7 +102,7 @@ module systolic_top #(
     wire [255:0] we_ifm_data;
     wire         we_ifm_valid;
     window_extract #(.FM_W(416), .FM_H(416), .AW(9)) u_we (
-        .stride(conv_stride), .pad(conv_pad), .oy(oy), .ox(ox),
+        .fm_h(fm_h), .fm_w(fm_w), .stride(conv_stride), .pad(conv_pad), .oy(oy), .ox(ox),
         .pass_base_k(pass_base_k), .lb_data(lb_rd), .line_fy(line_fy),
         .lb_valid(compute_active || ctrl_pre_write),
         .ifm_data(we_ifm_data), .ifm_valid(we_ifm_valid)

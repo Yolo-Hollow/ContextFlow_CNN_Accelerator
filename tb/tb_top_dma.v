@@ -2,7 +2,7 @@
 // 3 passes: each loads 3 IFM rows, computes one oy with 3 ox positions
 `timescale 1ns / 1ps
 module tb_top_dma;
-    localparam ROWS=32, COLS=32, IFM_W=8, WGT_W=8, PSUM_W=24;
+    localparam ROWS=32, COLS=32, IFM_W=8, WGT_W=8, PSUM_W=32;
     localparam IFM_D=256, IFM_AW=8, WGT_D=64, WGT_AW=6, PSUM_D=256, PSUM_AW=8;
     localparam FM_W=5, FM_H=5;
 
@@ -35,8 +35,10 @@ module tb_top_dma;
     task test_row;
         input [8:0] py;         // oy
         input [8:0] fy_start;   // first IFM row to fill
-        input [PSUM_W-1:0] exp_a [0:2];  // expected psuma for ox=0,1,2
-        input [PSUM_W-1:0] exp_b [0:2];  // expected psumb
+        input [PSUM_W-1:0] exp_a0, exp_a1, exp_a2;
+        input [PSUM_W-1:0] exp_b0, exp_b1, exp_b2;
+        reg [PSUM_W-1:0] exp_a;
+        reg [PSUM_W-1:0] exp_b;
         begin
             // Reset
             rst=1; repeat(3)@(negedge clk); rst=0; repeat(2)@(negedge clk);
@@ -84,9 +86,14 @@ module tb_top_dma;
 
             // Verify 3 pixels
             for (int px=0; px<3; px=px+1) begin
+                case (px)
+                    0: begin exp_a = exp_a0; exp_b = exp_b0; end
+                    1: begin exp_a = exp_a1; exp_b = exp_b1; end
+                    default: begin exp_a = exp_a2; exp_b = exp_b2; end
+                endcase
                 psum_rd_en=5'b00001; @(negedge clk); psum_rd_en=0; @(negedge clk);
-                if(psum_rd_data[23:0]!==exp_a[px])begin $display("[FAIL](%0d,%0d)a=%0d exp=%0d",py,px,psum_rd_data[23:0],exp_a[px]); fail=fail+1; end else pass=pass+1;
-                if(psum_rd_data[47:24]!==exp_b[px])begin $display("[FAIL](%0d,%0d)b=%0d exp=%0d",py,px,psum_rd_data[47:24],exp_b[px]); fail=fail+1; end else pass=pass+1;
+                if(psum_rd_data[PSUM_W-1:0]!==exp_a)begin $display("[FAIL](%0d,%0d)a=%0d exp=%0d",py,px,psum_rd_data[PSUM_W-1:0],exp_a); fail=fail+1; end else pass=pass+1;
+                if(psum_rd_data[2*PSUM_W-1:PSUM_W]!==exp_b)begin $display("[FAIL](%0d,%0d)b=%0d exp=%0d",py,px,psum_rd_data[2*PSUM_W-1:PSUM_W],exp_b); fail=fail+1; end else pass=pass+1;
             end
         end
     endtask
@@ -104,25 +111,19 @@ module tb_top_dma;
         // (0,0): sum=0+1+2+10+11+12+20+21+22=99
         // (0,1): sum=1+2+3+11+12+13+21+22+23=108
         // (0,2): sum=2+3+4+12+13+14+22+23+24=117
-        test_row(0, 0,
-            '{99, 108, 117},
-            '{681, 726, 771});
+        test_row(0, 0, 99, 108, 117, 681, 726, 771);
 
         // oy=1: IFM rows 1,2,3
         // (1,0): sum=10+11+12+20+21+22+30+31+32=189
         // (1,1): sum=11+12+13+21+22+23+31+32+33=198
         // (1,2): sum=12+13+14+22+23+24+32+33+34=207
-        test_row(1, 1,
-            '{189, 198, 207},
-            '{1176, 1221, 1266});
+        test_row(1, 1, 189, 198, 207, 1176, 1221, 1266);
 
         // oy=2: IFM rows 2,3,4
         // (2,0): sum=20+21+22+30+31+32+40+41+42=279
         // (2,1): sum=21+22+23+31+32+33+41+42+43=288
         // (2,2): sum=22+23+24+32+33+34+42+43+44=297
-        test_row(2, 2,
-            '{279, 288, 297},
-            '{1671, 1716, 1761});
+        test_row(2, 2, 279, 288, 297, 1671, 1716, 1761);
 
         $display("=== %0d pass, %0d fail ===", pass, fail); $finish;
     end

@@ -2,7 +2,7 @@
 // 32x32 weight-stationary systolic array with valid propagation
 module systolic_array_32x32 #(
     parameter ROWS = 32, parameter COLS = 32,
-    parameter IFM_W = 8, parameter WEIGHT_W = 8, parameter PSUM_W = 24
+    parameter IFM_W = 8, parameter WEIGHT_W = 8, parameter PSUM_W = 32
 ) (
     input  clk, rst,
     input  w_load, input [4:0] w_col,

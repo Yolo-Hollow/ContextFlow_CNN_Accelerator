@@ -4,6 +4,35 @@
 
 ---
 
+## Blocking model locked for verification
+
+The systolic core is verified as a tiled GEMM engine for convolution:
+
+```
+OFM[p, cout] = bias[cout] + sum_k IFM[p, k] * W[k, cout]
+k = cin * kh * kw
+p = oy * ofm_w + ox
+```
+
+Current fixed verification tiles:
+
+| Dimension | Tile | Meaning |
+|---|---:|---|
+| K | 32 | 32 unfolded `(cin, ky, kx)` lanes feed the 32 PE rows |
+| Cout | 64 | 32 PE columns, each column computes two output channels |
+| P | stream | one output pixel window is injected per beat after skewing |
+
+Pass semantics:
+
+1. First K tile uses `psum_top = bias`.
+2. Middle K tiles use `psum_top = previous partial sum`.
+3. Final K tile drains complete PSUM into requant / activation / writeback.
+4. Cout blocks advance in steps of 64 and reuse the same IFM stream with different weights.
+
+`PSUM_W` defaults to 32 bits so large YOLO-style layers such as `Cin=1024, Kh=3, Kw=3` have safe signed accumulation headroom before requantization.
+
+---
+
 ## 一、整体架构
 
 ```

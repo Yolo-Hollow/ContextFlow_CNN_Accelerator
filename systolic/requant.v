@@ -1,7 +1,7 @@
 `timescale 1ns / 1ps
 // INT8 requantization: 24-bit psum → INT8 OFM, 2-cycle pipeline
 module requant #(
-    parameter PSUM_W = 24, MULT_W = 16, SHIFT_W = 4, ZP_W = 8
+    parameter PSUM_W = 32, MULT_W = 16, SHIFT_W = 4, ZP_W = 8
 ) (
     input  clk, rst,
     input  [MULT_W-1:0]  mult0, mult1,

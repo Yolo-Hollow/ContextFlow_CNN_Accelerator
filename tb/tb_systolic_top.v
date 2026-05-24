@@ -4,7 +4,7 @@
 
 module tb_systolic_top;
     localparam ROWS = 32, COLS = 32;
-    localparam IFM_W = 8, WGT_W = 8, PSUM_W = 24;
+    localparam IFM_W = 8, WGT_W = 8, PSUM_W = 32;
     localparam IFM_D = 64, IFM_AW = 6, WGT_D = 64, WGT_AW = 6, PSUM_D = 256, PSUM_AW = 8;
 
     reg clk, rst, start;
@@ -21,7 +21,9 @@ module tb_systolic_top;
     reg [5:0] bias_addr; reg [PSUM_W-1:0] bias_data; reg bias_en, is_first, use_ext;
     reg [COLS*2*PSUM_W-1:0] psum_top_ext;
 
-    systolic_top #(.ROWS(ROWS),.COLS(COLS), .IFM_FIFO_DEPTH(IFM_D), .IFM_FIFO_AW(IFM_AW)) u_top (
+    systolic_top #(.ROWS(ROWS),.COLS(COLS), .PSUM_W(PSUM_W),
+                   .IFM_FIFO_DEPTH(IFM_D), .IFM_FIFO_AW(IFM_AW),
+                   .USE_DMA_IFM(0)) u_top (
         .clk(clk),.rst(rst),.start(start),.done(done),
         .ifm_fifo_wr_en(ifm_wr_en),.ifm_fifo_wr_data(ifm_wr_data),.ifm_fifo_full(ifm_full),
         .wgt_fifo_wr_en(wgt_wr_en),.wgt_fifo_wr_data(wgt_wr_data),.wgt_fifo_full(wgt_full),

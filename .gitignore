@@ -8,3 +8,4 @@ xsim_*.backup.*
 xelab.*
 xvlog.*
 dfx_runtime.txt
+build_iverilog/

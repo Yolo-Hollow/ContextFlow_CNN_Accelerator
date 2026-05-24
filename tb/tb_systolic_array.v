@@ -7,7 +7,7 @@ module tb_systolic_array;
     localparam COLS = 32;
     localparam IFM_W  = 8;
     localparam WGT_W  = 8;
-    localparam PSUM_W = 24;
+    localparam PSUM_W = 32;
 
     reg clk, rst;
     reg w_load;
@@ -16,6 +16,10 @@ module tb_systolic_array;
     reg [ROWS*IFM_W-1:0]   ifm_in_raw;
     wire [ROWS*IFM_W-1:0]   ifm_in_skewed;
     reg [COLS*2*PSUM_W-1:0] psum_top;
+    reg [ROWS-1:0] valid_h_left_raw;
+    wire [ROWS-1:0] valid_h_left;
+    wire [COLS*2-1:0] valid_v_top;
+    wire [COLS*2-1:0] valid_v_bot;
     wire [COLS*2*PSUM_W-1:0] psum_bot;
 
     integer pass, fail, cycle;
@@ -36,9 +40,16 @@ module tb_systolic_array;
                     .si (ifm_in_raw[r*IFM_W +: IFM_W]),
                     .so (ifm_in_skewed[r*IFM_W +: IFM_W])
                 );
+                com_shift_reg #(.DEPTH(r*5), .WIDTH(1)) u_vskew (
+                    .clk(clk),
+                    .si (valid_h_left_raw[r]),
+                    .so (valid_h_left[r])
+                );
             end
         end
     endgenerate
+    assign valid_h_left[0] = valid_h_left_raw[0];
+    assign valid_v_top = {COLS*2{1'b1}};
 
     // ---- DUT ----
     systolic_array_32x32 #(.ROWS(ROWS), .COLS(COLS), .PSUM_W(PSUM_W))
@@ -47,8 +58,11 @@ module tb_systolic_array;
         .w_load(w_load), .w_col(w_col),
         .w_row_data(w_row_data),
         .ifm_in_flat(ifm_in_skewed),
+        .valid_h_left(valid_h_left),
         .psum_top_flat(psum_top),
-        .psum_bot_flat(psum_bot)
+        .valid_v_top(valid_v_top),
+        .psum_bot_flat(psum_bot),
+        .valid_v_bot(valid_v_bot)
     );
 
     always #5 clk = ~clk;
@@ -82,6 +96,7 @@ module tb_systolic_array;
         input signed [IFM_W-1:0] val;
         begin
             ifm_in_raw = {ROWS{val}};  // replicate 32 times
+            valid_h_left_raw = {ROWS{1'b1}};
         end
     endtask
 
@@ -140,7 +155,9 @@ module tb_systolic_array;
         // ============================================================
         $display("=== TEST 2: Row 0 only, ifm[0]=5 ===");
         set_ifm(0);
+        valid_h_left_raw = 0;
         set_ifm_ch(0, 5);
+        valid_h_left_raw[0] = 1'b1;
         repeat (500) @(negedge clk);
 
         for (cc = 0; cc < COLS; cc = cc + 1)
@@ -152,8 +169,11 @@ module tb_systolic_array;
         // ============================================================
         $display("=== TEST 3: Rows 0+1, ifm[0]=2, ifm[1]=3 ===");
         set_ifm(0);
+        valid_h_left_raw = 0;
         set_ifm_ch(0, 2);
         set_ifm_ch(1, 3);
+        valid_h_left_raw[0] = 1'b1;
+        valid_h_left_raw[1] = 1'b1;
         repeat (500) @(negedge clk);
 
         for (cc = 0; cc < COLS; cc = cc + 1)
@@ -164,7 +184,9 @@ module tb_systolic_array;
         // ============================================================
         $display("=== TEST 4: Negative ifm[0]=-1 ===");
         set_ifm(0);
+        valid_h_left_raw = 0;
         set_ifm_ch(0, -1);
+        valid_h_left_raw[0] = 1'b1;
         repeat (500) @(negedge clk);
 
         for (cc = 0; cc < COLS; cc = cc + 1)
@@ -188,7 +210,9 @@ module tb_systolic_array;
         w_load = 0;
 
         set_ifm(0);
+        valid_h_left_raw = 0;
         set_ifm_ch(0, 10);
+        valid_h_left_raw[0] = 1'b1;
         repeat (500) @(negedge clk);
 
         for (cc = 0; cc < COLS; cc = cc + 1)
