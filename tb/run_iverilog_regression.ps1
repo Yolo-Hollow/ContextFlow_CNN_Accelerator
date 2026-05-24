@@ -22,6 +22,7 @@ $common = @(
     "systolic/weight_tile_loader.v",
     "systolic/psum_pingpong_buffer.v",
     "systolic/psum_stream_feeder.v",
+    "systolic/psum_drain_writer.v",
     "systolic/requant.v",
     "systolic/leaky_lut.v",
     "systolic/systolic_top.v"
@@ -42,6 +43,7 @@ $tests = @(
     @{ Top = "tb_weight_tile_loader"; Files = @("tb/tb_weight_tile_loader.v") },
     @{ Top = "tb_psum_pingpong_buffer"; Files = @("tb/tb_psum_pingpong_buffer.v") },
     @{ Top = "tb_psum_stream_feeder"; Files = @("tb/tb_psum_stream_feeder.v") },
+    @{ Top = "tb_psum_drain_writer"; Files = @("tb/tb_psum_drain_writer.v") },
     @{ Top = "tb_line_stream_ctrl"; Files = @("tb/tb_line_stream_ctrl.v") },
     @{ Top = "tb_window_stream_ctrl"; Files = @("tb/tb_window_stream_ctrl.v") },
     @{ Top = "tb_window_feeder"; Files = @("tb/tb_window_feeder.v") },
