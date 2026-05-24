@@ -67,7 +67,7 @@ module tb_top_dma;
                     dma_wr_data[1]=0; dma_wr_data[2]=0; dma_wr_data[3]=0; dma_wr_data[4]=0;
                     @(negedge clk);
                 end
-                if (y<fy_start+2) begin dma_line_advance=1; @(negedge clk); dma_line_advance=0; end
+                dma_line_advance=1; @(negedge clk); dma_line_advance=0;
             end
             dma_bank_wr_en=0;
 

@@ -93,11 +93,9 @@ module tb_window_top_singlepass;
                         dma_wr_data[b] = feat[b][y][x];
                     @(negedge clk);
                 end
-                if (y < 2) begin
-                    dma_line_advance = 1'b1;
-                    @(negedge clk);
-                    dma_line_advance = 1'b0;
-                end
+                dma_line_advance = 1'b1;
+                @(negedge clk);
+                dma_line_advance = 1'b0;
             end
             dma_bank_wr_en = 0;
         end

@@ -1,40 +1,56 @@
 `timescale 1ns / 1ps
-// 5-bank x 3-line line buffer for 3x3 convolution
-// 3 BRAM copies per line for 3 concurrent read ports (kx=0,1,2 → fx)
-// DMA writes all 3 copies simultaneously
+
+// 5-bank x 3-line line buffer for 3x3 convolution.
+// Each physical line has three read copies so kx=0/1/2 can be read in parallel.
 module line_buffer_5bank #(
-    parameter FM_W = 416, AW = 9
+    parameter FM_W = 416,
+    parameter AW = 9
 ) (
     input  clk, rst,
     input  [4:0]      bank_wr_en,
     input  [AW-1:0]   wr_x,
     input  [7:0]      wr_data [0:4],
     input             line_advance,
-    input  [AW:0]     wr_fy,              // IFM row being written
-    // 3 read ports for 3 kernel columns
+    input  [AW:0]     wr_fy,
     input  [AW-1:0]   rd_x0, rd_x1, rd_x2,
-    output [7:0]      rd_data [0:4][0:2][0:2],  // [bank][line][kx]
-    output [AW:0]     line_fy_out [0:2]          // physical line → IFM row map
+    output [7:0]      rd_data [0:4][0:2][0:2],
+    output [AW:0]     line_fy_out [0:2],
+    output            line_valid_out [0:2],
+    output [1:0]      wr_ptr_out
 );
     reg [1:0]  wr_ptr;
-    reg [AW:0] line_fy [0:2];   // line_fy[phys_line] = IFM row stored there
-    reg [AW:0] prev_fy;          // previous wr_fy, to detect change
+    reg [AW:0] line_fy [0:2];
+    reg        line_valid [0:2];
 
     always @(posedge clk) begin
         if (rst) begin
-            wr_ptr <= 2'd0; prev_fy <= -1;
-            line_fy[0] <= -1; line_fy[1] <= -1; line_fy[2] <= -1;
+            wr_ptr <= 2'd0;
+            line_fy[0] <= {AW+1{1'b1}};
+            line_fy[1] <= {AW+1{1'b1}};
+            line_fy[2] <= {AW+1{1'b1}};
+            line_valid[0] <= 1'b0;
+            line_valid[1] <= 1'b0;
+            line_valid[2] <= 1'b0;
         end else begin
-            // Update line_fy every cycle: current line has wr_fy
-            line_fy[wr_ptr] <= wr_fy;
-            if (line_advance)
-                wr_ptr <= (wr_ptr + 1) % 3;
+            if (|bank_wr_en) begin
+                line_fy[wr_ptr] <= wr_fy;
+                line_valid[wr_ptr] <= 1'b0;
+            end
+            if (line_advance) begin
+                line_fy[wr_ptr] <= wr_fy;
+                line_valid[wr_ptr] <= 1'b1;
+                wr_ptr <= (wr_ptr == 2'd2) ? 2'd0 : wr_ptr + 2'd1;
+            end
         end
     end
 
     assign line_fy_out[0] = line_fy[0];
     assign line_fy_out[1] = line_fy[1];
     assign line_fy_out[2] = line_fy[2];
+    assign line_valid_out[0] = line_valid[0];
+    assign line_valid_out[1] = line_valid[1];
+    assign line_valid_out[2] = line_valid[2];
+    assign wr_ptr_out = wr_ptr;
 
     genvar b, l;
     generate

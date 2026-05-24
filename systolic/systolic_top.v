@@ -83,6 +83,8 @@ module systolic_top #(
     // ---- Line buffer (5 bank × 3 line × 3 port) ----
     wire [7:0]  lb_rd [0:4][0:2][0:2];       // [bank][line][kx]
     wire [9:0]  line_fy [0:2];
+    wire        line_valid [0:2];
+    wire [1:0]  line_wr_ptr;
     wire signed [10:0] rd_fx0_s = $signed({1'b0, ox}) * $signed({9'd0, conv_stride}) -
                                   $signed({9'd0, conv_pad});
     wire signed [10:0] rd_fx1_s = rd_fx0_s + 11'sd1;
@@ -95,17 +97,19 @@ module systolic_top #(
         .bank_wr_en(dma_bank_wr_en), .wr_x(dma_wr_x),
         .wr_data(dma_wr_data), .line_advance(dma_line_advance), .wr_fy(dma_wr_fy),
         .rd_x0(rd_x0), .rd_x1(rd_x1), .rd_x2(rd_x2),
-        .rd_data(lb_rd), .line_fy_out(line_fy)
+        .rd_data(lb_rd), .line_fy_out(line_fy),
+        .line_valid_out(line_valid), .wr_ptr_out(line_wr_ptr)
     );
 
     // ---- Window extractor → IFM FIFO write ----
     wire [255:0] we_ifm_data;
     wire         we_ifm_valid;
+    wire         we_window_ready;
     window_extract #(.FM_W(416), .FM_H(416), .AW(9)) u_we (
         .fm_h(fm_h), .fm_w(fm_w), .stride(conv_stride), .pad(conv_pad), .oy(oy), .ox(ox),
-        .pass_base_k(pass_base_k), .lb_data(lb_rd), .line_fy(line_fy),
+        .pass_base_k(pass_base_k), .lb_data(lb_rd), .line_fy(line_fy), .line_valid(line_valid),
         .lb_valid(compute_active || ctrl_pre_write),
-        .ifm_data(we_ifm_data), .ifm_valid(we_ifm_valid)
+        .ifm_data(we_ifm_data), .ifm_valid(we_ifm_valid), .window_ready(we_window_ready)
     );
 
     // ---- IFM FIFOs (32 × 8-bit) + stagger chain ----

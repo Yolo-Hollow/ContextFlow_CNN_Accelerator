@@ -8,15 +8,17 @@ module tb_window_extract;
     reg [10:0] pass_base_k;
     reg [7:0] lb_data [0:4][0:2][0:2];
     reg [AW:0] line_fy [0:2];
+    reg line_valid [0:2];
     reg lb_valid;
     wire [255:0] ifm_data;
     wire ifm_valid;
+    wire window_ready;
 
     window_extract #(.FM_W(416), .FM_H(416), .AW(AW)) dut (
         .fm_h(fm_h), .fm_w(fm_w), .stride(stride), .pad(pad),
         .oy(oy), .ox(ox), .pass_base_k(pass_base_k),
-        .lb_data(lb_data), .line_fy(line_fy), .lb_valid(lb_valid),
-        .ifm_data(ifm_data), .ifm_valid(ifm_valid)
+        .lb_data(lb_data), .line_fy(line_fy), .line_valid(line_valid), .lb_valid(lb_valid),
+        .ifm_data(ifm_data), .ifm_valid(ifm_valid), .window_ready(window_ready)
     );
 
     integer pass, fail;
@@ -53,8 +55,8 @@ module tb_window_extract;
         begin
             oy = cy; ox = cx; stride = cs; pad = cp; pass_base_k = base;
             #1;
-            if (ifm_valid !== lb_valid) begin
-                $display("[FAIL] valid=%0d exp=%0d", ifm_valid, lb_valid);
+            if (ifm_valid !== (lb_valid && window_ready)) begin
+                $display("[FAIL] valid=%0d exp=%0d", ifm_valid, lb_valid && window_ready);
                 fail = fail + 1;
             end else pass = pass + 1;
             for (r = 0; r < 32; r = r + 1) begin
@@ -71,6 +73,7 @@ module tb_window_extract;
         pass = 0; fail = 0;
         fm_h = 5; fm_w = 5; lb_valid = 1'b1;
         line_fy[0] = 0; line_fy[1] = 1; line_fy[2] = 2;
+        line_valid[0] = 1; line_valid[1] = 1; line_valid[2] = 1;
         for (b = 0; b < 5; b = b + 1)
             for (l = 0; l < 3; l = l + 1)
                 for (kx = 0; kx < 3; kx = kx + 1)

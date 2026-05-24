@@ -126,11 +126,9 @@ module tb_layer_scheduler_small;
                         dma_wr_data[b] = feat[b][ly][lx];
                     @(negedge clk);
                 end
-                if (ly < base_y + 2) begin
-                    dma_line_advance = 1'b1;
-                    @(negedge clk);
-                    dma_line_advance = 1'b0;
-                end
+                dma_line_advance = 1'b1;
+                @(negedge clk);
+                dma_line_advance = 1'b0;
             end
             dma_bank_wr_en = 0;
         end

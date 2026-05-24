@@ -9,20 +9,22 @@ module tb_linebuf;
     reg [AW-1:0] rd_x0,rd_x1,rd_x2;
     wire [7:0] rd_data [0:4][0:2][0:2];
     wire [AW:0] line_fy [0:2];
+    wire line_valid [0:2];
+    wire [1:0] wr_ptr_out;
 
     line_buffer_5bank #(.FM_W(FM_W),.AW(AW)) u_lb (
         .clk(clk),.rst(rst),.bank_wr_en(bank_wr_en),.wr_x(wr_x),
         .wr_data(wr_data),.line_advance(line_advance),.wr_fy(wr_fy),
         .rd_x0(rd_x0),.rd_x1(rd_x1),.rd_x2(rd_x2),.rd_data(rd_data),
-        .line_fy_out(line_fy)
+        .line_fy_out(line_fy),.line_valid_out(line_valid),.wr_ptr_out(wr_ptr_out)
     );
 
     reg [1:0] stride,pad; reg [AW-1:0] oy,ox; reg [10:0] base;
     wire [255:0] ifm_d; wire ifm_v;
     window_extract #(.FM_W(FM_W),.FM_H(FM_H),.AW(AW)) u_we (
         .stride(stride),.pad(pad),.oy(oy),.ox(ox),.pass_base_k(base),
-        .lb_data(rd_data),.line_fy(line_fy),.lb_valid(1'b1),
-        .ifm_data(ifm_d),.ifm_valid(ifm_v)
+        .lb_data(rd_data),.line_fy(line_fy),.line_valid(line_valid),.lb_valid(1'b1),
+        .ifm_data(ifm_d),.ifm_valid(ifm_v),.window_ready()
     );
     always #5 clk=~clk;
     integer pass,fail, i;
@@ -41,7 +43,7 @@ module tb_linebuf;
             for (int x=0; x<FM_W; x=x+1) begin
                 wr_x=x[AW-1:0]; wr_data[0]=y*10+x; @(negedge clk);
             end
-            if (y<2) begin line_advance=1; @(negedge clk); line_advance=0; end
+            line_advance=1; @(negedge clk); line_advance=0;
         end
         bank_wr_en=0;
 
