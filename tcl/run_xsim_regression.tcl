@@ -52,6 +52,7 @@ set tests {
     {tb_conv_accel_core_realistic_small tb/tb_conv_accel_core_realistic_small.v}
     {tb_layer_scheduler_cout64_fulltile tb/tb_layer_scheduler_cout64_fulltile.v}
     {tb_conv_accel_core_cout64_fulltile tb/tb_conv_accel_core_cout64_fulltile.v}
+    {tb_conv_accel_core_cout128_blocks tb/tb_conv_accel_core_cout128_blocks.v}
 }
 
 proc abs_files {root rels} {
