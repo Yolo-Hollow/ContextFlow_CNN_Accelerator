@@ -16,6 +16,7 @@ $common = @(
     "systolic/window_stream_ctrl.v",
     "systolic/line_buffer_5bank.v",
     "systolic/window_extract.v",
+    "systolic/window_feeder.v",
     "systolic/requant.v",
     "systolic/leaky_lut.v",
     "systolic/systolic_top.v"
@@ -30,6 +31,7 @@ $tests = @(
     @{ Top = "tb_layer_scheduler_small"; Files = @("tb/tb_layer_scheduler_small.v") },
     @{ Top = "tb_line_stream_ctrl"; Files = @("tb/tb_line_stream_ctrl.v") },
     @{ Top = "tb_window_stream_ctrl"; Files = @("tb/tb_window_stream_ctrl.v") },
+    @{ Top = "tb_window_feeder"; Files = @("tb/tb_window_feeder.v") },
     @{ Top = "tb_window_extract"; Files = @("tb/tb_window_extract.v") },
     @{ Top = "tb_linebuf_stream"; Files = @("tb/tb_linebuf_stream.v") },
     @{ Top = "tb_requant"; Files = @("tb/tb_requant.v") }
