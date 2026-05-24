@@ -45,9 +45,11 @@ module tb_conv_accel_core;
     reg [9:0] dma_wr_fy;
     reg [7:0] dma_wr_data [0:4];
     reg dma_line_advance;
-    reg [COLS*2*16-1:0] quant_mult_flat;
-    reg [COLS*2*4-1:0] quant_shift_flat;
-    reg [COLS*2*8-1:0] quant_zp_flat;
+    reg quant_wr_en;
+    reg [5:0] quant_wr_addr;
+    reg [31:0] quant_wr_data;
+    reg [5:0] quant_rd_addr;
+    wire [31:0] quant_rd_data;
     wire ofm_mem_wr_en;
     wire [15:0] ofm_mem_wr_addr;
     wire [7:0] ofm_mem_wr_data;
@@ -74,7 +76,8 @@ module tb_conv_accel_core;
         .feeder_fill_req(feeder_fill_req), .feeder_fill_fy(feeder_fill_fy),
         .dma_bank_wr_en(dma_bank_wr_en), .dma_wr_x(dma_wr_x), .dma_wr_fy(dma_wr_fy),
         .dma_wr_data(dma_wr_data), .dma_line_advance(dma_line_advance),
-        .quant_mult_flat(quant_mult_flat), .quant_shift_flat(quant_shift_flat), .quant_zp_flat(quant_zp_flat),
+        .quant_wr_en(quant_wr_en), .quant_wr_addr(quant_wr_addr), .quant_wr_data(quant_wr_data),
+        .quant_rd_addr(quant_rd_addr), .quant_rd_data(quant_rd_data),
         .ofm_mem_wr_en(ofm_mem_wr_en), .ofm_mem_wr_addr(ofm_mem_wr_addr),
         .ofm_mem_wr_data(ofm_mem_wr_data), .ofm_packet_full(ofm_packet_full)
     );
@@ -131,9 +134,25 @@ module tb_conv_accel_core;
             dma_wr_fy = 0;
             dma_line_advance = 0;
             for (b = 0; b < 5; b = b + 1) dma_wr_data[b] = 0;
-            quant_mult_flat = {COLS*2{16'd1}};
-            quant_shift_flat = {COLS*2{4'd0}};
-            quant_zp_flat = {COLS*2{8'd0}};
+            quant_wr_en = 0;
+            quant_wr_addr = 0;
+            quant_wr_data = 0;
+            quant_rd_addr = 0;
+        end
+    endtask
+
+    task quant_write;
+        input integer lane;
+        input [15:0] mult;
+        input [3:0] shift;
+        input [7:0] zp;
+        begin
+            @(negedge clk);
+            quant_wr_addr = lane[5:0];
+            quant_wr_data = {zp, 4'd0, shift, mult};
+            quant_wr_en = 1'b1;
+            @(negedge clk);
+            quant_wr_en = 1'b0;
         end
     endtask
 
@@ -273,6 +292,14 @@ module tb_conv_accel_core;
         repeat (3) @(negedge clk);
         rst = 0;
         repeat (2) @(negedge clk);
+        quant_write(0, 16'd1, 4'd0, 8'd0);
+        quant_write(7, 16'd1, 4'd0, 8'd0);
+        quant_rd_addr = 6'd7;
+        #1;
+        if (quant_rd_data !== {8'd0, 4'd0, 4'd0, 16'd1}) begin
+            $display("[FAIL] quant rd got=%h", quant_rd_data);
+            fail = fail + 1;
+        end else pass = pass + 1;
 
         cfg_write(6'h01, {7'd0, 9'd5, 7'd0, 9'd5});
         cfg_write(6'h02, {7'd0, 9'd3, 7'd0, 9'd3});

@@ -61,9 +61,11 @@ module conv_accel_core #(
     input  [7:0] dma_wr_data [0:4],
     input        dma_line_advance,
 
-    input  [COLS*2*MULT_W-1:0]  quant_mult_flat,
-    input  [COLS*2*SHIFT_W-1:0] quant_shift_flat,
-    input  [COLS*2*ZP_W-1:0]    quant_zp_flat,
+    input         quant_wr_en,
+    input  [5:0]  quant_wr_addr,
+    input  [31:0] quant_wr_data,
+    input  [5:0]  quant_rd_addr,
+    output [31:0] quant_rd_data,
 
     output                      ofm_mem_wr_en,
     output [OFM_ADDR_W-1:0]     ofm_mem_wr_addr,
@@ -82,6 +84,9 @@ module conv_accel_core #(
     wire [10:0] k_total;
     wire [10:0] cout_total;
     wire [15:0] num_pixels;
+    wire [COLS*2*MULT_W-1:0] quant_mult_flat;
+    wire [COLS*2*SHIFT_W-1:0] quant_shift_flat;
+    wire [COLS*2*ZP_W-1:0] quant_zp_flat;
 
     layer_config_regs u_cfg (
         .clk(clk), .rst(rst),
@@ -91,6 +96,15 @@ module conv_accel_core #(
         .fm_h(fm_h), .fm_w(fm_w), .ofm_h(ofm_h), .ofm_w(ofm_w),
         .conv_stride(conv_stride), .conv_pad(conv_pad),
         .k_total(k_total), .cout_total(cout_total), .num_pixels(num_pixels)
+    );
+
+    quant_param_regs #(
+        .COUT_TILE(COLS*2), .MULT_W(MULT_W), .SHIFT_W(SHIFT_W), .ZP_W(ZP_W), .ADDR_W(6)
+    ) u_quant (
+        .clk(clk), .rst(rst),
+        .wr_en(quant_wr_en), .wr_addr(quant_wr_addr), .wr_data(quant_wr_data),
+        .rd_addr(quant_rd_addr), .rd_data(quant_rd_data),
+        .mult_flat(quant_mult_flat), .shift_flat(quant_shift_flat), .zp_flat(quant_zp_flat)
     );
 
     conv_layer_top_stream #(
