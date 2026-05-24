@@ -25,6 +25,7 @@ $tests = @(
     @{ Top = "tb_systolic_array_small"; Files = @("tb/tb_systolic_array_small.v") },
     @{ Top = "tb_systolic_top_multipass"; Files = @("tb/tb_systolic_top_multipass.v") },
     @{ Top = "tb_window_top_singlepass"; Files = @("tb/tb_window_top_singlepass.v") },
+    @{ Top = "tb_layer_scheduler_small"; Files = @("tb/tb_layer_scheduler_small.v") },
     @{ Top = "tb_window_extract"; Files = @("tb/tb_window_extract.v") },
     @{ Top = "tb_requant"; Files = @("tb/tb_requant.v") }
 )
