@@ -23,6 +23,7 @@ $common = @(
     "systolic/psum_pingpong_buffer.v",
     "systolic/psum_stream_feeder.v",
     "systolic/psum_drain_writer.v",
+    "systolic/conv_layer_top_stream.v",
     "systolic/requant.v",
     "systolic/leaky_lut.v",
     "systolic/systolic_top.v"
@@ -38,6 +39,7 @@ $tests = @(
     @{ Top = "tb_systolic_top_feeder_multipass_pingpong"; Files = @("tb/tb_systolic_top_feeder_multipass_pingpong.v") },
     @{ Top = "tb_systolic_top_feeder_multipass_stream"; Files = @("tb/tb_systolic_top_feeder_multipass_stream.v") },
     @{ Top = "tb_systolic_top_feeder_cout_blocks"; Files = @("tb/tb_systolic_top_feeder_cout_blocks.v") },
+    @{ Top = "tb_conv_layer_top_stream"; Files = @("tb/tb_conv_layer_top_stream.v") },
     @{ Top = "tb_layer_scheduler_stream"; Files = @("tb/tb_layer_scheduler_stream.v") },
     @{ Top = "tb_layer_scheduler_small"; Files = @("tb/tb_layer_scheduler_small.v") },
     @{ Top = "tb_weight_tile_loader"; Files = @("tb/tb_weight_tile_loader.v") },
