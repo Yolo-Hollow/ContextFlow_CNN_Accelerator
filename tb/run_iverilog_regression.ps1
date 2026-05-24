@@ -18,6 +18,7 @@ $common = @(
     "systolic/window_extract.v",
     "systolic/window_feeder.v",
     "systolic/systolic_top_feeder.v",
+    "systolic/psum_pingpong_buffer.v",
     "systolic/requant.v",
     "systolic/leaky_lut.v",
     "systolic/systolic_top.v"
@@ -31,6 +32,7 @@ $tests = @(
     @{ Top = "tb_window_top_singlepass"; Files = @("tb/tb_window_top_singlepass.v") },
     @{ Top = "tb_systolic_top_feeder_singlepass"; Files = @("tb/tb_systolic_top_feeder_singlepass.v") },
     @{ Top = "tb_layer_scheduler_small"; Files = @("tb/tb_layer_scheduler_small.v") },
+    @{ Top = "tb_psum_pingpong_buffer"; Files = @("tb/tb_psum_pingpong_buffer.v") },
     @{ Top = "tb_line_stream_ctrl"; Files = @("tb/tb_line_stream_ctrl.v") },
     @{ Top = "tb_window_stream_ctrl"; Files = @("tb/tb_window_stream_ctrl.v") },
     @{ Top = "tb_window_feeder"; Files = @("tb/tb_window_feeder.v") },
