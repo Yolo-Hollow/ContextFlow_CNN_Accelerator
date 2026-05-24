@@ -5,6 +5,8 @@ module systolic_ctrl #(
 ) (
     input  clk, rst,
     input  start,
+    input  [15:0] num_pixels,
+    output reg done,
     output reg w_load,
     output reg [4:0] w_col,
     output reg compute_active,
@@ -14,8 +16,13 @@ module systolic_ctrl #(
     localparam IDLE        = 2'd0;
     localparam WEIGHT_LOAD = 2'd1;
     localparam COMPUTE     = 2'd2;
+    localparam DRAIN       = 2'd3;
+    localparam TAIL_CYCLES = ROWS*5 + COLS*4 + 16;
 
     reg [1:0] state, next_state;
+    reg [15:0] compute_cnt;
+    reg [15:0] drain_cnt;
+    wire [15:0] pixels_to_run = (num_pixels == 16'd0) ? 16'd1 : num_pixels;
 
     always @(posedge clk) begin
         if (rst) state <= IDLE;
@@ -27,7 +34,8 @@ module systolic_ctrl #(
         case (state)
             IDLE:         if (start)            next_state = WEIGHT_LOAD;
             WEIGHT_LOAD:  if (w_col == COLS-1)  next_state = COMPUTE;
-            COMPUTE:                            next_state = COMPUTE;  // stays forever
+            COMPUTE:      if (compute_cnt == pixels_to_run - 1'b1) next_state = DRAIN;
+            DRAIN:        if (drain_cnt == TAIL_CYCLES - 1) next_state = IDLE;
             default:                            next_state = IDLE;
         endcase
     end
@@ -37,6 +45,16 @@ module systolic_ctrl #(
         if (rst)                       w_col <= 5'd0;
         else if (state == WEIGHT_LOAD) w_col <= w_col + 5'd1;
         else                           w_col <= 5'd0;
+    end
+    always @(posedge clk) begin
+        if (rst) compute_cnt <= 16'd0;
+        else if (state == COMPUTE) compute_cnt <= compute_cnt + 16'd1;
+        else compute_cnt <= 16'd0;
+    end
+    always @(posedge clk) begin
+        if (rst) drain_cnt <= 16'd0;
+        else if (state == DRAIN) drain_cnt <= drain_cnt + 16'd1;
+        else drain_cnt <= 16'd0;
     end
     always @(posedge clk) begin
         if (rst) w_load <= 1'b0;
@@ -53,6 +71,10 @@ module systolic_ctrl #(
             compute_active <= (state == COMPUTE);
             was_compute    <= (state == COMPUTE);
         end
+    end
+    always @(posedge clk) begin
+        if (rst) done <= 1'b0;
+        else     done <= (state == DRAIN) && (drain_cnt == TAIL_CYCLES - 1);
     end
     always @(posedge clk) begin
         if (rst) compute_start_pulse <= 1'b0;

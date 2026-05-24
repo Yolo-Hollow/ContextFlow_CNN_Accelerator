@@ -16,6 +16,7 @@ module tb_systolic_top_multipass;
     localparam [31:0] ROW_MASK = (32'h1 << ROWS) - 1;
 
     reg clk, rst, start;
+    reg [15:0] num_pixels;
     wire done;
 
     reg [31:0] ifm_wr_en;
@@ -50,7 +51,7 @@ module tb_systolic_top_multipass;
         .PSUM_FIFO_DEPTH(PSUM_D), .PSUM_FIFO_AW(PSUM_AW),
         .USE_DMA_IFM(0)
     ) dut (
-        .clk(clk), .rst(rst), .start(start), .done(done),
+        .clk(clk), .rst(rst), .start(start), .num_pixels(num_pixels), .done(done),
         .ifm_fifo_wr_en(ifm_wr_en), .ifm_fifo_wr_data(ifm_wr_data),
         .ifm_fifo_full_legacy(ifm_full),
         .dma_bank_wr_en(dma_bank_wr_en), .dma_wr_x(dma_wr_x), .dma_wr_fy(dma_wr_fy),
@@ -163,7 +164,8 @@ module tb_systolic_top_multipass;
             start = 1'b1;
             @(negedge clk);
             start = 1'b0;
-            repeat (420) @(negedge clk);
+            wait (done === 1'b1);
+            @(negedge clk);
         end
     endtask
 
@@ -200,6 +202,7 @@ module tb_systolic_top_multipass;
         clk = 0;
         pass = 0;
         fail = 0;
+        num_pixels = 16'd3;
         dma_bank_wr_en = 0; dma_wr_x = 0; dma_wr_fy = 0; dma_line_advance = 0;
         for (i = 0; i < 5; i = i + 1) dma_wr_data[i] = 0;
         fm_h = 1; fm_w = 1; oy = 0; ox = 0; conv_stride = 1; conv_pad = 0; pass_base_k = 0;

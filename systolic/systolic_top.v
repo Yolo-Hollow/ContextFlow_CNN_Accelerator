@@ -12,6 +12,7 @@ module systolic_top #(
 ) (
     input  clk, rst,
     input  start,
+    input  [15:0] num_pixels,
     output done,
 
     // ---- Manual IFM FIFO fill (USE_DMA_IFM=0) ----
@@ -55,13 +56,12 @@ module systolic_top #(
     wire compute_active;
 
     systolic_ctrl #(.ROWS(ROWS), .COLS(COLS)) u_ctrl (
-        .clk(clk), .rst(rst), .start(start),
+        .clk(clk), .rst(rst), .start(start), .num_pixels(num_pixels), .done(done),
         .w_load(ctrl_w_load), .w_col(ctrl_w_col),
         .compute_active(compute_active),
         .compute_start_pulse(ctrl_compute_start),
         .pre_write(ctrl_pre_write)
     );
-    assign done = compute_active;
 
     // ---- Weight FIFOs (32 × 16-bit) ----
     // rd_en = start||ctrl_w_load: pre-reads 1 cycle before weight load

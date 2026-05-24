@@ -8,6 +8,7 @@ module tb_systolic_top;
     localparam IFM_D = 64, IFM_AW = 6, WGT_D = 64, WGT_AW = 6, PSUM_D = 256, PSUM_AW = 8;
 
     reg clk, rst, start;
+    reg [15:0] num_pixels;
     wire done;
 
     reg  [31:0]               ifm_wr_en;  reg  [ROWS*IFM_W-1:0]   ifm_wr_data;
@@ -24,7 +25,7 @@ module tb_systolic_top;
     systolic_top #(.ROWS(ROWS),.COLS(COLS), .PSUM_W(PSUM_W),
                    .IFM_FIFO_DEPTH(IFM_D), .IFM_FIFO_AW(IFM_AW),
                    .USE_DMA_IFM(0)) u_top (
-        .clk(clk),.rst(rst),.start(start),.done(done),
+        .clk(clk),.rst(rst),.start(start),.num_pixels(num_pixels),.done(done),
         .ifm_fifo_wr_en(ifm_wr_en),.ifm_fifo_wr_data(ifm_wr_data),.ifm_fifo_full(ifm_full),
         .wgt_fifo_wr_en(wgt_wr_en),.wgt_fifo_wr_data(wgt_wr_data),.wgt_fifo_full(wgt_full),
         .psum_fifo_rd_en(psum_rd_en),.psum_fifo_rd_data(psum_rd_data),.psum_fifo_empty(psum_empty),
@@ -43,6 +44,7 @@ module tb_systolic_top;
 
     initial begin
         clk=0; rst=1; start=0; pass=0; fail=0;
+        num_pixels=16'd64;
         ifm_wr_en=0; ifm_wr_data=0; wgt_wr_en=0; wgt_wr_data=0; psum_rd_en=0;
         bias_en=0; bias_addr=0; bias_data=0; is_first=1; use_ext=0; psum_top_ext=0;
         col_rd=0;

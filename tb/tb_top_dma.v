@@ -6,7 +6,7 @@ module tb_top_dma;
     localparam IFM_D=256, IFM_AW=8, WGT_D=64, WGT_AW=6, PSUM_D=256, PSUM_AW=8;
     localparam FM_W=5, FM_H=5;
 
-    reg clk,rst,start; wire done;
+    reg clk,rst,start; reg [15:0] num_pixels; wire done;
     reg [4:0] dma_bank_wr_en; reg [8:0] dma_wr_x; reg [9:0] dma_wr_fy;
     reg [7:0] dma_wr_data [0:4]; reg dma_line_advance;
     reg [8:0] fm_h,fm_w,oy,ox; reg [1:0] cs,cp; reg [10:0] base;
@@ -17,7 +17,7 @@ module tb_top_dma;
     reg [COLS*2*PSUM_W-1:0] psum_top_ext;
 
     systolic_top #(.ROWS(ROWS),.COLS(COLS),.IFM_FIFO_DEPTH(IFM_D),.IFM_FIFO_AW(IFM_AW)) u_top (
-        .clk(clk),.rst(rst),.start(start),.done(done),
+        .clk(clk),.rst(rst),.start(start),.num_pixels(num_pixels),.done(done),
         .dma_bank_wr_en(dma_bank_wr_en),.dma_wr_x(dma_wr_x),.dma_wr_fy(dma_wr_fy),
         .dma_wr_data(dma_wr_data),.dma_line_advance(dma_line_advance),
         .fm_h(fm_h),.fm_w(fm_w),.conv_stride(cs),.conv_pad(cp),.pass_base_k(base),
@@ -100,6 +100,7 @@ module tb_top_dma;
 
     initial begin
         clk=0; pass=0; fail=0;
+        num_pixels=16'd3;
         dma_bank_wr_en=0; dma_wr_x=0; dma_wr_fy=0; dma_line_advance=0;
         for(i=0;i<5;i=i+1) dma_wr_data[i]=0;
         fm_h=FM_H; fm_w=FM_W; cs=1; cp=0; base=0; oy=0; ox=0;
