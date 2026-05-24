@@ -19,7 +19,8 @@ module tb_systolic_top_feeder_multipass_stream;
     localparam PIXELS = OFM_W * OFM_H;
     localparam CIN = 5;
     localparam K_TOTAL = CIN * 3 * 3;
-    localparam COUT = COLS * 2;
+    localparam COUT_TILE = COLS * 2;
+    localparam COUT_TOTAL = COUT_TILE * 2;
     localparam [31:0] COL_MASK = (32'h1 << COLS) - 1;
     localparam [31:0] ROW_MASK = (32'h1 << ROWS) - 1;
 
@@ -102,13 +103,13 @@ module tb_systolic_top_feeder_multipass_stream;
     always #5 clk = ~clk;
 
     integer pass, fail;
-    integer b, y, x, r, c, co, k, lane, ch, ker, ky, kx, ch_i, n, idx;
+    integer b, y, x, r, c, co, k, lane, ch, ker, ky, kx, ch_i, n, idx, block_base;
     integer phase;
     reg signed [7:0] feat [0:CIN-1][0:FM_H-1][0:FM_W-1];
-    reg signed [7:0] weight [0:K_TOTAL-1][0:COUT-1];
-    reg signed [PSUM_W-1:0] bias [0:COUT-1];
-    reg signed [PSUM_W-1:0] golden_partial [0:PIXELS-1][0:COUT-1];
-    reg signed [PSUM_W-1:0] golden_final [0:PIXELS-1][0:COUT-1];
+    reg signed [7:0] weight [0:K_TOTAL-1][0:COUT_TOTAL-1];
+    reg signed [PSUM_W-1:0] bias [0:COUT_TOTAL-1];
+    reg signed [PSUM_W-1:0] golden_partial [0:PIXELS-1][0:COUT_TOTAL-1];
+    reg signed [PSUM_W-1:0] golden_final [0:PIXELS-1][0:COUT_TOTAL-1];
     reg [ROWS*WGT_W*2-1:0] wtmp;
     reg [COLS*2*PSUM_W-1:0] pass0_pkt [0:PIXELS-1];
     reg [COLS*2*PSUM_W-1:0] final_pkt [0:PIXELS-1];
@@ -158,11 +159,12 @@ module tb_systolic_top_feeder_multipass_stream;
     endtask
 
     task load_bias;
+        input integer co_base;
         begin
             bias_wr_en = 1'b1;
-            for (ch_i = 0; ch_i < COUT; ch_i = ch_i + 1) begin
+            for (ch_i = 0; ch_i < COUT_TILE; ch_i = ch_i + 1) begin
                 bias_wr_addr = ch_i[5:0];
-                bias_wr_data = bias[ch_i];
+                bias_wr_data = bias[co_base + ch_i];
                 @(negedge clk);
             end
             bias_wr_en = 1'b0;
@@ -171,6 +173,7 @@ module tb_systolic_top_feeder_multipass_stream;
 
     task load_weights_tile;
         input integer k_base;
+        input integer co_base;
         integer gk;
         begin
             for (c = 0; c < COLS; c = c + 1) begin
@@ -178,8 +181,8 @@ module tb_systolic_top_feeder_multipass_stream;
                 for (r = 0; r < ROWS; r = r + 1) begin
                     gk = k_base + r;
                     if (gk < K_TOTAL) begin
-                        wtmp[r*16 +: 8] = weight[gk][2*c];
-                        wtmp[r*16+8 +: 8] = weight[gk][2*c+1];
+                        wtmp[r*16 +: 8] = weight[gk][co_base + 2*c];
+                        wtmp[r*16+8 +: 8] = weight[gk][co_base + 2*c + 1];
                     end else begin
                         wtmp[r*16 +: 8] = 8'd0;
                         wtmp[r*16+8 +: 8] = 8'd0;
@@ -236,6 +239,7 @@ module tb_systolic_top_feeder_multipass_stream;
 
     task check_packets;
         input integer final_check;
+        input integer co_base;
         begin
             for (idx = 0; idx < PIXELS; idx = idx + 1) begin
                 for (c = 0; c < COLS; c = c + 1) begin
@@ -243,16 +247,16 @@ module tb_systolic_top_feeder_multipass_stream;
                                        : pass0_pkt[idx][(2*c)*PSUM_W +: PSUM_W];
                     got1 = final_check ? final_pkt[idx][(2*c+1)*PSUM_W +: PSUM_W]
                                        : pass0_pkt[idx][(2*c+1)*PSUM_W +: PSUM_W];
-                    if (got0 !== (final_check ? golden_final[idx][2*c] : golden_partial[idx][2*c])) begin
-                        $display("[FAIL] %s pixel%0d cout%0d got=%0d exp=%0d",
-                            final_check ? "final" : "partial", idx, 2*c, got0,
-                            final_check ? golden_final[idx][2*c] : golden_partial[idx][2*c]);
+                    if (got0 !== (final_check ? golden_final[idx][co_base + 2*c] : golden_partial[idx][co_base + 2*c])) begin
+                        $display("[FAIL] %s block%0d pixel%0d cout%0d got=%0d exp=%0d",
+                            final_check ? "final" : "partial", co_base / COUT_TILE, idx, co_base + 2*c, got0,
+                            final_check ? golden_final[idx][co_base + 2*c] : golden_partial[idx][co_base + 2*c]);
                         fail = fail + 1;
                     end else pass = pass + 1;
-                    if (got1 !== (final_check ? golden_final[idx][2*c+1] : golden_partial[idx][2*c+1])) begin
-                        $display("[FAIL] %s pixel%0d cout%0d got=%0d exp=%0d",
-                            final_check ? "final" : "partial", idx, 2*c+1, got1,
-                            final_check ? golden_final[idx][2*c+1] : golden_partial[idx][2*c+1]);
+                    if (got1 !== (final_check ? golden_final[idx][co_base + 2*c + 1] : golden_partial[idx][co_base + 2*c + 1])) begin
+                        $display("[FAIL] %s block%0d pixel%0d cout%0d got=%0d exp=%0d",
+                            final_check ? "final" : "partial", co_base / COUT_TILE, idx, co_base + 2*c + 1, got1,
+                            final_check ? golden_final[idx][co_base + 2*c + 1] : golden_partial[idx][co_base + 2*c + 1]);
                         fail = fail + 1;
                     end else pass = pass + 1;
                 end
@@ -289,10 +293,10 @@ module tb_systolic_top_feeder_multipass_stream;
                     feat[ch][y][x] = ch*13 + y*3 + x - 25;
 
         for (k = 0; k < K_TOTAL; k = k + 1)
-            for (co = 0; co < COUT; co = co + 1)
+            for (co = 0; co < COUT_TOTAL; co = co + 1)
                 weight[k][co] = (k*5 + co*3) % 17 - 8;
 
-        for (co = 0; co < COUT; co = co + 1) begin
+        for (co = 0; co < COUT_TOTAL; co = co + 1) begin
             bias[co] = co*7 - 19;
             for (idx = 0; idx < PIXELS; idx = idx + 1) begin
                 y = idx / OFM_W;
@@ -314,41 +318,44 @@ module tb_systolic_top_feeder_multipass_stream;
         repeat (3) @(negedge clk);
         rst = 0;
         repeat (2) @(negedge clk);
-        load_bias();
 
-        phase = 1;
-        pass_base_k = 11'd0;
-        is_first_pass = 1'b1;
-        use_ext_psum = 1'b0;
-        use_psum_stream = 1'b0;
-        load_weights_tile(0);
-        run_feeder_and_compute();
-        phase = 2;
-        read_results(bias[0]);
-        phase = 3;
-        check_packets(0);
+        for (block_base = 0; block_base < COUT_TOTAL; block_base = block_base + COUT_TILE) begin
+            load_bias(block_base);
 
-        phase = 4;
-        for (idx = 0; idx < PIXELS; idx = idx + 1) begin
-            pp_wr_en = 1'b1;
-            pp_wr_bank = 1'b0;
-            pp_wr_addr = idx[3:0];
-            pp_wr_data = pass0_pkt[idx];
-            @(negedge clk);
-            pp_wr_en = 1'b0;
+            phase = 1;
+            pass_base_k = 11'd0;
+            is_first_pass = 1'b1;
+            use_ext_psum = 1'b0;
+            use_psum_stream = 1'b0;
+            load_weights_tile(0, block_base);
+            run_feeder_and_compute();
+            phase = 2;
+            read_results(bias[block_base]);
+            phase = 3;
+            check_packets(0, block_base);
+
+            phase = 4;
+            for (idx = 0; idx < PIXELS; idx = idx + 1) begin
+                pp_wr_en = 1'b1;
+                pp_wr_bank = 1'b0;
+                pp_wr_addr = idx[3:0];
+                pp_wr_data = pass0_pkt[idx];
+                @(negedge clk);
+                pp_wr_en = 1'b0;
+            end
+
+            phase = 5;
+            pass_base_k = 11'd32;
+            is_first_pass = 1'b0;
+            use_ext_psum = 1'b1;
+            use_psum_stream = 1'b1;
+            load_weights_tile(32, block_base);
+            run_feeder_and_compute();
+            phase = 6;
+            read_results(pass0_pkt[0][PSUM_W-1:0]);
+            phase = 7;
+            check_packets(1, block_base);
         end
-
-        phase = 5;
-        pass_base_k = 11'd32;
-        is_first_pass = 1'b0;
-        use_ext_psum = 1'b1;
-        use_psum_stream = 1'b1;
-        load_weights_tile(32);
-        run_feeder_and_compute();
-        phase = 6;
-        read_results(pass0_pkt[0][PSUM_W-1:0]);
-        phase = 7;
-        check_packets(1);
 
         $display("=== tb_systolic_top_feeder_multipass_stream: %0d pass, %0d fail ===", pass, fail);
         if (fail != 0) $fatal(1);
