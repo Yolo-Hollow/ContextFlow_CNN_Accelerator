@@ -51,6 +51,9 @@ module tb_conv_layer_top_stream;
     reg [COLS*2*16-1:0] quant_mult_flat;
     reg [COLS*2*4-1:0] quant_shift_flat;
     reg [COLS*2*8-1:0] quant_zp_flat;
+    reg [1:0] activation_mode;
+    reg act_lut_wr_en;
+    reg [7:0] act_lut_wr_addr, act_lut_wr_data;
     wire ofm_valid;
     wire [PSUM_A-1:0] ofm_addr;
     wire [10:0] ofm_cout_base;
@@ -88,6 +91,8 @@ module tb_conv_layer_top_stream;
         .final_channel_valid(final_channel_valid),
         .quant_mult_flat(quant_mult_flat), .quant_shift_flat(quant_shift_flat),
         .quant_zp_flat(quant_zp_flat),
+        .activation_mode(activation_mode), .act_lut_wr_en(act_lut_wr_en),
+        .act_lut_wr_addr(act_lut_wr_addr), .act_lut_wr_data(act_lut_wr_data),
         .ofm_valid(ofm_valid), .ofm_addr(ofm_addr),
         .ofm_cout_base(ofm_cout_base), .ofm_channel_valid(ofm_channel_valid),
         .ofm_data(ofm_data),
@@ -129,6 +134,10 @@ module tb_conv_layer_top_stream;
             quant_mult_flat = {COLS*2{16'd1}};
             quant_shift_flat = {COLS*2{4'd0}};
             quant_zp_flat = {COLS*2{8'd0}};
+            activation_mode = 2'd0;
+            act_lut_wr_en = 1'b0;
+            act_lut_wr_addr = 8'd0;
+            act_lut_wr_data = 8'd0;
         end
     endtask
 

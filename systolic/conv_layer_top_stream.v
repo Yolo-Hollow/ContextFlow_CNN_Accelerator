@@ -78,6 +78,10 @@ module conv_layer_top_stream #(
     input  [COLS*2*MULT_W-1:0]  quant_mult_flat,
     input  [COLS*2*SHIFT_W-1:0] quant_shift_flat,
     input  [COLS*2*ZP_W-1:0]    quant_zp_flat,
+    input  [1:0]                 activation_mode,
+    input                        act_lut_wr_en,
+    input  [7:0]                 act_lut_wr_addr,
+    input  [7:0]                 act_lut_wr_data,
     output                      ofm_valid,
     output [PSUM_BUF_AW-1:0]    ofm_addr,
     output [10:0]               ofm_cout_base,
@@ -310,14 +314,29 @@ module conv_layer_top_stream #(
         .ofm_data(ofm_data)
     );
 
+    wire act_valid;
+    wire [PSUM_BUF_AW-1:0] act_addr;
+    wire [10:0] act_cout_base;
+    wire [COLS*2-1:0] act_channel_valid;
+    wire [COLS*2*8-1:0] act_data;
+
+    ofm_activation #(.COUT_TILE(COLS*2), .ADDR_W(PSUM_BUF_AW)) u_activation (
+        .clk(clk), .rst(rst), .mode(activation_mode),
+        .in_valid(ofm_valid), .in_addr(ofm_addr), .in_cout_base(ofm_cout_base),
+        .in_channel_valid(ofm_channel_valid), .in_data(ofm_data),
+        .lut_wr_en(act_lut_wr_en), .lut_wr_addr(act_lut_wr_addr), .lut_wr_data(act_lut_wr_data),
+        .out_valid(act_valid), .out_addr(act_addr), .out_cout_base(act_cout_base),
+        .out_channel_valid(act_channel_valid), .out_data(act_data)
+    );
+
     ofm_writeback #(
         .COUT_TILE(COLS*2), .PIXEL_AW(PSUM_BUF_AW), .ADDR_W(OFM_ADDR_W),
         .FIFO_DEPTH(OFM_FIFO_DEPTH), .FIFO_AW(OFM_FIFO_AW)
     ) u_ofm_writeback (
         .clk(clk), .rst(rst),
-        .packet_valid(ofm_valid), .packet_pixel(ofm_addr),
-        .packet_cout_base(ofm_cout_base),
-        .packet_channel_valid(ofm_channel_valid), .packet_data(ofm_data),
+        .packet_valid(act_valid), .packet_pixel(act_addr),
+        .packet_cout_base(act_cout_base),
+        .packet_channel_valid(act_channel_valid), .packet_data(act_data),
         .packet_full(ofm_packet_full), .cout_total(cout_total),
         .wr_en(ofm_mem_wr_en), .wr_addr(ofm_mem_wr_addr), .wr_data(ofm_mem_wr_data),
         .busy(ofm_wb_busy)

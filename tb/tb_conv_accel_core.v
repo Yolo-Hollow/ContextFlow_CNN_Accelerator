@@ -50,6 +50,9 @@ module tb_conv_accel_core;
     reg [31:0] quant_wr_data;
     reg [5:0] quant_rd_addr;
     wire [31:0] quant_rd_data;
+    reg [1:0] activation_mode;
+    reg act_lut_wr_en;
+    reg [7:0] act_lut_wr_addr, act_lut_wr_data;
     wire ofm_mem_wr_en;
     wire [15:0] ofm_mem_wr_addr;
     wire [7:0] ofm_mem_wr_data;
@@ -78,6 +81,8 @@ module tb_conv_accel_core;
         .dma_wr_data(dma_wr_data), .dma_line_advance(dma_line_advance),
         .quant_wr_en(quant_wr_en), .quant_wr_addr(quant_wr_addr), .quant_wr_data(quant_wr_data),
         .quant_rd_addr(quant_rd_addr), .quant_rd_data(quant_rd_data),
+        .activation_mode(activation_mode), .act_lut_wr_en(act_lut_wr_en),
+        .act_lut_wr_addr(act_lut_wr_addr), .act_lut_wr_data(act_lut_wr_data),
         .ofm_mem_wr_en(ofm_mem_wr_en), .ofm_mem_wr_addr(ofm_mem_wr_addr),
         .ofm_mem_wr_data(ofm_mem_wr_data), .ofm_packet_full(ofm_packet_full)
     );
@@ -138,6 +143,10 @@ module tb_conv_accel_core;
             quant_wr_addr = 0;
             quant_wr_data = 0;
             quant_rd_addr = 0;
+            activation_mode = 2'd0;
+            act_lut_wr_en = 1'b0;
+            act_lut_wr_addr = 8'd0;
+            act_lut_wr_data = 8'd0;
         end
     endtask
 

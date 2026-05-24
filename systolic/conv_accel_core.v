@@ -66,6 +66,10 @@ module conv_accel_core #(
     input  [31:0] quant_wr_data,
     input  [5:0]  quant_rd_addr,
     output [31:0] quant_rd_data,
+    input  [1:0]  activation_mode,
+    input         act_lut_wr_en,
+    input  [7:0]  act_lut_wr_addr,
+    input  [7:0]  act_lut_wr_data,
 
     output                      ofm_mem_wr_en,
     output [OFM_ADDR_W-1:0]     ofm_mem_wr_addr,
@@ -133,6 +137,8 @@ module conv_accel_core #(
         .dma_wr_data(dma_wr_data), .dma_line_advance(dma_line_advance),
         .final_valid(), .final_addr(), .final_data(), .final_cout_base(), .final_channel_valid(),
         .quant_mult_flat(quant_mult_flat), .quant_shift_flat(quant_shift_flat), .quant_zp_flat(quant_zp_flat),
+        .activation_mode(activation_mode), .act_lut_wr_en(act_lut_wr_en),
+        .act_lut_wr_addr(act_lut_wr_addr), .act_lut_wr_data(act_lut_wr_data),
         .ofm_valid(), .ofm_addr(), .ofm_cout_base(), .ofm_channel_valid(), .ofm_data(),
         .ofm_mem_wr_en(ofm_mem_wr_en), .ofm_mem_wr_addr(ofm_mem_wr_addr),
         .ofm_mem_wr_data(ofm_mem_wr_data), .ofm_packet_full(ofm_packet_full)
