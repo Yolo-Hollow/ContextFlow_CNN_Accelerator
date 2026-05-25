@@ -475,3 +475,449 @@ tb_conv_accel_core_axi_lite_stream_ps_driver: 1163 pass, 0 fail
 2. 定义一行 IFM 数据的 stream 顺序：`x=0..fm_w-1`，每个 x 写 5 个 bank。
 3. 用 ready/valid 或 burst-style 接口替代当前 testbench 直接驱动的 `dma_bank_wr_en/dma_wr_x/dma_wr_fy/dma_wr_data/dma_line_advance`。
 4. 新增 line-fill stream loader 单测，再接入 `conv_accel_core_axi_lite_stream` 级长测试。
+
+---
+
+## 14. 2026-05-25 IFM/OFM Stream 与 Full-Stream 顶层更新
+
+本轮已经将数据搬运接口继续从 bias/weight 推进到 IFM line fill 和 OFM stream writeback，形成第一版 DMA-facing 顶层：
+
+- `systolic/ifm_line_stream_loader.v`
+- `systolic/ofm_byte_stream_fifo.v`
+- `systolic/ofm_packet_fifo.v`
+- `systolic/psum_packet_fifo.v`
+- `systolic/conv_accel_core_axi_lite_full_stream.v`
+
+当前 full-stream 顶层包含：
+
+```text
+AXI-Lite config
+  + bias stream
+  + weight stream
+  + IFM line fill stream
+  + OFM byte stream
+```
+
+### 14.1 IFM line fill stream
+
+`ifm_line_stream_loader` 将 PS/DMA 侧的一行 IFM stream 转换为现有 line buffer 写接口。
+
+协议语义：
+
+```text
+line_stream_ctrl/window_feeder:
+  feeder_fill_req = 1
+  feeder_fill_fy  = requested input feature row
+
+PS/DMA source:
+  wait(ifm_line_s_ready)
+  send x = 0..fm_w-1
+  each beat carries 5 bank bytes
+```
+
+接口：
+
+```verilog
+input  [8:0] ifm_line_words;
+output       ifm_line_s_ready;
+input        ifm_line_s_valid;
+input  [7:0] ifm_line_s_data [0:4];
+```
+
+内部转换为：
+
+```verilog
+dma_bank_wr_en
+dma_wr_x
+dma_wr_fy
+dma_wr_data[0:4]
+dma_line_advance
+```
+
+已经修正的关键问题：
+
+- `line_stream_ctrl` 在 `fill_done` 当拍只登记已完成行，不再同时继续发旧的 `fill_req/fill_fy`。
+- 这样避免 PS/DMA 侧误服务上一行请求，造成“新 fy 地址 + 旧行数据”的错配。
+
+### 14.2 OFM 输出流程
+
+当前 OFM 输出链路为：
+
+```text
+PSUM FIFO
+  -> psum_drain_writer
+  -> final PSUM packet FIFO
+  -> requant
+  -> requant OFM packet FIFO
+  -> activation
+  -> activation OFM packet FIFO
+  -> ofm_writeback
+  -> OFM byte stream FIFO
+  -> DMA/PS
+```
+
+`ofm_writeback` 将一个 `COUT_TILE` 宽的 OFM packet 展开为 byte stream，地址布局为 HWC：
+
+```text
+wr_addr = (tile_pixel_base + local_pixel) * cout_total
+        + (cout_base + lane)
+```
+
+这意味着：
+
+- 不需要在片上保存整张 OFM。
+- 每个 spatial tile 结束后可以直接写回全局输出缓冲。
+- `Cout > COUT_TILE` 时，不同 `cout_base` 写到同一 pixel 的不同 channel 范围。
+
+full-stream 顶层对外提供 OFM stream：
+
+```verilog
+output                  ofm_m_valid;
+input                   ofm_m_ready;
+output [OFM_ADDR_W-1:0] ofm_m_addr;
+output [7:0]            ofm_m_data;
+```
+
+同时保留 testbench 观察口：
+
+```verilog
+ofm_mem_wr_en
+ofm_mem_wr_addr
+ofm_mem_wr_data
+```
+
+该观察口等价于 `ofm_m_valid && ofm_m_ready` 时发生的一次 byte 写事件。
+
+### 14.3 OFM ready/valid 背压链
+
+当前已经将 ready/valid 语义从 OFM stream 侧往前推进到后处理链：
+
+- `ofm_byte_stream_fifo` 支持 `ofm_m_valid/ofm_m_ready`。
+- `ofm_writeback` 增加 `wr_ready`。
+- `ofm_packet_fifo` 缓冲 activation 后的 OFM packet。
+- `ofm_activation` 增加 `in_ready/out_ready`，下游不 ready 时保持输出。
+- `psum_packet_fifo` 缓冲 final PSUM packet。
+- `psum_drain_writer` 增加 `packet_ready`，后处理链不 ready 时不会继续读 PSUM FIFO。
+- requant 后增加 OFM packet FIFO，并通过 `almost_full` 为 requant 固定流水线预留飞行中 packet 空间。
+
+当前背压能力定位：
+
+- 已验证可承受短 burst 型 OFM DMA ready 拉低。
+- 仍不建议将 `ofm_m_ready` 长时间拉低作为正常工作模式。
+- 若系统 DMA 可能长时间停收，应继续增加 FIFO 深度或设计真正的 AXI master writeback，并在调度层限制后处理链积压。
+
+### 14.4 新增验证结果
+
+新增或更新的关键测试：
+
+```text
+tb_ifm_line_stream_loader:                         61 pass, 0 fail
+tb_ofm_packet_fifo:                                39 pass, 0 fail
+tb_ofm_byte_stream_fifo:                            7 pass, 0 fail
+tb_conv_accel_core_axi_lite_full_stream_ps_driver: 1165 pass, 0 fail
+tb_conv_accel_core_axi_lite_full_stream_backpressure: 1165 pass, 0 fail
+```
+
+其中 full-stream backpressure 测试覆盖：
+
+- AXI-Lite 配置。
+- bias/weight stream 加载。
+- IFM line stream 填充。
+- 3 个 spatial tile：`3 + 3 + 2` 输出行。
+- `Cin=16, K_TOTAL=144, K_PASSES=5`。
+- `Cout=18, COUT_TILE=8, COUT_BLOCKS=3`。
+- OFM stream ready 短暂停顿。
+- 最终 OFM 与 golden convolution 一致。
+
+---
+
+## 15. 下一步：正式 AXI-Stream 打包协议
+
+当前接口是“DMA-facing ready/valid stream”，还不是完整 AXI-Stream。下一步应将 stream 端口规范化为 AXI-Stream 风格，重点先确定打包协议，而不是马上写复杂 AXI DMA 控制器。
+
+### 15.1 推荐 TDATA 位宽
+
+面向 Zynq UltraScale+ MPSoC/Kria K26，建议优先采用：
+
+```text
+TDATA = 64 bit 或 128 bit
+```
+
+原因：
+
+- 32 bit 最容易调试，但带宽偏低。
+- 64 bit 可以自然打包 8 个 INT8，PS 侧也容易构造。
+- 128 bit 更适合高带宽 DMA，但 IFM line 的 5-bank beat 需要 padding 或重新组织。
+
+建议实现顺序：
+
+1. 先实现 64-bit AXI-Stream 包装。
+2. testbench 验证稳定后，再扩展到 128-bit。
+
+### 15.2 Bias stream 打包
+
+当前 bias 数据宽度为 `PSUM_W=32`。建议：
+
+```text
+64-bit TDATA:
+  beat contains 2 bias words
+  word0 = TDATA[31:0]
+  word1 = TDATA[63:32]
+```
+
+每个 Cout block 需要：
+
+```text
+ceil(COUT_TILE / 2) beats
+```
+
+`TLAST` 建议在一个 bias block 的最后一个 beat 拉高。
+
+### 15.3 Weight stream 打包
+
+当前 weight 为 INT8，顺序为：
+
+```text
+for k_lane = 0..K_TILE-1:
+  for cout_lane = 0..COUT_TILE-1:
+    send weight[k_lane][cout_lane]
+```
+
+64-bit TDATA 建议：
+
+```text
+beat contains 8 int8 weights
+```
+
+每个 weight tile 需要：
+
+```text
+K_TILE * COUT_TILE / 8 beats
+```
+
+对于当前典型 `K_TILE=32, COUT_TILE=64`：
+
+```text
+32 * 64 / 8 = 256 beats
+```
+
+`TLAST` 建议在一个 weight tile 的最后一个 beat 拉高。
+
+### 15.4 IFM line stream 打包
+
+当前 IFM line loader 的逻辑 beat 是：
+
+```text
+one x position = 5 bank bytes
+```
+
+64-bit TDATA 建议直接打包为：
+
+```text
+TDATA[7:0]    = bank0
+TDATA[15:8]   = bank1
+TDATA[23:16]  = bank2
+TDATA[31:24]  = bank3
+TDATA[39:32]  = bank4
+TDATA[63:40]  = reserved/padding 0
+```
+
+每行需要：
+
+```text
+fm_w beats
+```
+
+`TLAST` 建议在一行最后一个 x 拉高。这样 `feeder_fill_fy` 对应一次 line DMA transaction，PS 调度简单，line buffer 更新边界也清晰。
+
+### 15.5 OFM stream 打包
+
+当前 OFM 输出是 byte + address：
+
+```verilog
+ofm_m_valid
+ofm_m_ready
+ofm_m_addr
+ofm_m_data
+```
+
+正式 AXI-Stream 有两种路线：
+
+#### 路线 A：保留 byte stream，PS/DMA 按 HWC 顺序写
+
+优点：
+
+- 最接近当前实现。
+- 验证简单。
+- 每个 byte 都携带或隐含地址，调试直观。
+
+缺点：
+
+- 带宽低。
+- 真正接 AXI DMA 时不希望每个 byte 都传地址。
+
+#### 路线 B：按连续 HWC 地址打包 64-bit/128-bit
+
+推荐作为最终路线。
+
+做法：
+
+- `ofm_writeback` 保证输出地址单调递增或按 block 内可预测顺序。
+- `ofm_axis_packer` 收集连续 byte，打包成 64-bit 或 128-bit。
+- `TKEEP` 标记最后一个 beat 的有效 byte。
+- `TLAST` 在一个 spatial tile 或一个 Cout block 结束时拉高。
+
+建议下一步先实现路线 A 的 AXI-Stream wrapper，用于验证接口时序；随后实现路线 B 的打包优化。
+
+### 15.6 下一阶段任务清单
+
+推荐工作顺序：
+
+1. 新增 `axis_ifm_line_loader`：AXI-Stream 64-bit 输入，解包到 `ifm_line_stream_loader`。
+2. 新增 `axis_bias_weight_loader`：AXI-Stream 64-bit 输入，分别服务 bias 和 weight tile。
+3. 新增 `axis_ofm_byte_writer`：先将当前 OFM byte stream 封装为 AXI-Stream 输出。
+4. 新增 AXI-Stream testbench，覆盖 `TVALID/TREADY/TLAST/TKEEP`。
+5. 将 `conv_accel_core_axi_lite_full_stream` 升级为正式 AXI-Lite + AXI-Stream 顶层。
+6. 跑一次 Vivado synthesis，获得 XCK26 资源与时序初步数据。
+
+---
+
+## 16. 2026-05-25 AXI-Stream 边界模块进展
+
+已经完成第一批 64-bit AXI-Stream 边界模块，先作为独立 wrapper 验证协议，不改变核心计算链路。
+
+### 16.1 IFM AXI-Stream line loader
+
+新增：
+
+```text
+systolic/axis_ifm_line_loader.v
+tb/tb_axis_ifm_line_loader.v
+```
+
+功能：
+
+- `TDATA[39:0]` 解包为 5 个 IFM bank byte。
+- `TKEEP[4:0]` 必须为 `5'b11111`。
+- `TLAST` 必须只在一行最后一个 x beat 拉高。
+- 输出仍复用原来的 `dma_bank_wr_en/dma_wr_x/dma_wr_fy/dma_wr_data/dma_line_advance`。
+
+### 16.2 Bias/weight AXI-Stream loader
+
+新增：
+
+```text
+systolic/axis_bias_weight_loader.v
+tb/tb_axis_bias_weight_loader.v
+```
+
+功能：
+
+- bias：64-bit beat 解包为两个 32-bit bias。
+- weight：64-bit beat 解包为 8 个 INT8 weight。
+- 对每个 load transaction 检查 `TKEEP/TLAST`。
+- 输出直接生成 `bias_wr_en/bias_wr_addr/bias_wr_data` 和 `wgt_tile_wr_en/wgt_tile_wr_addr/wgt_tile_wr_data`。
+
+注意：
+
+- testbench 中 AXI 发送任务必须在看到 `TREADY` 后继续保持 `TVALID` 跨过一个 `posedge clk`，否则当 `TREADY` 在 `posedge` 后才变高时会错过真正握手。
+- 这类握手细节后续接入更大顶层时也必须保留。
+
+### 16.3 OFM debug AXI-Stream writer
+
+新增：
+
+```text
+systolic/axis_ofm_byte_writer.v
+tb/tb_axis_ofm_byte_writer.v
+```
+
+当前采用调试友好的 route A：
+
+```text
+TDATA[OFM_ADDR_W-1:0]  = OFM byte address
+TDATA[OFM_ADDR_W +: 8] = OFM byte data
+TKEEP                  = addr+data 有效 byte mask
+TLAST                  = byte_last passthrough
+```
+
+这个模块不是最终高带宽写回格式，而是用于先把现有 `ofm_m_valid/ofm_m_ready/ofm_m_addr/ofm_m_data` 接口封装成标准 AXI-Stream。最终仍建议实现 route B：连续 HWC byte 打包为 64-bit/128-bit burst。
+
+### 16.4 当前验证
+
+已通过的新增 AXI-Stream 边界测试：
+
+```text
+tb_axis_ifm_line_loader:    55 pass, 0 fail
+tb_axis_bias_weight_loader: 72 pass, 0 fail
+tb_axis_ofm_byte_writer:    11 pass, 0 fail
+```
+
+同时重新验证了原始 bus-agnostic loader：
+
+```text
+tb_ifm_line_stream_loader:     61 pass, 0 fail
+tb_bias_weight_stream_loader:  70 pass, 0 fail
+```
+
+短回归全量运行本次在 180 秒工具超时前未完成，后续建议拆分批次运行或用 Vivado xsim Tcl 回归来获得更稳定的长测试结果。
+
+### 16.5 下一步
+
+已经将这些 AXI-Stream wrapper 接入新的正式顶层：
+
+```text
+conv_accel_core_axi_lite_axis_stream.v
+```
+
+该顶层包含：
+
+- AXI-Lite 配置接口。
+- AXI-Stream bias input。
+- AXI-Stream weight input。
+- AXI-Stream IFM line input。
+- AXI-Stream OFM debug output。
+
+实现方式：
+
+- 不再套用 `conv_accel_core_axi_lite_full_stream`，避免 loader 嵌套。
+- 直接实例化 `conv_accel_core_axi_lite`。
+- `axis_bias_weight_loader` 直接驱动 bias SRAM 写口和 weight tile 写口。
+- `axis_ifm_line_loader` 直接驱动 line buffer DMA 写口。
+- core 的 OFM byte write 先进入 `ofm_byte_stream_fifo`，再由 `axis_ofm_byte_writer` 封装为 AXI-Stream。
+
+新增验证：
+
+```text
+tb_conv_accel_core_axi_lite_axis_stream_smoke: 51 pass, 0 fail
+```
+
+该 smoke 测试覆盖：
+
+- AXI-Lite 配置。
+- AXI-Stream bias/weight/IFM 输入。
+- AXI-Stream OFM debug 输出路径。
+- 小尺寸卷积与 golden 对比。
+
+当前 AXI 边界回归：
+
+```text
+tb_axis_ifm_line_loader:                      55 pass, 0 fail
+tb_axis_bias_weight_loader:                   72 pass, 0 fail
+tb_axis_ofm_byte_writer:                      11 pass, 0 fail
+tb_conv_accel_core_axi_lite_axis_stream_smoke: 51 pass, 0 fail
+```
+
+较大的 3-tile AXI PS-driver 已经改用 Vivado xsim Tcl 跑通：
+
+```text
+tb_conv_accel_core_axi_lite_axis_stream_ps_driver: 1163 pass, 0 fail
+```
+
+该测试的 xsim 仿真结束时间为 `307160 ns`，覆盖 3 个 spatial tile、多个 K pass、多个 Cout block，以及 AXI-Lite + AXI-Stream 输入输出边界。
+
+下一步：
+
+1. 给 AXI 顶层增加一个 OFM `TLAST` 规划：至少能标记 spatial tile 或 Cout block 结束。
+2. 开始准备 Vivado synthesis 工程脚本，先拿 XCK26 资源和 Fmax 初值。
+3. 在 synthesis 前再跑一次包含 smoke + 3-tile AXI 长测的 xsim 回归。

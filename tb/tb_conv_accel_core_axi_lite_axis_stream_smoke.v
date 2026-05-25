@@ -1,0 +1,20 @@
+`timescale 1ns / 1ps
+
+`define TB_CONV_ACCEL_CORE_MODULE tb_conv_accel_core_axi_lite_axis_stream_smoke
+`define TB_CONV_ACCEL_CORE_USE_AXI_LITE
+`define TB_CONV_ACCEL_CORE_USE_AXIS_STREAM
+`define TB_CONV_ACCEL_CORE_COLS 2
+`define TB_CONV_ACCEL_CORE_FM_W 5
+`define TB_CONV_ACCEL_CORE_FM_H 5
+`define TB_CONV_ACCEL_CORE_OFM_W 5
+`define TB_CONV_ACCEL_CORE_OFM_H 5
+`define TB_CONV_ACCEL_CORE_COUT_TOTAL 4
+`define TB_CONV_ACCEL_CORE_PAD 1
+`define TB_CONV_ACCEL_CORE_STRIDE 1
+`define TB_CONV_ACCEL_CORE_TILE_OY_BASE 0
+`define TB_CONV_ACCEL_CORE_TILE_OFM_H 2
+`define TB_CONV_ACCEL_CORE_TILE_PIXEL_BASE 0
+`define TB_CONV_ACCEL_CORE_TILE_COUNT 1
+`define TB_CONV_ACCEL_CORE_TIMEOUT 400000
+
+`include "tb_conv_accel_core_realistic_small.v"

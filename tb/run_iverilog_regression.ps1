@@ -26,7 +26,9 @@ $common = @(
     "systolic/layer_scheduler_stream.v",
     "systolic/weight_tile_loader.v",
     "systolic/bias_weight_stream_loader.v",
+    "systolic/axis_bias_weight_loader.v",
     "systolic/ifm_line_stream_loader.v",
+    "systolic/axis_ifm_line_loader.v",
     "systolic/psum_pingpong_buffer.v",
     "systolic/psum_stream_feeder.v",
     "systolic/psum_drain_writer.v",
@@ -36,6 +38,7 @@ $common = @(
     "systolic/ofm_writeback.v",
     "systolic/ofm_packet_fifo.v",
     "systolic/ofm_byte_stream_fifo.v",
+    "systolic/axis_ofm_byte_writer.v",
     "systolic/conv_layer_top_stream.v",
     "systolic/layer_config_regs.v",
     "systolic/quant_param_regs.v",
@@ -44,6 +47,7 @@ $common = @(
     "systolic/conv_accel_core_axi_lite.v",
     "systolic/conv_accel_core_axi_lite_stream.v",
     "systolic/conv_accel_core_axi_lite_full_stream.v",
+    "systolic/conv_accel_core_axi_lite_axis_stream.v",
     "systolic/requant.v",
     "systolic/leaky_lut.v",
     "systolic/systolic_top.v"
@@ -68,7 +72,9 @@ $tests = @(
     @{ Top = "tb_layer_scheduler_small"; Files = @("tb/tb_layer_scheduler_small.v") },
     @{ Top = "tb_weight_tile_loader"; Files = @("tb/tb_weight_tile_loader.v") },
     @{ Top = "tb_bias_weight_stream_loader"; Files = @("tb/tb_bias_weight_stream_loader.v") },
+    @{ Top = "tb_axis_bias_weight_loader"; Files = @("tb/tb_axis_bias_weight_loader.v") },
     @{ Top = "tb_ifm_line_stream_loader"; Files = @("tb/tb_ifm_line_stream_loader.v") },
+    @{ Top = "tb_axis_ifm_line_loader"; Files = @("tb/tb_axis_ifm_line_loader.v") },
     @{ Top = "tb_psum_pingpong_buffer"; Files = @("tb/tb_psum_pingpong_buffer.v") },
     @{ Top = "tb_psum_stream_feeder"; Files = @("tb/tb_psum_stream_feeder.v") },
     @{ Top = "tb_psum_drain_writer"; Files = @("tb/tb_psum_drain_writer.v") },
@@ -77,6 +83,7 @@ $tests = @(
     @{ Top = "tb_ofm_writeback"; Files = @("tb/tb_ofm_writeback.v") },
     @{ Top = "tb_ofm_packet_fifo"; Files = @("tb/tb_ofm_packet_fifo.v") },
     @{ Top = "tb_ofm_byte_stream_fifo"; Files = @("tb/tb_ofm_byte_stream_fifo.v") },
+    @{ Top = "tb_axis_ofm_byte_writer"; Files = @("tb/tb_axis_ofm_byte_writer.v") },
     @{ Top = "tb_line_stream_ctrl"; Files = @("tb/tb_line_stream_ctrl.v") },
     @{ Top = "tb_line_stream_ctrl_tile"; Files = @("tb/tb_line_stream_ctrl_tile.v") },
     @{ Top = "tb_window_stream_ctrl"; Files = @("tb/tb_window_stream_ctrl.v") },
@@ -97,6 +104,8 @@ $longTests = @(
     @{ Top = "tb_conv_accel_core_axi_lite_ps_driver"; Files = @("tb/tb_conv_accel_core_axi_lite_ps_driver.v") },
     @{ Top = "tb_conv_accel_core_axi_lite_stream_ps_driver"; Files = @("tb/tb_conv_accel_core_axi_lite_stream_ps_driver.v") },
     @{ Top = "tb_conv_accel_core_axi_lite_full_stream_ps_driver"; Files = @("tb/tb_conv_accel_core_axi_lite_full_stream_ps_driver.v") },
+    @{ Top = "tb_conv_accel_core_axi_lite_axis_stream_smoke"; Files = @("tb/tb_conv_accel_core_axi_lite_axis_stream_smoke.v") },
+    @{ Top = "tb_conv_accel_core_axi_lite_axis_stream_ps_driver"; Files = @("tb/tb_conv_accel_core_axi_lite_axis_stream_ps_driver.v") },
     @{ Top = "tb_conv_accel_core_axi_lite_full_stream_backpressure"; Files = @("tb/tb_conv_accel_core_axi_lite_full_stream_backpressure.v") }
 )
 

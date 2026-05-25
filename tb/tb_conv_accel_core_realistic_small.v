@@ -61,7 +61,13 @@
 `define TB_CONV_ACCEL_CORE_TILE2_PIXEL_BASE 0
 `endif
 
-`ifdef TB_CONV_ACCEL_CORE_USE_FULL_STREAM
+`ifdef TB_CONV_ACCEL_CORE_USE_AXIS_STREAM
+`define TB_DUT_LAYER dut.u_core.u_core.u_layer
+`define TB_DUT_CFG dut.u_core.u_core.u_cfg
+`define TB_DUT_AXI_CFG dut.u_core.u_axi_cfg
+`define TB_DUT_BW_LOADER dut.u_axis_bw_loader
+`define TB_DUT_IFM_LOADER dut.u_axis_ifm_loader.u_line_loader
+`elsif TB_CONV_ACCEL_CORE_USE_FULL_STREAM
 `define TB_DUT_LAYER dut.u_core.u_core.u_core.u_layer
 `define TB_DUT_CFG dut.u_core.u_core.u_core.u_cfg
 `define TB_DUT_AXI_CFG dut.u_core.u_core.u_axi_cfg
@@ -178,6 +184,31 @@ module `TB_CONV_ACCEL_CORE_MODULE;
     reg weight_s_valid;
     reg [WGT_W-1:0] weight_s_data;
 `endif
+`ifdef TB_CONV_ACCEL_CORE_USE_AXIS_STREAM
+    wire bias_axis_tready;
+    reg bias_axis_tvalid;
+    reg [63:0] bias_axis_tdata;
+    reg [7:0] bias_axis_tkeep;
+    reg bias_axis_tlast;
+    wire weight_axis_tready;
+    reg weight_axis_tvalid;
+    reg [63:0] weight_axis_tdata;
+    reg [7:0] weight_axis_tkeep;
+    reg weight_axis_tlast;
+    wire ifm_axis_tready;
+    reg ifm_axis_tvalid;
+    reg [63:0] ifm_axis_tdata;
+    reg [7:0] ifm_axis_tkeep;
+    reg ifm_axis_tlast;
+    wire [63:0] ofm_m_axis_tdata;
+    wire [7:0] ofm_m_axis_tkeep;
+    wire ofm_m_axis_tvalid;
+    reg ofm_m_axis_tready;
+    wire ofm_m_axis_tlast;
+    wire bias_axis_error;
+    wire weight_axis_error;
+    wire ifm_axis_error;
+`endif
 `ifdef TB_CONV_ACCEL_CORE_USE_FULL_STREAM
     wire ifm_line_s_ready;
     reg ifm_line_s_valid;
@@ -213,7 +244,9 @@ module `TB_CONV_ACCEL_CORE_MODULE;
 `endif
 `endif
 
-`ifdef TB_CONV_ACCEL_CORE_USE_FULL_STREAM
+`ifdef TB_CONV_ACCEL_CORE_USE_AXIS_STREAM
+    conv_accel_core_axi_lite_axis_stream #(
+`elsif TB_CONV_ACCEL_CORE_USE_FULL_STREAM
     conv_accel_core_axi_lite_full_stream #(
 `elsif TB_CONV_ACCEL_CORE_USE_BW_STREAM
     conv_accel_core_axi_lite_stream #(
@@ -248,6 +281,15 @@ module `TB_CONV_ACCEL_CORE_MODULE;
         .current_cout_base(current_cout_base), .current_pass_base_k(current_pass_base_k),
         .bias_s_ready(bias_s_ready), .bias_s_valid(bias_s_valid), .bias_s_data(bias_s_data),
         .weight_s_ready(weight_s_ready), .weight_s_valid(weight_s_valid), .weight_s_data(weight_s_data),
+`elsif TB_CONV_ACCEL_CORE_USE_AXIS_STREAM
+        .bias_load_req(bias_load_req), .weight_load_req(weight_load_req),
+        .current_cout_base(current_cout_base), .current_pass_base_k(current_pass_base_k),
+        .bias_s_axis_tready(bias_axis_tready), .bias_s_axis_tvalid(bias_axis_tvalid),
+        .bias_s_axis_tdata(bias_axis_tdata), .bias_s_axis_tkeep(bias_axis_tkeep),
+        .bias_s_axis_tlast(bias_axis_tlast),
+        .weight_s_axis_tready(weight_axis_tready), .weight_s_axis_tvalid(weight_axis_tvalid),
+        .weight_s_axis_tdata(weight_axis_tdata), .weight_s_axis_tkeep(weight_axis_tkeep),
+        .weight_s_axis_tlast(weight_axis_tlast),
 `else
         .bias_load_req(bias_load_req), .bias_load_done(bias_load_done),
         .current_cout_base(current_cout_base), .current_pass_base_k(current_pass_base_k),
@@ -256,7 +298,12 @@ module `TB_CONV_ACCEL_CORE_MODULE;
         .wgt_tile_wr_en(wgt_tile_wr_en), .wgt_tile_wr_addr(wgt_tile_wr_addr),
         .wgt_tile_wr_data(wgt_tile_wr_data),
 `endif
-`ifdef TB_CONV_ACCEL_CORE_USE_FULL_STREAM
+`ifdef TB_CONV_ACCEL_CORE_USE_AXIS_STREAM
+        .feeder_fill_req(feeder_fill_req), .feeder_fill_fy(feeder_fill_fy),
+        .ifm_line_words(FM_W[8:0]), .ifm_s_axis_tready(ifm_axis_tready),
+        .ifm_s_axis_tvalid(ifm_axis_tvalid), .ifm_s_axis_tdata(ifm_axis_tdata),
+        .ifm_s_axis_tkeep(ifm_axis_tkeep), .ifm_s_axis_tlast(ifm_axis_tlast),
+`elsif TB_CONV_ACCEL_CORE_USE_FULL_STREAM
         .feeder_fill_req(feeder_fill_req), .feeder_fill_fy(feeder_fill_fy),
         .ifm_line_words(FM_W[8:0]), .ifm_line_s_ready(ifm_line_s_ready),
         .ifm_line_s_valid(ifm_line_s_valid), .ifm_line_s_data(ifm_line_s_data),
@@ -271,7 +318,13 @@ module `TB_CONV_ACCEL_CORE_MODULE;
         .act_lut_wr_data(act_lut_wr_data),
         .ofm_mem_wr_en(ofm_mem_wr_en), .ofm_mem_wr_addr(ofm_mem_wr_addr),
         .ofm_mem_wr_data(ofm_mem_wr_data),
-`ifdef TB_CONV_ACCEL_CORE_USE_FULL_STREAM
+`ifdef TB_CONV_ACCEL_CORE_USE_AXIS_STREAM
+        .ofm_m_axis_tdata(ofm_m_axis_tdata), .ofm_m_axis_tkeep(ofm_m_axis_tkeep),
+        .ofm_m_axis_tvalid(ofm_m_axis_tvalid), .ofm_m_axis_tready(ofm_m_axis_tready),
+        .ofm_m_axis_tlast(ofm_m_axis_tlast),
+        .bias_axis_error(bias_axis_error), .weight_axis_error(weight_axis_error),
+        .ifm_axis_error(ifm_axis_error),
+`elsif TB_CONV_ACCEL_CORE_USE_FULL_STREAM
         .ofm_m_valid(ofm_m_valid), .ofm_m_ready(ofm_m_ready),
         .ofm_m_addr(ofm_m_addr), .ofm_m_data(ofm_m_data),
 `else
@@ -444,6 +497,21 @@ module `TB_CONV_ACCEL_CORE_MODULE;
             weight_s_valid = 1'b0;
             weight_s_data = {WGT_W{1'b0}};
 `endif
+`ifdef TB_CONV_ACCEL_CORE_USE_AXIS_STREAM
+            bias_axis_tvalid = 1'b0;
+            bias_axis_tdata = 64'd0;
+            bias_axis_tkeep = 8'd0;
+            bias_axis_tlast = 1'b0;
+            weight_axis_tvalid = 1'b0;
+            weight_axis_tdata = 64'd0;
+            weight_axis_tkeep = 8'd0;
+            weight_axis_tlast = 1'b0;
+            ifm_axis_tvalid = 1'b0;
+            ifm_axis_tdata = 64'd0;
+            ifm_axis_tkeep = 8'd0;
+            ifm_axis_tlast = 1'b0;
+            ofm_m_axis_tready = 1'b1;
+`endif
 `ifdef TB_CONV_ACCEL_CORE_USE_FULL_STREAM
             ifm_line_s_valid = 1'b0;
             for (b = 0; b < 5; b = b + 1)
@@ -469,9 +537,12 @@ module `TB_CONV_ACCEL_CORE_MODULE;
     task write_row;
         input integer row_y;
         integer k_base;
+        reg [63:0] axis_word;
         begin
             k_base = current_pass_base_k;
-`ifdef TB_CONV_ACCEL_CORE_USE_FULL_STREAM
+`ifdef TB_CONV_ACCEL_CORE_USE_AXIS_STREAM
+            wait(ifm_axis_tready);
+`elsif TB_CONV_ACCEL_CORE_USE_FULL_STREAM
             wait(ifm_line_s_ready);
 `else
             @(negedge clk);
@@ -479,7 +550,10 @@ module `TB_CONV_ACCEL_CORE_MODULE;
             dma_wr_fy = row_y[9:0];
 `endif
             for (x = 0; x < FM_W; x = x + 1) begin
-`ifdef TB_CONV_ACCEL_CORE_USE_FULL_STREAM
+`ifdef TB_CONV_ACCEL_CORE_USE_AXIS_STREAM
+                @(negedge clk);
+                axis_word = 64'd0;
+`elsif TB_CONV_ACCEL_CORE_USE_FULL_STREAM
                 @(negedge clk);
                 ifm_line_s_valid = 1'b1;
 `else
@@ -487,17 +561,35 @@ module `TB_CONV_ACCEL_CORE_MODULE;
 `endif
                 for (b = 0; b < 5; b = b + 1) begin
                     bank_ch = channel_for_bank(k_base, b);
-`ifdef TB_CONV_ACCEL_CORE_USE_FULL_STREAM
+`ifdef TB_CONV_ACCEL_CORE_USE_AXIS_STREAM
+                    axis_word[b*8 +: 8] = (bank_ch >= 0) ? feat[bank_ch][row_y][x] : 8'd0;
+`elsif TB_CONV_ACCEL_CORE_USE_FULL_STREAM
                     ifm_line_s_data[b] = (bank_ch >= 0) ? feat[bank_ch][row_y][x] : 8'd0;
 `else
                     dma_wr_data[b] = (bank_ch >= 0) ? feat[bank_ch][row_y][x] : 8'd0;
 `endif
                 end
+`ifdef TB_CONV_ACCEL_CORE_USE_AXIS_STREAM
+                ifm_axis_tdata = axis_word;
+                ifm_axis_tkeep = 8'h1f;
+                ifm_axis_tlast = (x == FM_W - 1);
+                ifm_axis_tvalid = 1'b1;
+                wait(ifm_axis_tready);
+                @(posedge clk);
+`endif
 `ifndef TB_CONV_ACCEL_CORE_USE_FULL_STREAM
+`ifndef TB_CONV_ACCEL_CORE_USE_AXIS_STREAM
                 @(negedge clk);
 `endif
+`endif
             end
-`ifdef TB_CONV_ACCEL_CORE_USE_FULL_STREAM
+`ifdef TB_CONV_ACCEL_CORE_USE_AXIS_STREAM
+            @(negedge clk);
+            ifm_axis_tvalid = 1'b0;
+            ifm_axis_tdata = 64'd0;
+            ifm_axis_tkeep = 8'd0;
+            ifm_axis_tlast = 1'b0;
+`elsif TB_CONV_ACCEL_CORE_USE_FULL_STREAM
             @(negedge clk);
             ifm_line_s_valid = 1'b0;
             for (b = 0; b < 5; b = b + 1)
@@ -514,12 +606,34 @@ module `TB_CONV_ACCEL_CORE_MODULE;
     task service_bias;
         integer i;
         integer base;
+        reg [63:0] axis_word;
         begin
             ps_bias_service_count = ps_bias_service_count + 1;
             base = current_cout_base;
-`ifdef TB_CONV_ACCEL_CORE_USE_BW_STREAM
+`ifdef TB_CONV_ACCEL_CORE_USE_AXIS_STREAM
+            wait(bias_axis_tready);
+`elsif TB_CONV_ACCEL_CORE_USE_BW_STREAM
             wait(bias_s_ready);
 `endif
+`ifdef TB_CONV_ACCEL_CORE_USE_AXIS_STREAM
+            for (i = 0; i < COUT_TILE; i = i + 2) begin
+                @(negedge clk);
+                axis_word = 64'd0;
+                axis_word[31:0] = (base + i < COUT_TOTAL) ? bias[base + i] : {PSUM_W{1'b0}};
+                axis_word[63:32] = (base + i + 1 < COUT_TOTAL) ? bias[base + i + 1] : {PSUM_W{1'b0}};
+                bias_axis_tdata = axis_word;
+                bias_axis_tkeep = 8'hff;
+                bias_axis_tlast = (i + 2 >= COUT_TILE);
+                bias_axis_tvalid = 1'b1;
+                wait(bias_axis_tready);
+                @(posedge clk);
+            end
+            @(negedge clk);
+            bias_axis_tvalid = 1'b0;
+            bias_axis_tdata = 64'd0;
+            bias_axis_tkeep = 8'd0;
+            bias_axis_tlast = 1'b0;
+`else
             for (i = 0; i < COUT_TILE; i = i + 1) begin
                 @(negedge clk);
 `ifdef TB_CONV_ACCEL_CORE_USE_BW_STREAM
@@ -541,6 +655,7 @@ module `TB_CONV_ACCEL_CORE_MODULE;
             @(negedge clk);
             bias_load_done = 1'b0;
 `endif
+`endif
         end
     endtask
 
@@ -548,16 +663,39 @@ module `TB_CONV_ACCEL_CORE_MODULE;
         integer co_base;
         integer k_base;
         integer gk;
+        integer axis_lane;
+        reg [63:0] axis_word;
         begin
             ps_weight_service_count = ps_weight_service_count + 1;
             co_base = current_cout_base;
             k_base = current_pass_base_k;
-`ifdef TB_CONV_ACCEL_CORE_USE_BW_STREAM
+`ifdef TB_CONV_ACCEL_CORE_USE_AXIS_STREAM
+            wait(weight_axis_tready);
+            axis_lane = 0;
+            axis_word = 64'd0;
+`elsif TB_CONV_ACCEL_CORE_USE_BW_STREAM
             wait(weight_s_ready);
 `endif
             for (kk = 0; kk < ROWS; kk = kk + 1) begin
                 for (cc = 0; cc < COUT_TILE; cc = cc + 1) begin
                     gk = k_base + kk;
+`ifdef TB_CONV_ACCEL_CORE_USE_AXIS_STREAM
+                    axis_word[axis_lane*8 +: 8] = ((gk < K_TOTAL) && (co_base + cc < COUT_TOTAL)) ?
+                                                   weight[gk][co_base + cc] : 8'd0;
+                    if (axis_lane == 7) begin
+                        @(negedge clk);
+                        weight_axis_tdata = axis_word;
+                        weight_axis_tkeep = 8'hff;
+                        weight_axis_tlast = (kk == ROWS - 1) && (cc == COUT_TILE - 1);
+                        weight_axis_tvalid = 1'b1;
+                        wait(weight_axis_tready);
+                        @(posedge clk);
+                        axis_word = 64'd0;
+                        axis_lane = 0;
+                    end else begin
+                        axis_lane = axis_lane + 1;
+                    end
+`else
                     @(negedge clk);
 `ifdef TB_CONV_ACCEL_CORE_USE_BW_STREAM
                     weight_s_valid = 1'b1;
@@ -569,8 +707,16 @@ module `TB_CONV_ACCEL_CORE_MODULE;
                     wgt_tile_wr_data = ((gk < K_TOTAL) && (co_base + cc < COUT_TOTAL)) ?
                                        weight[gk][co_base + cc] : 8'd0;
 `endif
+`endif
                 end
             end
+`ifdef TB_CONV_ACCEL_CORE_USE_AXIS_STREAM
+            @(negedge clk);
+            weight_axis_tvalid = 1'b0;
+            weight_axis_tdata = 64'd0;
+            weight_axis_tkeep = 8'd0;
+            weight_axis_tlast = 1'b0;
+`else
             @(negedge clk);
 `ifdef TB_CONV_ACCEL_CORE_USE_BW_STREAM
             weight_s_valid = 1'b0;
@@ -580,6 +726,7 @@ module `TB_CONV_ACCEL_CORE_MODULE;
             weight_tile_ready = 1'b1;
             @(negedge clk);
             weight_tile_ready = 1'b0;
+`endif
 `endif
         end
     endtask
