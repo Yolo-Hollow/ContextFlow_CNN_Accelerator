@@ -24,7 +24,7 @@ module tb_psum_drain_writer;
         .num_pixels(num_pixels), .baseline_col0(baseline_col0), .is_final_pass(is_final_pass),
         .psum_fifo_rd_en(psum_fifo_rd_en), .psum_fifo_rd_data(psum_fifo_rd_data),
         .psum_fifo_empty(psum_fifo_empty),
-        .packet_valid(packet_valid), .packet_addr(packet_addr),
+        .packet_valid(packet_valid), .packet_ready(1'b1), .packet_addr(packet_addr),
         .packet_data(packet_data), .packet_is_final(packet_is_final)
     );
 

@@ -23,6 +23,7 @@ module psum_drain_writer #(
     input  [31:0] psum_fifo_empty,
 
     output reg packet_valid,
+    input  packet_ready,
     output reg [AW-1:0] packet_addr,
     output reg [COLS*PSUM_W*2-1:0] packet_data,
     output reg packet_is_final
@@ -80,13 +81,15 @@ module psum_drain_writer #(
                     packet_valid <= 1'b1;
                     packet_addr <= count;
                     packet_data <= psum_fifo_rd_data;
-                    if (count == pixels_to_drain[AW-1:0] - 1'b1) begin
-                        busy <= 1'b0;
-                        done <= 1'b1;
-                        state <= ST_IDLE;
-                    end else begin
-                        count <= count + 1'b1;
-                        state <= ST_WAIT;
+                    if (packet_ready) begin
+                        if (count == pixels_to_drain[AW-1:0] - 1'b1) begin
+                            busy <= 1'b0;
+                            done <= 1'b1;
+                            state <= ST_IDLE;
+                        end else begin
+                            count <= count + 1'b1;
+                            state <= ST_WAIT;
+                        end
                     end
                 end
 

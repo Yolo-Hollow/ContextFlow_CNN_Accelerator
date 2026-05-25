@@ -13,6 +13,7 @@ module ofm_activation #(
     input  [1:0] mode,
 
     input                       in_valid,
+    output                      in_ready,
     input  [ADDR_W-1:0]         in_addr,
     input  [10:0]               in_cout_base,
     input  [COUT_TILE-1:0]      in_channel_valid,
@@ -23,6 +24,7 @@ module ofm_activation #(
     input  [7:0] lut_wr_data,
 
     output reg                  out_valid,
+    input                       out_ready,
     output reg [ADDR_W-1:0]     out_addr,
     output reg [10:0]           out_cout_base,
     output reg [COUT_TILE-1:0]  out_channel_valid,
@@ -35,6 +37,8 @@ module ofm_activation #(
     reg [10:0] cout_base_r;
     reg [COUT_TILE-1:0] mask_r;
     reg valid_r;
+    wire can_advance = !out_valid || out_ready;
+    assign in_ready = can_advance;
 
     genvar lane;
     generate
@@ -52,7 +56,7 @@ module ofm_activation #(
                 (mode_r == 2'd2) ? leaky_data_r[lane*8 +: 8] : bypass_relu_data[lane*8 +: 8];
 
             always @(posedge clk) begin
-                if (!rst && in_valid)
+                if (!rst && can_advance && in_valid)
                     leaky_data_r[lane*8 +: 8] <= lut_out;
             end
         end
@@ -71,7 +75,7 @@ module ofm_activation #(
             cout_base_r <= 11'd0;
             mask_r <= {COUT_TILE{1'b0}};
             valid_r <= 1'b0;
-        end else begin
+        end else if (can_advance) begin
             valid_r <= in_valid;
             if (in_valid) begin
                 mode_r <= mode;

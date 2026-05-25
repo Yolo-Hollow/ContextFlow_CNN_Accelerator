@@ -105,6 +105,7 @@ module conv_accel_core_axi_lite_full_stream #(
     wire [OFM_ADDR_W-1:0] core_ofm_wr_addr;
     wire [7:0] core_ofm_wr_data;
     wire ofm_stream_full;
+    wire ofm_stream_almost_full;
 
     assign ofm_mem_wr_en = ofm_m_valid && ofm_m_ready;
     assign ofm_mem_wr_addr = ofm_m_addr;
@@ -162,6 +163,6 @@ module conv_accel_core_axi_lite_full_stream #(
         .wr_addr(core_ofm_wr_addr), .wr_data(core_ofm_wr_data),
         .m_valid(ofm_m_valid), .m_ready(ofm_m_ready),
         .m_addr(ofm_m_addr), .m_data(ofm_m_data),
-        .full(ofm_stream_full)
+        .full(ofm_stream_full), .almost_full(ofm_stream_almost_full)
     );
 endmodule

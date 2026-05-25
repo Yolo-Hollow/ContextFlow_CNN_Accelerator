@@ -30,9 +30,11 @@ $common = @(
     "systolic/psum_pingpong_buffer.v",
     "systolic/psum_stream_feeder.v",
     "systolic/psum_drain_writer.v",
+    "systolic/psum_packet_fifo.v",
     "systolic/ofm_requant_writer.v",
     "systolic/ofm_activation.v",
     "systolic/ofm_writeback.v",
+    "systolic/ofm_packet_fifo.v",
     "systolic/ofm_byte_stream_fifo.v",
     "systolic/conv_layer_top_stream.v",
     "systolic/layer_config_regs.v",
@@ -73,6 +75,7 @@ $tests = @(
     @{ Top = "tb_ofm_requant_writer"; Files = @("tb/tb_ofm_requant_writer.v") },
     @{ Top = "tb_ofm_activation"; Files = @("tb/tb_ofm_activation.v") },
     @{ Top = "tb_ofm_writeback"; Files = @("tb/tb_ofm_writeback.v") },
+    @{ Top = "tb_ofm_packet_fifo"; Files = @("tb/tb_ofm_packet_fifo.v") },
     @{ Top = "tb_ofm_byte_stream_fifo"; Files = @("tb/tb_ofm_byte_stream_fifo.v") },
     @{ Top = "tb_line_stream_ctrl"; Files = @("tb/tb_line_stream_ctrl.v") },
     @{ Top = "tb_line_stream_ctrl_tile"; Files = @("tb/tb_line_stream_ctrl_tile.v") },
@@ -93,7 +96,8 @@ $longTests = @(
     @{ Top = "tb_conv_accel_core_ps_driver"; Files = @("tb/tb_conv_accel_core_ps_driver.v") },
     @{ Top = "tb_conv_accel_core_axi_lite_ps_driver"; Files = @("tb/tb_conv_accel_core_axi_lite_ps_driver.v") },
     @{ Top = "tb_conv_accel_core_axi_lite_stream_ps_driver"; Files = @("tb/tb_conv_accel_core_axi_lite_stream_ps_driver.v") },
-    @{ Top = "tb_conv_accel_core_axi_lite_full_stream_ps_driver"; Files = @("tb/tb_conv_accel_core_axi_lite_full_stream_ps_driver.v") }
+    @{ Top = "tb_conv_accel_core_axi_lite_full_stream_ps_driver"; Files = @("tb/tb_conv_accel_core_axi_lite_full_stream_ps_driver.v") },
+    @{ Top = "tb_conv_accel_core_axi_lite_full_stream_backpressure"; Files = @("tb/tb_conv_accel_core_axi_lite_full_stream_backpressure.v") }
 )
 
 if ($IncludeLong) {

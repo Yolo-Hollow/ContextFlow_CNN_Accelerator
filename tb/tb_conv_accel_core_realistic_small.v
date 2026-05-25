@@ -206,6 +206,11 @@ module `TB_CONV_ACCEL_CORE_MODULE;
     wire [15:0] ofm_m_addr;
     wire [7:0] ofm_m_data;
     reg ofm_m_ready;
+`ifdef TB_CONV_ACCEL_CORE_OFM_READY_STALL
+    integer ofm_ready_cycle;
+    integer ofm_stall_count;
+    reg ofm_stall_seen;
+`endif
 `endif
 
 `ifdef TB_CONV_ACCEL_CORE_USE_FULL_STREAM
@@ -661,6 +666,29 @@ module `TB_CONV_ACCEL_CORE_MODULE;
         end
     end
 
+`ifdef TB_CONV_ACCEL_CORE_OFM_READY_STALL
+    always @(posedge clk) begin
+        if (rst) begin
+            ofm_ready_cycle <= 0;
+            ofm_stall_count <= 0;
+            ofm_stall_seen <= 1'b0;
+            ofm_m_ready <= 1'b1;
+        end else begin
+            ofm_ready_cycle <= ofm_ready_cycle + 1;
+            if (!ofm_stall_seen && ofm_mem_wr_count >= 64) begin
+                ofm_stall_seen <= 1'b1;
+                ofm_stall_count <= 12;
+                ofm_m_ready <= 1'b0;
+            end else if (ofm_stall_count != 0) begin
+                ofm_stall_count <= ofm_stall_count - 1;
+                ofm_m_ready <= 1'b0;
+            end else begin
+                ofm_m_ready <= 1'b1;
+            end
+        end
+    end
+`endif
+
     always @(posedge clk) begin
         if (!rst && `TB_DUT_LAYER.u_top.feeder_ifm_valid)
             ifm_write_count <= ifm_write_count + 1;
@@ -727,6 +755,11 @@ module `TB_CONV_ACCEL_CORE_MODULE;
         ifm_loader_write_count = 0;
         ifm_loader_advance_count = 0;
         ifm_loader_fail_count = 0;
+`ifdef TB_CONV_ACCEL_CORE_OFM_READY_STALL
+        ofm_ready_cycle = 0;
+        ofm_stall_count = 0;
+        ofm_stall_seen = 1'b0;
+`endif
 `endif
         clear_inputs();
         for (idx = 0; idx < OFM_WORDS; idx = idx + 1)

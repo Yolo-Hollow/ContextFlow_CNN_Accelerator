@@ -22,7 +22,8 @@ module ofm_byte_stream_fifo #(
     input                  m_ready,
     output [ADDR_W-1:0]    m_addr,
     output [7:0]           m_data,
-    output                 full
+    output                 full,
+    output                 almost_full
 );
     localparam PTR_W = AW + 1;
 
@@ -33,11 +34,14 @@ module ofm_byte_stream_fifo #(
     wire empty = (wptr == rptr);
     wire fifo_full = (wptr[PTR_W-1] != rptr[PTR_W-1]) &&
                      (wptr[AW-1:0] == rptr[AW-1:0]);
-    wire push = wr_en && !fifo_full;
+    wire [PTR_W-1:0] level = wptr - rptr;
     wire pop = m_valid && m_ready;
+    wire can_push = !fifo_full || pop;
+    wire push = wr_en && can_push;
 
-    assign wr_ready = !fifo_full;
+    assign wr_ready = can_push;
     assign full = fifo_full;
+    assign almost_full = (level >= (DEPTH - 2));
     assign m_valid = !empty;
     assign m_addr = addr_mem[rptr[AW-1:0]];
     assign m_data = data_mem[rptr[AW-1:0]];

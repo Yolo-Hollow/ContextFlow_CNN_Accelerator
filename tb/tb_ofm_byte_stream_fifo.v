@@ -15,13 +15,14 @@ module tb_ofm_byte_stream_fifo;
     wire [ADDR_W-1:0] m_addr;
     wire [7:0] m_data;
     wire full;
+    wire almost_full;
 
     ofm_byte_stream_fifo #(.ADDR_W(ADDR_W), .DEPTH(DEPTH), .AW(AW)) dut (
         .clk(clk), .rst(rst),
         .wr_en(wr_en), .wr_ready(wr_ready),
         .wr_addr(wr_addr), .wr_data(wr_data),
         .m_valid(m_valid), .m_ready(m_ready),
-        .m_addr(m_addr), .m_data(m_data), .full(full)
+        .m_addr(m_addr), .m_data(m_data), .full(full), .almost_full(almost_full)
     );
 
     always #5 clk = ~clk;

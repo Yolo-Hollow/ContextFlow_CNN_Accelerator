@@ -116,18 +116,36 @@ module conv_layer_top_stream #(
     wire feeder_done;
     wire compute_done;
     wire drain_done;
+    wire drain_packet_ready;
     wire drain_packet_valid;
     wire [PSUM_BUF_AW-1:0] drain_packet_addr;
     wire [COLS*2*PSUM_W-1:0] drain_packet_data;
     wire drain_packet_is_final;
+    wire final_fifo_ready;
+    wire final_fifo_valid;
+    wire [PSUM_BUF_AW-1:0] final_fifo_addr;
+    wire [10:0] final_fifo_cout_base;
+    wire [COLS*2-1:0] final_fifo_channel_valid;
+    wire [COLS*2*PSUM_W-1:0] final_fifo_data;
+    wire final_fifo_full;
+    wire rq_fifo_ready;
+    wire rq_fifo_valid;
+    wire [PSUM_BUF_AW-1:0] rq_fifo_addr;
+    wire [10:0] rq_fifo_cout_base;
+    wire [COLS*2-1:0] rq_fifo_channel_valid;
+    wire [COLS*2*8-1:0] rq_fifo_data;
+    wire rq_fifo_full;
+    wire rq_fifo_almost_full;
+    wire act_in_ready;
 
     assign current_cout_base = sched_cout_base;
     assign current_pass_base_k = sched_pass_base_k;
     assign bias_load_req = sched_bias_start;
     wire ofm_wb_busy;
+    wire ofm_post_busy;
     reg done_pending;
     reg [3:0] done_drain_cnt;
-    assign busy = sched_busy || done_pending || ofm_wb_busy;
+    assign busy = sched_busy || done_pending || ofm_post_busy;
 
     layer_scheduler_stream #(.K_TILE(K_TILE), .COUT_TILE(COUT_TILE)) u_sched (
         .clk(clk), .rst(rst), .start(start), .busy(sched_busy), .done(sched_done),
@@ -158,7 +176,7 @@ module conv_layer_top_stream #(
             end else if (done_pending) begin
                 if (done_drain_cnt != 4'd0) begin
                     done_drain_cnt <= done_drain_cnt - 4'd1;
-                end else if (!ofm_wb_busy && !ofm_valid) begin
+                end else if (!ofm_post_busy && !ofm_valid) begin
                     done_pending <= 1'b0;
                     done <= 1'b1;
                 end
@@ -290,7 +308,8 @@ module conv_layer_top_stream #(
         .is_final_pass(sched_final_pass),
         .psum_fifo_rd_en(psum_fifo_rd_en), .psum_fifo_rd_data(psum_fifo_rd_data),
         .psum_fifo_empty(psum_fifo_empty),
-        .packet_valid(drain_packet_valid), .packet_addr(drain_packet_addr),
+        .packet_valid(drain_packet_valid), .packet_ready(drain_packet_ready),
+        .packet_addr(drain_packet_addr),
         .packet_data(drain_packet_data), .packet_is_final(drain_packet_is_final)
     );
 
@@ -305,14 +324,31 @@ module conv_layer_top_stream #(
         end
     endgenerate
 
+    assign drain_packet_ready = !drain_packet_is_final || final_fifo_ready;
+
+    psum_packet_fifo #(
+        .DATA_W(COLS*2*PSUM_W), .MASK_W(COLS*2), .ADDR_W(PSUM_BUF_AW),
+        .DEPTH(OFM_FIFO_DEPTH), .AW(OFM_FIFO_AW)
+    ) u_final_packet_fifo (
+        .clk(clk), .rst(rst),
+        .in_valid(final_valid), .in_ready(final_fifo_ready),
+        .in_addr(final_addr), .in_cout_base(final_cout_base),
+        .in_channel_valid(final_channel_valid), .in_data(final_data),
+        .out_valid(final_fifo_valid), .out_ready(rq_fifo_ready && !rq_fifo_almost_full),
+        .out_addr(final_fifo_addr), .out_cout_base(final_fifo_cout_base),
+        .out_channel_valid(final_fifo_channel_valid), .out_data(final_fifo_data),
+        .full(final_fifo_full)
+    );
+
     ofm_requant_writer #(
         .COLS(COLS), .PSUM_W(PSUM_W), .MULT_W(MULT_W), .SHIFT_W(SHIFT_W),
         .ZP_W(ZP_W), .ADDR_W(PSUM_BUF_AW)
     ) u_ofm_requant (
         .clk(clk), .rst(rst),
-        .packet_valid(final_valid), .packet_addr(final_addr),
-        .packet_cout_base(final_cout_base), .packet_channel_valid(final_channel_valid),
-        .packet_data(final_data),
+        .packet_valid(final_fifo_valid && rq_fifo_ready && !rq_fifo_almost_full),
+        .packet_addr(final_fifo_addr),
+        .packet_cout_base(final_fifo_cout_base), .packet_channel_valid(final_fifo_channel_valid),
+        .packet_data(final_fifo_data),
         .mult_flat(quant_mult_flat), .shift_flat(quant_shift_flat), .zp_flat(quant_zp_flat),
         .ofm_valid(ofm_valid), .ofm_addr(ofm_addr),
         .ofm_cout_base(ofm_cout_base), .ofm_channel_valid(ofm_channel_valid),
@@ -324,14 +360,54 @@ module conv_layer_top_stream #(
     wire [10:0] act_cout_base;
     wire [COLS*2-1:0] act_channel_valid;
     wire [COLS*2*8-1:0] act_data;
+    wire act_fifo_ready;
+    wire act_fifo_valid;
+    wire [PSUM_BUF_AW-1:0] act_fifo_addr;
+    wire [10:0] act_fifo_cout_base;
+    wire [COLS*2-1:0] act_fifo_channel_valid;
+    wire [COLS*2*8-1:0] act_fifo_data;
+    wire act_fifo_full;
+    assign ofm_post_busy = ofm_wb_busy || act_fifo_valid || act_fifo_full ||
+                           rq_fifo_valid || rq_fifo_full || final_fifo_valid || final_fifo_full ||
+                           ofm_valid || act_valid;
+
+    ofm_packet_fifo #(
+        .COUT_TILE(COLS*2), .ADDR_W(PSUM_BUF_AW),
+        .DEPTH(OFM_FIFO_DEPTH), .AW(OFM_FIFO_AW)
+    ) u_rq_packet_fifo (
+        .clk(clk), .rst(rst),
+        .in_valid(ofm_valid), .in_ready(rq_fifo_ready),
+        .in_addr(ofm_addr), .in_cout_base(ofm_cout_base),
+        .in_channel_valid(ofm_channel_valid), .in_data(ofm_data),
+        .out_valid(rq_fifo_valid), .out_ready(act_in_ready),
+        .out_addr(rq_fifo_addr), .out_cout_base(rq_fifo_cout_base),
+        .out_channel_valid(rq_fifo_channel_valid), .out_data(rq_fifo_data),
+        .full(rq_fifo_full), .almost_full(rq_fifo_almost_full)
+    );
 
     ofm_activation #(.COUT_TILE(COLS*2), .ADDR_W(PSUM_BUF_AW)) u_activation (
         .clk(clk), .rst(rst), .mode(activation_mode),
-        .in_valid(ofm_valid), .in_addr(ofm_addr), .in_cout_base(ofm_cout_base),
-        .in_channel_valid(ofm_channel_valid), .in_data(ofm_data),
+        .in_valid(rq_fifo_valid), .in_ready(act_in_ready),
+        .in_addr(rq_fifo_addr), .in_cout_base(rq_fifo_cout_base),
+        .in_channel_valid(rq_fifo_channel_valid), .in_data(rq_fifo_data),
         .lut_wr_en(act_lut_wr_en), .lut_wr_addr(act_lut_wr_addr), .lut_wr_data(act_lut_wr_data),
-        .out_valid(act_valid), .out_addr(act_addr), .out_cout_base(act_cout_base),
+        .out_valid(act_valid), .out_ready(act_fifo_ready),
+        .out_addr(act_addr), .out_cout_base(act_cout_base),
         .out_channel_valid(act_channel_valid), .out_data(act_data)
+    );
+
+    ofm_packet_fifo #(
+        .COUT_TILE(COLS*2), .ADDR_W(PSUM_BUF_AW),
+        .DEPTH(OFM_FIFO_DEPTH), .AW(OFM_FIFO_AW)
+    ) u_ofm_packet_fifo (
+        .clk(clk), .rst(rst),
+        .in_valid(act_valid), .in_ready(act_fifo_ready),
+        .in_addr(act_addr), .in_cout_base(act_cout_base),
+        .in_channel_valid(act_channel_valid), .in_data(act_data),
+        .out_valid(act_fifo_valid), .out_ready(!ofm_packet_full),
+        .out_addr(act_fifo_addr), .out_cout_base(act_fifo_cout_base),
+        .out_channel_valid(act_fifo_channel_valid), .out_data(act_fifo_data),
+        .full(act_fifo_full), .almost_full()
     );
 
     ofm_writeback #(
@@ -339,9 +415,9 @@ module conv_layer_top_stream #(
         .FIFO_DEPTH(OFM_FIFO_DEPTH), .FIFO_AW(OFM_FIFO_AW)
     ) u_ofm_writeback (
         .clk(clk), .rst(rst),
-        .packet_valid(act_valid), .packet_pixel(act_addr),
-        .packet_cout_base(act_cout_base),
-        .packet_channel_valid(act_channel_valid), .packet_data(act_data),
+        .packet_valid(act_fifo_valid), .packet_pixel(act_fifo_addr),
+        .packet_cout_base(act_fifo_cout_base),
+        .packet_channel_valid(act_fifo_channel_valid), .packet_data(act_fifo_data),
         .packet_full(ofm_packet_full), .cout_total(cout_total), .pixel_base(tile_pixel_base),
         .wr_en(ofm_mem_wr_en), .wr_ready(ofm_mem_wr_ready),
         .wr_addr(ofm_mem_wr_addr), .wr_data(ofm_mem_wr_data),

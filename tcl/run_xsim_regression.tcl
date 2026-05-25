@@ -38,9 +38,11 @@ set common_files {
     systolic/psum_pingpong_buffer.v
     systolic/psum_stream_feeder.v
     systolic/psum_drain_writer.v
+    systolic/psum_packet_fifo.v
     systolic/ofm_requant_writer.v
     systolic/ofm_activation.v
     systolic/ofm_writeback.v
+    systolic/ofm_packet_fifo.v
     systolic/ofm_byte_stream_fifo.v
     systolic/conv_layer_top_stream.v
     systolic/layer_config_regs.v
@@ -66,9 +68,11 @@ set tests {
     {tb_conv_accel_core_axi_lite_ps_driver tb/tb_conv_accel_core_axi_lite_ps_driver.v}
     {tb_conv_accel_core_axi_lite_stream_ps_driver tb/tb_conv_accel_core_axi_lite_stream_ps_driver.v}
     {tb_conv_accel_core_axi_lite_full_stream_ps_driver tb/tb_conv_accel_core_axi_lite_full_stream_ps_driver.v}
+    {tb_conv_accel_core_axi_lite_full_stream_backpressure tb/tb_conv_accel_core_axi_lite_full_stream_backpressure.v}
     {tb_axi_lite_cfg_bridge tb/tb_axi_lite_cfg_bridge.v}
     {tb_bias_weight_stream_loader tb/tb_bias_weight_stream_loader.v}
     {tb_ifm_line_stream_loader tb/tb_ifm_line_stream_loader.v}
+    {tb_ofm_packet_fifo tb/tb_ofm_packet_fifo.v}
     {tb_ofm_byte_stream_fifo tb/tb_ofm_byte_stream_fifo.v}
 }
 

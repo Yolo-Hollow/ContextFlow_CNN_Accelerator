@@ -7,6 +7,7 @@ module tb_ofm_activation;
     reg clk, rst;
     reg [1:0] mode;
     reg in_valid;
+    wire in_ready;
     reg [ADDR_W-1:0] in_addr;
     reg [10:0] in_cout_base;
     reg [COUT_TILE-1:0] in_channel_valid;
@@ -14,6 +15,7 @@ module tb_ofm_activation;
     reg lut_wr_en;
     reg [7:0] lut_wr_addr, lut_wr_data;
     wire out_valid;
+    reg out_ready;
     wire [ADDR_W-1:0] out_addr;
     wire [10:0] out_cout_base;
     wire [COUT_TILE-1:0] out_channel_valid;
@@ -21,10 +23,12 @@ module tb_ofm_activation;
 
     ofm_activation #(.COUT_TILE(COUT_TILE), .ADDR_W(ADDR_W)) dut (
         .clk(clk), .rst(rst), .mode(mode),
-        .in_valid(in_valid), .in_addr(in_addr), .in_cout_base(in_cout_base),
+        .in_valid(in_valid), .in_ready(in_ready),
+        .in_addr(in_addr), .in_cout_base(in_cout_base),
         .in_channel_valid(in_channel_valid), .in_data(in_data),
         .lut_wr_en(lut_wr_en), .lut_wr_addr(lut_wr_addr), .lut_wr_data(lut_wr_data),
-        .out_valid(out_valid), .out_addr(out_addr), .out_cout_base(out_cout_base),
+        .out_valid(out_valid), .out_ready(out_ready),
+        .out_addr(out_addr), .out_cout_base(out_cout_base),
         .out_channel_valid(out_channel_valid), .out_data(out_data)
     );
 
@@ -113,6 +117,7 @@ module tb_ofm_activation;
         lut_wr_en = 0;
         lut_wr_addr = 0;
         lut_wr_data = 0;
+        out_ready = 1'b1;
         pass = 0;
         fail = 0;
 
