@@ -2,7 +2,7 @@
 // Expand INT8 OFM packets into byte writes.
 //
 // HWC layout:
-//   wr_addr = pixel_idx * cout_total + (cout_base + lane)
+//   wr_addr = (pixel_base + pixel_idx) * cout_total + (cout_base + lane)
 module ofm_writeback #(
     parameter COUT_TILE = 64,
     parameter PIXEL_AW = 10,
@@ -21,8 +21,10 @@ module ofm_writeback #(
     output                      packet_full,
 
     input  [10:0]               cout_total,
+    input  [ADDR_W-1:0]         pixel_base,
 
     output reg                  wr_en,
+    input                       wr_ready,
     output reg [ADDR_W-1:0]     wr_addr,
     output reg [7:0]            wr_data,
     output reg                  busy
@@ -52,8 +54,10 @@ module ofm_writeback #(
     integer i;
     wire at_last_lane = (lane_idx == COUT_TILE - 1);
     wire lane_valid = cur_mask[lane_idx];
+    wire lane_done = !lane_valid || wr_ready;
     wire [10:0] lane_cout = cur_cout_base + lane_idx;
-    wire [ADDR_W-1:0] base_addr = cur_pixel * cout_total;
+    wire [ADDR_W-1:0] global_pixel = pixel_base + cur_pixel;
+    wire [ADDR_W-1:0] base_addr = global_pixel * cout_total;
 
     always @(posedge clk) begin
         if (rst) begin
@@ -93,16 +97,16 @@ module ofm_writeback #(
                 busy <= 1'b1;
                 rptr <= rptr + 1'b1;
             end else if (active) begin
-                if (lane_valid) begin
+                if (lane_valid && wr_ready) begin
                     wr_en <= 1'b1;
                     wr_addr <= base_addr + lane_cout;
                     wr_data <= cur_data[lane_idx*8 +: 8];
                 end
 
-                if (at_last_lane) begin
+                if (lane_done && at_last_lane) begin
                     active <= 1'b0;
                     busy <= !fifo_empty;
-                end else begin
+                end else if (lane_done) begin
                     lane_idx <= lane_idx + 11'd1;
                 end
             end else begin

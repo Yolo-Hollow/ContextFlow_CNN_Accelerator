@@ -33,16 +33,23 @@ set common_files {
     systolic/systolic_top_feeder.v
     systolic/layer_scheduler_stream.v
     systolic/weight_tile_loader.v
+    systolic/bias_weight_stream_loader.v
+    systolic/ifm_line_stream_loader.v
     systolic/psum_pingpong_buffer.v
     systolic/psum_stream_feeder.v
     systolic/psum_drain_writer.v
     systolic/ofm_requant_writer.v
     systolic/ofm_activation.v
     systolic/ofm_writeback.v
+    systolic/ofm_byte_stream_fifo.v
     systolic/conv_layer_top_stream.v
     systolic/layer_config_regs.v
     systolic/quant_param_regs.v
+    systolic/axi_lite_cfg_bridge.v
     systolic/conv_accel_core.v
+    systolic/conv_accel_core_axi_lite.v
+    systolic/conv_accel_core_axi_lite_stream.v
+    systolic/conv_accel_core_axi_lite_full_stream.v
     systolic/requant.v
     systolic/leaky_lut.v
     systolic/systolic_top.v
@@ -53,6 +60,16 @@ set tests {
     {tb_layer_scheduler_cout64_fulltile tb/tb_layer_scheduler_cout64_fulltile.v}
     {tb_conv_accel_core_cout64_fulltile tb/tb_conv_accel_core_cout64_fulltile.v}
     {tb_conv_accel_core_cout128_blocks tb/tb_conv_accel_core_cout128_blocks.v}
+    {tb_conv_accel_core_spatial_tile tb/tb_conv_accel_core_spatial_tile.v}
+    {tb_conv_accel_core_spatial_multitile tb/tb_conv_accel_core_spatial_multitile.v}
+    {tb_conv_accel_core_ps_driver tb/tb_conv_accel_core_ps_driver.v}
+    {tb_conv_accel_core_axi_lite_ps_driver tb/tb_conv_accel_core_axi_lite_ps_driver.v}
+    {tb_conv_accel_core_axi_lite_stream_ps_driver tb/tb_conv_accel_core_axi_lite_stream_ps_driver.v}
+    {tb_conv_accel_core_axi_lite_full_stream_ps_driver tb/tb_conv_accel_core_axi_lite_full_stream_ps_driver.v}
+    {tb_axi_lite_cfg_bridge tb/tb_axi_lite_cfg_bridge.v}
+    {tb_bias_weight_stream_loader tb/tb_bias_weight_stream_loader.v}
+    {tb_ifm_line_stream_loader tb/tb_ifm_line_stream_loader.v}
+    {tb_ofm_byte_stream_fifo tb/tb_ofm_byte_stream_fifo.v}
 }
 
 proc abs_files {root rels} {
@@ -109,6 +126,13 @@ foreach test $tests {
         exec {*}$xsim $snapshot -R -wdb $wdb -log $xsim_log >@ stdout 2>@ stderr
     } else {
         exec {*}$xsim $snapshot -R -log $xsim_log >@ stdout 2>@ stderr
+    }
+
+    set fh [open $xsim_log r]
+    set log_text [read $fh]
+    close $fh
+    if {[regexp {\[FAIL\]|Fatal|Error:} $log_text]} {
+        error "xsim reported a failure for $top; see $xsim_log"
     }
 }
 

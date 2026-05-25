@@ -45,6 +45,9 @@ module conv_layer_top_stream #(
     input  [10:0] k_total,
     input  [10:0] cout_total,
     input  [15:0] num_pixels,
+    input  [8:0] tile_oy_base,
+    input  [8:0] tile_ofm_h,
+    input  [OFM_ADDR_W-1:0] tile_pixel_base,
 
     output bias_load_req,
     input  bias_load_done,
@@ -89,6 +92,7 @@ module conv_layer_top_stream #(
     output [COLS*2*8-1:0]       ofm_data,
 
     output                      ofm_mem_wr_en,
+    input                       ofm_mem_wr_ready,
     output [OFM_ADDR_W-1:0]     ofm_mem_wr_addr,
     output [7:0]                ofm_mem_wr_data,
     output                      ofm_packet_full
@@ -263,6 +267,7 @@ module conv_layer_top_stream #(
         .compute_start(sched_compute_start), .num_pixels(sched_num_pixels),
         .compute_done(compute_done), .compute_fire_out(compute_fire),
         .fm_h(fm_h), .fm_w(fm_w), .ofm_h(ofm_h), .ofm_w(ofm_w),
+        .tile_oy_base(tile_oy_base), .tile_ofm_h(tile_ofm_h),
         .conv_stride(conv_stride), .conv_pad(conv_pad), .pass_base_k(sched_pass_base_k),
         .dma_bank_wr_en(dma_bank_wr_en), .dma_wr_x(dma_wr_x), .dma_wr_fy(dma_wr_fy),
         .dma_wr_data(dma_wr_data), .dma_line_advance(dma_line_advance),
@@ -337,8 +342,9 @@ module conv_layer_top_stream #(
         .packet_valid(act_valid), .packet_pixel(act_addr),
         .packet_cout_base(act_cout_base),
         .packet_channel_valid(act_channel_valid), .packet_data(act_data),
-        .packet_full(ofm_packet_full), .cout_total(cout_total),
-        .wr_en(ofm_mem_wr_en), .wr_addr(ofm_mem_wr_addr), .wr_data(ofm_mem_wr_data),
+        .packet_full(ofm_packet_full), .cout_total(cout_total), .pixel_base(tile_pixel_base),
+        .wr_en(ofm_mem_wr_en), .wr_ready(ofm_mem_wr_ready),
+        .wr_addr(ofm_mem_wr_addr), .wr_data(ofm_mem_wr_data),
         .busy(ofm_wb_busy)
     );
 endmodule

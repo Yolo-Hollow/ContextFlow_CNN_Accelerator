@@ -82,7 +82,8 @@ module tb_conv_accel_core;
         .quant_rd_addr(quant_rd_addr), .quant_rd_data(quant_rd_data),
         .act_lut_wr_en(act_lut_wr_en),
         .act_lut_wr_addr(act_lut_wr_addr), .act_lut_wr_data(act_lut_wr_data),
-        .ofm_mem_wr_en(ofm_mem_wr_en), .ofm_mem_wr_addr(ofm_mem_wr_addr),
+        .ofm_mem_wr_en(ofm_mem_wr_en), .ofm_mem_wr_ready(1'b1),
+        .ofm_mem_wr_addr(ofm_mem_wr_addr),
         .ofm_mem_wr_data(ofm_mem_wr_data), .ofm_packet_full(ofm_packet_full)
     );
 

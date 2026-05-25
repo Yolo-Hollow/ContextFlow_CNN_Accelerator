@@ -65,6 +65,7 @@ module tb_systolic_top_feeder_multipass_stream;
         .compute_start(compute_start), .num_pixels(16'd9), .compute_done(compute_done),
         .compute_fire_out(compute_fire),
         .fm_h(9'd5), .fm_w(9'd5), .ofm_h(9'd3), .ofm_w(9'd3),
+        .tile_oy_base(9'd0), .tile_ofm_h(9'd0),
         .conv_stride(2'd1), .conv_pad(2'd0), .pass_base_k(pass_base_k),
         .dma_bank_wr_en(dma_bank_wr_en), .dma_wr_x(dma_wr_x), .dma_wr_fy(dma_wr_fy),
         .dma_wr_data(dma_wr_data), .dma_line_advance(dma_line_advance),

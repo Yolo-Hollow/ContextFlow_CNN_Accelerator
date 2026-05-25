@@ -11,6 +11,8 @@ module line_stream_ctrl #(
     input  start,
     input  [AW-1:0] fm_h,
     input  [AW-1:0] ofm_h,
+    input  [AW-1:0] start_oy,
+    input  [AW-1:0] tile_ofm_h,
     input  [1:0] stride,
     input  [1:0] pad,
     input  fill_done,
@@ -35,7 +37,9 @@ module line_stream_ctrl #(
     reg line_valid [0:2];
     reg [1:0] wr_ptr;
 
-    wire last_oy = (oy == (ofm_h - {{(AW-1){1'b0}}, 1'b1}));
+    wire [AW-1:0] active_tile_h = (tile_ofm_h == {AW{1'b0}}) ? ofm_h : tile_ofm_h;
+    wire [AW-1:0] last_tile_oy = start_oy + active_tile_h - {{(AW-1){1'b0}}, 1'b1};
+    wire last_oy = (oy == last_tile_oy);
 
     wire signed [AW+1:0] base_fy = $signed({1'b0, oy}) * $signed({{AW{1'b0}}, stride}) -
                                    $signed({{AW{1'b0}}, pad});
@@ -92,14 +96,14 @@ module line_stream_ctrl #(
                     busy <= 1'b0;
                     if (start) begin
                         busy <= 1'b1;
-                        oy <= {AW{1'b0}};
-                        compute_oy <= {AW{1'b0}};
+                        oy <= start_oy;
+                        compute_oy <= start_oy;
                         line_valid[0] <= 1'b0;
                         line_valid[1] <= 1'b0;
                         line_valid[2] <= 1'b0;
                         wr_ptr <= 2'd0;
                         fill_fy <= {AW{1'b0}};
-                        if (ofm_h == {AW{1'b0}}) begin
+                        if (active_tile_h == {AW{1'b0}}) begin
                             state <= ST_DONE;
                         end else begin
                             state <= ST_FILL_CHECK;
@@ -109,16 +113,15 @@ module line_stream_ctrl #(
 
                 ST_FILL_CHECK: begin
                     busy <= 1'b1;
-                    if (all_rows_ready) begin
+                    if (fill_done) begin
+                        line_fy[wr_ptr] <= fill_fy;
+                        line_valid[wr_ptr] <= 1'b1;
+                        wr_ptr <= (wr_ptr == 2'd2) ? 2'd0 : wr_ptr + 2'd1;
+                    end else if (all_rows_ready) begin
                         state <= ST_COMPUTE_START;
                     end else begin
                         fill_req <= 1'b1;
                         fill_fy <= missing_fy;
-                        if (fill_done) begin
-                            line_fy[wr_ptr] <= missing_fy;
-                            line_valid[wr_ptr] <= 1'b1;
-                            wr_ptr <= (wr_ptr == 2'd2) ? 2'd0 : wr_ptr + 2'd1;
-                        end
                     end
                 end
 

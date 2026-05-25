@@ -1,9 +1,11 @@
 `timescale 1ns / 1ps
-// Register-configured wrapper around conv_layer_top_stream.
+
+// AXI-Lite configured conv core with stream-style bias/weight load ports.
 //
-// This is not an AXI-Lite slave yet. It exposes a small local config bus that
-// can later be wrapped by AXI-Lite without changing the compute datapath.
-module conv_accel_core #(
+// This is still not the final DMA top. It only replaces the direct
+// bias_wr/wgt_tile_wr pins with narrow ready/valid streams so the PS/DMA
+// service contract can be verified independently from the compute datapath.
+module conv_accel_core_axi_lite_stream #(
     parameter ROWS = 32,
     parameter COLS = 32,
     parameter IFM_W = 8,
@@ -32,26 +34,36 @@ module conv_accel_core #(
     input  clk,
     input  rst,
 
-    input         cfg_wr_en,
-    input  [5:0]  cfg_addr,
-    input  [31:0] cfg_wdata,
-    input         cfg_rd_en,
-    output [31:0] cfg_rdata,
+    input  [7:0]  s_axi_awaddr,
+    input         s_axi_awvalid,
+    output        s_axi_awready,
+    input  [31:0] s_axi_wdata,
+    input  [3:0]  s_axi_wstrb,
+    input         s_axi_wvalid,
+    output        s_axi_wready,
+    output [1:0]  s_axi_bresp,
+    output        s_axi_bvalid,
+    input         s_axi_bready,
+    input  [7:0]  s_axi_araddr,
+    input         s_axi_arvalid,
+    output        s_axi_arready,
+    output [31:0] s_axi_rdata,
+    output [1:0]  s_axi_rresp,
+    output        s_axi_rvalid,
+    input         s_axi_rready,
 
     output bias_load_req,
-    input  bias_load_done,
+    output weight_load_req,
     output [10:0] current_cout_base,
     output [10:0] current_pass_base_k,
 
-    input  [5:0]        bias_wr_addr,
-    input  [PSUM_W-1:0] bias_wr_data,
-    input               bias_wr_en,
+    output              bias_s_ready,
+    input               bias_s_valid,
+    input  [PSUM_W-1:0] bias_s_data,
 
-    output weight_load_req,
-    input  weight_tile_ready,
-    input  wgt_tile_wr_en,
-    input  [WGT_TILE_AW-1:0] wgt_tile_wr_addr,
-    input  [WEIGHT_W-1:0]    wgt_tile_wr_data,
+    output               weight_s_ready,
+    input                weight_s_valid,
+    input  [WEIGHT_W-1:0] weight_s_data,
 
     output feeder_fill_req,
     output [8:0] feeder_fill_fy,
@@ -76,50 +88,33 @@ module conv_accel_core #(
     output [7:0]                ofm_mem_wr_data,
     output                      ofm_packet_full
 );
-    wire start_pulse;
-    wire layer_busy;
-    wire layer_done;
-    wire [8:0] fm_h;
-    wire [8:0] fm_w;
-    wire [8:0] ofm_h;
-    wire [8:0] ofm_w;
-    wire [1:0] conv_stride;
-    wire [1:0] conv_pad;
-    wire [1:0] activation_mode;
-    wire [10:0] k_total;
-    wire [10:0] cout_total;
-    wire [15:0] num_pixels;
-    wire [8:0] tile_oy_base;
-    wire [8:0] tile_ofm_h;
-    wire [23:0] tile_pixel_base;
-    wire [OFM_ADDR_W-1:0] tile_pixel_base_ext = tile_pixel_base[OFM_ADDR_W-1:0];
-    wire [COLS*2*MULT_W-1:0] quant_mult_flat;
-    wire [COLS*2*SHIFT_W-1:0] quant_shift_flat;
-    wire [COLS*2*ZP_W-1:0] quant_zp_flat;
+    wire bias_load_done;
+    wire bias_wr_en;
+    wire [5:0] bias_wr_addr;
+    wire [PSUM_W-1:0] bias_wr_data;
+    wire weight_tile_ready;
+    wire wgt_tile_wr_en;
+    wire [WGT_TILE_AW-1:0] wgt_tile_wr_addr;
+    wire [WEIGHT_W-1:0] wgt_tile_wr_data;
 
-    layer_config_regs u_cfg (
+    bias_weight_stream_loader #(
+        .ROWS(ROWS), .COLS(COLS), .PSUM_W(PSUM_W), .WEIGHT_W(WEIGHT_W),
+        .BIAS_ADDR_W(6), .WGT_ADDR_W(WGT_TILE_AW)
+    ) u_bw_loader (
         .clk(clk), .rst(rst),
-        .cfg_wr_en(cfg_wr_en), .cfg_addr(cfg_addr), .cfg_wdata(cfg_wdata),
-        .cfg_rd_en(cfg_rd_en), .cfg_rdata(cfg_rdata),
-        .layer_busy(layer_busy), .layer_done(layer_done), .start_pulse(start_pulse),
-        .fm_h(fm_h), .fm_w(fm_w), .ofm_h(ofm_h), .ofm_w(ofm_w),
-        .conv_stride(conv_stride), .conv_pad(conv_pad),
-        .activation_mode(activation_mode),
-        .k_total(k_total), .cout_total(cout_total), .num_pixels(num_pixels),
-        .tile_oy_base(tile_oy_base), .tile_ofm_h(tile_ofm_h),
-        .tile_pixel_base(tile_pixel_base)
+        .bias_load_req(bias_load_req), .bias_s_ready(bias_s_ready),
+        .bias_s_valid(bias_s_valid), .bias_s_data(bias_s_data),
+        .bias_load_done(bias_load_done),
+        .bias_wr_en(bias_wr_en), .bias_wr_addr(bias_wr_addr),
+        .bias_wr_data(bias_wr_data),
+        .weight_load_req(weight_load_req), .weight_s_ready(weight_s_ready),
+        .weight_s_valid(weight_s_valid), .weight_s_data(weight_s_data),
+        .weight_tile_ready(weight_tile_ready),
+        .wgt_tile_wr_en(wgt_tile_wr_en), .wgt_tile_wr_addr(wgt_tile_wr_addr),
+        .wgt_tile_wr_data(wgt_tile_wr_data)
     );
 
-    quant_param_regs #(
-        .COUT_TILE(COLS*2), .MULT_W(MULT_W), .SHIFT_W(SHIFT_W), .ZP_W(ZP_W), .ADDR_W(6)
-    ) u_quant (
-        .clk(clk), .rst(rst),
-        .wr_en(quant_wr_en), .wr_addr(quant_wr_addr), .wr_data(quant_wr_data),
-        .rd_addr(quant_rd_addr), .rd_data(quant_rd_data),
-        .mult_flat(quant_mult_flat), .shift_flat(quant_shift_flat), .zp_flat(quant_zp_flat)
-    );
-
-    conv_layer_top_stream #(
+    conv_accel_core_axi_lite #(
         .ROWS(ROWS), .COLS(COLS), .IFM_W(IFM_W), .WEIGHT_W(WEIGHT_W), .PSUM_W(PSUM_W),
         .IFM_FIFO_DEPTH(IFM_FIFO_DEPTH), .IFM_FIFO_AW(IFM_FIFO_AW),
         .WGT_FIFO_DEPTH(WGT_FIFO_DEPTH), .WGT_FIFO_AW(WGT_FIFO_AW),
@@ -129,13 +124,14 @@ module conv_accel_core #(
         .WGT_TILE_AW(WGT_TILE_AW), .PSUM_BUF_AW(PSUM_BUF_AW), .PSUM_BUF_DEPTH(PSUM_BUF_DEPTH),
         .MULT_W(MULT_W), .SHIFT_W(SHIFT_W), .ZP_W(ZP_W),
         .OFM_ADDR_W(OFM_ADDR_W), .OFM_FIFO_DEPTH(OFM_FIFO_DEPTH), .OFM_FIFO_AW(OFM_FIFO_AW)
-    ) u_layer (
-        .clk(clk), .rst(rst), .start(start_pulse), .busy(layer_busy), .done(layer_done),
-        .fm_h(fm_h), .fm_w(fm_w), .ofm_h(ofm_h), .ofm_w(ofm_w),
-        .conv_stride(conv_stride), .conv_pad(conv_pad),
-        .k_total(k_total), .cout_total(cout_total), .num_pixels(num_pixels),
-        .tile_oy_base(tile_oy_base), .tile_ofm_h(tile_ofm_h),
-        .tile_pixel_base(tile_pixel_base_ext),
+    ) u_core (
+        .clk(clk), .rst(rst),
+        .s_axi_awaddr(s_axi_awaddr), .s_axi_awvalid(s_axi_awvalid), .s_axi_awready(s_axi_awready),
+        .s_axi_wdata(s_axi_wdata), .s_axi_wstrb(s_axi_wstrb), .s_axi_wvalid(s_axi_wvalid),
+        .s_axi_wready(s_axi_wready), .s_axi_bresp(s_axi_bresp), .s_axi_bvalid(s_axi_bvalid),
+        .s_axi_bready(s_axi_bready), .s_axi_araddr(s_axi_araddr), .s_axi_arvalid(s_axi_arvalid),
+        .s_axi_arready(s_axi_arready), .s_axi_rdata(s_axi_rdata), .s_axi_rresp(s_axi_rresp),
+        .s_axi_rvalid(s_axi_rvalid), .s_axi_rready(s_axi_rready),
         .bias_load_req(bias_load_req), .bias_load_done(bias_load_done),
         .current_cout_base(current_cout_base), .current_pass_base_k(current_pass_base_k),
         .bias_wr_addr(bias_wr_addr), .bias_wr_data(bias_wr_data), .bias_wr_en(bias_wr_en),
@@ -145,11 +141,10 @@ module conv_accel_core #(
         .feeder_fill_req(feeder_fill_req), .feeder_fill_fy(feeder_fill_fy),
         .dma_bank_wr_en(dma_bank_wr_en), .dma_wr_x(dma_wr_x), .dma_wr_fy(dma_wr_fy),
         .dma_wr_data(dma_wr_data), .dma_line_advance(dma_line_advance),
-        .final_valid(), .final_addr(), .final_data(), .final_cout_base(), .final_channel_valid(),
-        .quant_mult_flat(quant_mult_flat), .quant_shift_flat(quant_shift_flat), .quant_zp_flat(quant_zp_flat),
-        .activation_mode(activation_mode), .act_lut_wr_en(act_lut_wr_en),
-        .act_lut_wr_addr(act_lut_wr_addr), .act_lut_wr_data(act_lut_wr_data),
-        .ofm_valid(), .ofm_addr(), .ofm_cout_base(), .ofm_channel_valid(), .ofm_data(),
+        .quant_wr_en(quant_wr_en), .quant_wr_addr(quant_wr_addr), .quant_wr_data(quant_wr_data),
+        .quant_rd_addr(quant_rd_addr), .quant_rd_data(quant_rd_data),
+        .act_lut_wr_en(act_lut_wr_en), .act_lut_wr_addr(act_lut_wr_addr),
+        .act_lut_wr_data(act_lut_wr_data),
         .ofm_mem_wr_en(ofm_mem_wr_en), .ofm_mem_wr_ready(ofm_mem_wr_ready),
         .ofm_mem_wr_addr(ofm_mem_wr_addr),
         .ofm_mem_wr_data(ofm_mem_wr_data), .ofm_packet_full(ofm_packet_full)

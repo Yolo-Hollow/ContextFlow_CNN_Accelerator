@@ -23,6 +23,7 @@ module tb_window_feeder_pad1;
     window_feeder #(.FM_W(FM_W), .FM_H(FM_H), .AW(AW)) dut (
         .clk(clk), .rst(rst), .start(start),
         .fm_h(fm_h), .fm_w(fm_w), .ofm_h(ofm_h), .ofm_w(ofm_w),
+        .tile_oy_base({AW{1'b0}}), .tile_ofm_h({AW{1'b0}}),
         .stride(stride), .pad(pad), .pass_base_k(pass_base_k),
         .fill_req(fill_req), .fill_fy(fill_fy),
         .dma_bank_wr_en(dma_bank_wr_en), .dma_wr_x(dma_wr_x),

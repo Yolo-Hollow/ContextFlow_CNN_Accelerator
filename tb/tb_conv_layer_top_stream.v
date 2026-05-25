@@ -78,6 +78,7 @@ module tb_conv_layer_top_stream;
         .fm_h(9'd5), .fm_w(9'd5), .ofm_h(9'd3), .ofm_w(9'd3),
         .conv_stride(2'd1), .conv_pad(2'd0),
         .k_total(K_TOTAL[10:0]), .cout_total(COUT_TOTAL[10:0]), .num_pixels(16'd9),
+        .tile_oy_base(9'd0), .tile_ofm_h(9'd0), .tile_pixel_base(16'd0),
         .bias_load_req(bias_load_req), .bias_load_done(bias_load_done),
         .current_cout_base(current_cout_base), .current_pass_base_k(current_pass_base_k),
         .bias_wr_addr(bias_wr_addr), .bias_wr_data(bias_wr_data), .bias_wr_en(bias_wr_en),
@@ -96,7 +97,8 @@ module tb_conv_layer_top_stream;
         .ofm_valid(ofm_valid), .ofm_addr(ofm_addr),
         .ofm_cout_base(ofm_cout_base), .ofm_channel_valid(ofm_channel_valid),
         .ofm_data(ofm_data),
-        .ofm_mem_wr_en(ofm_mem_wr_en), .ofm_mem_wr_addr(ofm_mem_wr_addr),
+        .ofm_mem_wr_en(ofm_mem_wr_en), .ofm_mem_wr_ready(1'b1),
+        .ofm_mem_wr_addr(ofm_mem_wr_addr),
         .ofm_mem_wr_data(ofm_mem_wr_data), .ofm_packet_full(ofm_packet_full)
     );
 

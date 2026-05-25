@@ -15,6 +15,7 @@ module tb_ofm_writeback;
     reg [COUT_TILE-1:0] packet_channel_valid;
     reg [COUT_TILE*8-1:0] packet_data;
     wire packet_full;
+    reg wr_ready;
     wire wr_en;
     wire [ADDR_W-1:0] wr_addr;
     wire [7:0] wr_data;
@@ -28,8 +29,9 @@ module tb_ofm_writeback;
         .packet_valid(packet_valid), .packet_pixel(packet_pixel),
         .packet_cout_base(packet_cout_base),
         .packet_channel_valid(packet_channel_valid), .packet_data(packet_data),
-        .packet_full(packet_full), .cout_total(11'd10),
-        .wr_en(wr_en), .wr_addr(wr_addr), .wr_data(wr_data), .busy(busy)
+        .packet_full(packet_full), .cout_total(11'd10), .pixel_base({ADDR_W{1'b0}}),
+        .wr_en(wr_en), .wr_ready(wr_ready),
+        .wr_addr(wr_addr), .wr_data(wr_data), .busy(busy)
     );
 
     always #5 clk = ~clk;
@@ -82,6 +84,7 @@ module tb_ofm_writeback;
         packet_cout_base = 0;
         packet_channel_valid = 0;
         packet_data = 0;
+        wr_ready = 1'b1;
         pass = 0;
         fail = 0;
         wr_count = 0;

@@ -25,16 +25,23 @@ $common = @(
     "systolic/systolic_top_feeder.v",
     "systolic/layer_scheduler_stream.v",
     "systolic/weight_tile_loader.v",
+    "systolic/bias_weight_stream_loader.v",
+    "systolic/ifm_line_stream_loader.v",
     "systolic/psum_pingpong_buffer.v",
     "systolic/psum_stream_feeder.v",
     "systolic/psum_drain_writer.v",
     "systolic/ofm_requant_writer.v",
     "systolic/ofm_activation.v",
     "systolic/ofm_writeback.v",
+    "systolic/ofm_byte_stream_fifo.v",
     "systolic/conv_layer_top_stream.v",
     "systolic/layer_config_regs.v",
     "systolic/quant_param_regs.v",
+    "systolic/axi_lite_cfg_bridge.v",
     "systolic/conv_accel_core.v",
+    "systolic/conv_accel_core_axi_lite.v",
+    "systolic/conv_accel_core_axi_lite_stream.v",
+    "systolic/conv_accel_core_axi_lite_full_stream.v",
     "systolic/requant.v",
     "systolic/leaky_lut.v",
     "systolic/systolic_top.v"
@@ -53,17 +60,22 @@ $tests = @(
     @{ Top = "tb_conv_layer_top_stream"; Files = @("tb/tb_conv_layer_top_stream.v") },
     @{ Top = "tb_conv_accel_core"; Files = @("tb/tb_conv_accel_core.v") },
     @{ Top = "tb_layer_config_regs"; Files = @("tb/tb_layer_config_regs.v") },
+    @{ Top = "tb_axi_lite_cfg_bridge"; Files = @("tb/tb_axi_lite_cfg_bridge.v") },
     @{ Top = "tb_quant_param_regs"; Files = @("tb/tb_quant_param_regs.v") },
     @{ Top = "tb_layer_scheduler_stream"; Files = @("tb/tb_layer_scheduler_stream.v") },
     @{ Top = "tb_layer_scheduler_small"; Files = @("tb/tb_layer_scheduler_small.v") },
     @{ Top = "tb_weight_tile_loader"; Files = @("tb/tb_weight_tile_loader.v") },
+    @{ Top = "tb_bias_weight_stream_loader"; Files = @("tb/tb_bias_weight_stream_loader.v") },
+    @{ Top = "tb_ifm_line_stream_loader"; Files = @("tb/tb_ifm_line_stream_loader.v") },
     @{ Top = "tb_psum_pingpong_buffer"; Files = @("tb/tb_psum_pingpong_buffer.v") },
     @{ Top = "tb_psum_stream_feeder"; Files = @("tb/tb_psum_stream_feeder.v") },
     @{ Top = "tb_psum_drain_writer"; Files = @("tb/tb_psum_drain_writer.v") },
     @{ Top = "tb_ofm_requant_writer"; Files = @("tb/tb_ofm_requant_writer.v") },
     @{ Top = "tb_ofm_activation"; Files = @("tb/tb_ofm_activation.v") },
     @{ Top = "tb_ofm_writeback"; Files = @("tb/tb_ofm_writeback.v") },
+    @{ Top = "tb_ofm_byte_stream_fifo"; Files = @("tb/tb_ofm_byte_stream_fifo.v") },
     @{ Top = "tb_line_stream_ctrl"; Files = @("tb/tb_line_stream_ctrl.v") },
+    @{ Top = "tb_line_stream_ctrl_tile"; Files = @("tb/tb_line_stream_ctrl_tile.v") },
     @{ Top = "tb_window_stream_ctrl"; Files = @("tb/tb_window_stream_ctrl.v") },
     @{ Top = "tb_window_feeder"; Files = @("tb/tb_window_feeder.v") },
     @{ Top = "tb_window_feeder_stride2"; Files = @("tb/tb_window_feeder_stride2.v") },
@@ -75,7 +87,13 @@ $tests = @(
 
 $longTests = @(
     @{ Top = "tb_conv_accel_core_realistic_small"; Files = @("tb/tb_conv_accel_core_realistic_small.v") },
-    @{ Top = "tb_layer_scheduler_cout64_fulltile"; Files = @("tb/tb_layer_scheduler_cout64_fulltile.v") }
+    @{ Top = "tb_layer_scheduler_cout64_fulltile"; Files = @("tb/tb_layer_scheduler_cout64_fulltile.v") },
+    @{ Top = "tb_conv_accel_core_spatial_tile"; Files = @("tb/tb_conv_accel_core_spatial_tile.v") },
+    @{ Top = "tb_conv_accel_core_spatial_multitile"; Files = @("tb/tb_conv_accel_core_spatial_multitile.v") },
+    @{ Top = "tb_conv_accel_core_ps_driver"; Files = @("tb/tb_conv_accel_core_ps_driver.v") },
+    @{ Top = "tb_conv_accel_core_axi_lite_ps_driver"; Files = @("tb/tb_conv_accel_core_axi_lite_ps_driver.v") },
+    @{ Top = "tb_conv_accel_core_axi_lite_stream_ps_driver"; Files = @("tb/tb_conv_accel_core_axi_lite_stream_ps_driver.v") },
+    @{ Top = "tb_conv_accel_core_axi_lite_full_stream_ps_driver"; Files = @("tb/tb_conv_accel_core_axi_lite_full_stream_ps_driver.v") }
 )
 
 if ($IncludeLong) {
@@ -106,7 +124,7 @@ foreach ($test in $tests) {
     }
 
     Write-Host "=== compile $top ==="
-    & iverilog -g2012 -s $top -o $vvp @srcs
+    & iverilog -g2012 -I (Join-Path $root "tb") -s $top -o $vvp @srcs
     if ($LASTEXITCODE -ne 0) { throw "iverilog failed for $top" }
 
     Write-Host "=== run $top ==="

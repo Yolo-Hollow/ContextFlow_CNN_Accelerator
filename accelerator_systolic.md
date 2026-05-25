@@ -1,17 +1,17 @@
 # Systolic Accelerator 设计与验证文档
 
-> 最后更新：2026-05-24
+> 最后更新：2026-05-25
 
-本文档记录 `accelerator_systolic/` 当前已经完成的工作、已验证的设计语义、存在的问题，以及后续推进计划。目标是在权重固定式卷积脉动阵列架构下，完成可部署简化 YOLOv3-tiny 的卷积加速 IP。
+本文档记录 `accelerator_systolic/` 当前的卷积脉动阵列 IP 设计状态、已验证语义、分块策略、测试结果和后续计划。目标是在 weight-stationary 脉动阵列架构下，完成可部署简化 YOLOv3-tiny 的卷积加速 IP。
 
 ---
 
 ## 1. 当前目标
 
-参考项目 `fpga_accelerator_yolov3tiny-main/` 已经完成了一个卷积加速器 IP，并通过简化 YOLOv3-tiny 任务进行了部署测试。本项目当前目标不是直接复刻参考项目，而是在以下架构假设下重新推进：
+参考项目 `fpga_accelerator_yolov3tiny-main/` 已经实现了一个卷积加速器 IP，并完成简化 YOLOv3-tiny 测试。本项目当前采用重新设计的方式推进：
 
-- 使用 weight-stationary 脉动阵列作为核心计算单元。
-- 将卷积展开为分块 GEMM：
+- 使用 weight-stationary systolic array 作为核心计算单元。
+- 将卷积转化为分块 GEMM：
 
 ```text
 OFM[p, cout] = bias[cout] + sum_k IFM[p, k] * W[k, cout]
@@ -19,405 +19,459 @@ k = cin * kh * kw
 p = oy * ofm_w + ox
 ```
 
-- 固定当前验证粒度：
+- 当前固定验证粒度：
 
 | 维度 | Tile | 含义 |
 |---|---:|---|
 | `K_TILE` | 32 | 32 个 unfolded `(cin, ky, kx)` 输入 lane，对应 32 个 PE row |
-| `COUT_TILE` | 64 | 32 个 PE column，每列计算 2 个输出通道 |
-| `P_TILE` | stream | 当前先按输出像素窗口逐点流式输入 |
+| `COUT_TILE` | `COLS * 2`，典型为 64 | 32 个 PE column，每列计算 2 个输出通道 |
+| `P_TILE` | stream / spatial tile | 输出像素按窗口流式处理，可按输出行分块 |
 
-当前设计的核心计算语义是：
+当前计算语义：
 
-1. 第一个 K tile：`psum_top` 注入 bias。
-2. 中间 K tile：`psum_top` 注入上一轮 partial sum。
-3. 最后 K tile：输出完整 PSUM，再进入 requant / activation / writeback。
-4. 多 Cout block：每 64 个输出通道为一组，更换权重后复用 IFM 流。
+1. 第一个 K tile 注入 bias。
+2. 中间 K tile 注入上一轮 partial sum。
+3. 最后 K tile 输出完整 PSUM，进入 requant / activation / writeback。
+4. `Cout > COUT_TILE` 时按输出通道 block 分多次计算，每个 block 更换权重，复用 IFM。
+5. 大尺寸 OFM 可按输出行分多个 spatial tile 执行，每个 tile 写回全局 OFM 的不同地址范围。
 
-`PSUM_W` 当前固定为 32 bit。原因是 YOLO 风格大层可能出现 `Cin=512/1024, Kh=3, Kw=3` 的长累加链，在逐层量化范围没有完成之前，32 bit 是更稳妥的默认值。
+`PSUM_W` 当前保持 32 bit。原因是 YOLO 风格的大通道层可能出现 `Cin=512/1024, Kh=3, Kw=3` 的长累加链，在逐层量化范围分析完成前，32 bit 是更稳妥的默认值。
 
 ---
 
 ## 2. 当前架构
 
 ```text
-DDR / DMA
+DDR / DMA / testbench source
   |
   v
 Line Buffer
   - 5 bank
-  - 3 physical line
-  - 每 line 3 份读副本，对应 kx=0/1/2 并行读取
+  - 3 physical lines
+  - 每行支持 kx=0/1/2 三列并行读取
   |
   v
 Window Extract
-  - 根据 oy, ox, stride, pad, pass_base_k 生成 32 lane IFM
+  - 根据 oy, ox, stride, pad, pass_base_k 生成 32-lane IFM
   - 根据 line_fy / line_valid 判断窗口是否 ready
   |
   v
+Window Feeder
+  - line_stream_ctrl 负责输出行级调度和行请求
+  - window_stream_ctrl 负责单行内 ox 推进和 IFM FIFO 背压
+  |
+  v
 IFM FIFO x 32
-  - 当前默认深度 256
   - row r 的 read enable 通过 r*5 周期 stagger 对齐阵列传播
   |
   v
 32 x 32 Systolic Array
   - weight-stationary
-  - 每个 PE 支持两个 int8 weight 输出
-  - 每列产生两个 Cout
+  - 每个 PE 支持 1 个 IFM 和 2 个 int8 weight
+  - 每列产生 2 个 Cout
   |
   v
 PSUM FIFO x 32
   |
   v
-Requant
+PSUM drain / ping-pong feedback
   |
   v
-LeakyReLU LUT
+Requant / Activation
   |
   v
-DDR / output buffer
+OFM writeback
+  - HWC layout
+  - 支持 spatial tile 的 pixel_base 偏移
 ```
 
 ---
 
-## 3. 已完成工作
+## 3. 分块策略
 
-### 3.1 数学模型与分块语义
+### 3.1 K 分块
 
-已经锁定当前验证模型：
+- `K_TOTAL = Cin * Kh * Kw`
+- 每次计算 `K_TILE=32` 个 unfolded 输入 lane。
+- `K_TOTAL > 32` 时分多个 K pass。
+- pass0 使用 bias。
+- pass1/pass2/... 使用上一轮 partial sum。
+- final pass 输出完整 PSUM，并进行后处理。
 
-- 阵列执行 `P x K` 乘 `K x Cout` 的分块 GEMM。
-- `K_TILE=32`。
-- `COUT_TILE=64`。
-- `P` 维度先按窗口逐点流式处理。
-- K 方向多 pass 的 `psum_top` 语义已经明确：
-  - `is_first_pass=1, use_ext_psum=0`：注入 bias。
-  - `use_ext_psum=1`：注入上一轮 partial sum。
-  - 否则注入 0。
+### 3.2 Cout 分块
 
-### 3.2 计算核心
+- `COUT_TILE = COLS * 2`。
+- 当前典型配置 `COLS=32`，因此 `COUT_TILE=64`。
+- `Cout > 64` 时，按 `cout_base = 0, 64, 128...` 分 block。
+- 每个 Cout block 重新加载对应权重 tile。
+- IFM 窗口流在不同 Cout block 间复用。
+- OFM writeback 根据 `cout_base + lane` 写入不同输出通道范围。
+
+### 3.3 Spatial 分块
+
+为支持大尺寸特征图，当前加入了按输出行分块的 spatial tile 配置：
+
+| 配置 | 含义 |
+|---|---|
+| `tile_oy_base` | 当前 tile 的全局输出起始行 |
+| `tile_ofm_h` | 当前 tile 覆盖的输出行数，0 表示整张 OFM 高度 |
+| `tile_pixel_base` | 当前 tile 在 HWC OFM 中的全局 pixel 起始下标，通常为 `tile_oy_base * ofm_w` |
+| `num_pixels` | 当前 tile 的输出像素数，通常为 `tile_ofm_h * ofm_w` |
+
+OFM 写回地址：
+
+```text
+wr_addr = (tile_pixel_base + local_pixel) * cout_total + (cout_base + channel)
+```
+
+这样不需要在片上保存整张 OFM。每个 spatial tile 完成后可以直接写回全局输出缓冲。
+
+---
+
+## 4. 配置寄存器
+
+当前 `layer_config_regs.v` 的本地配置寄存器如下：
+
+| 地址 | 名称 | 字段 |
+|---:|---|---|
+| `0x00` | CTRL/STATUS | write bit0=start pulse, bit1=clear done; read bit0=busy, bit1=done_sticky |
+| `0x01` | FM_SIZE | `[8:0]=fm_h`, `[24:16]=fm_w` |
+| `0x02` | OFM_SIZE | `[8:0]=ofm_h`, `[24:16]=ofm_w` |
+| `0x03` | CONV | `[1:0]=stride`, `[9:8]=pad` |
+| `0x04` | K_TOTAL | `[10:0]=k_total` |
+| `0x05` | COUT_TOTAL | `[10:0]=cout_total` |
+| `0x06` | NUM_PIXELS | `[15:0]=num_pixels` |
+| `0x07` | ACT_CFG | `[1:0]=activation_mode`, 0=bypass, 1=ReLU, 2=Leaky LUT |
+| `0x08` | TILE_ROWS | `[8:0]=tile_oy_base`, `[24:16]=tile_ofm_h` |
+| `0x09` | PIXEL_BASE | `[23:0]=tile_pixel_base` |
+
+这些寄存器目前仍是本地简化接口：
+
+```verilog
+cfg_wr_en
+cfg_addr
+cfg_wdata
+cfg_rd_en
+cfg_rdata
+```
+
+后续可以直接封装成 AXI-Lite slave。
+
+---
+
+## 5. 已完成模块
 
 | 模块 | 文件 | 当前状态 |
 |---|---|---|
-| int8 双权重 PE | `systolic/systolic_pe.v` | 已验证 signed int8 乘法、双权重输出、valid 传播、psum 累加 |
-| 小阵列验证 | `tb/tb_systolic_array_small.v` | 已通过 2x/4x 风格的小规模确定性 case |
-| 32x32 阵列 | `systolic/systolic_array_32x32.v` | 已接入 valid-based 数据传播 |
-| 顶层计算控制 | `systolic/systolic_ctrl.v` | 已加入 `num_pixels` 和 conservative drain done |
-| 顶层集成 | `systolic/systolic_top.v` | 已支持手动 IFM FIFO 与 DMA/line-buffer 两种输入模式 |
-
-### 3.3 IFM 倾斜输入
-
-当前 IFM stagger 方式：
-
-- `compute_active` 直接驱动 row 0 的 IFM FIFO read enable。
-- row `r` 的 read enable 由 `com_shift_reg #(DEPTH=r*5)` 延迟得到。
-- 这样 IFM 水平方向输入与 PSUM 垂直方向传播对齐。
-
-这一部分已经通过：
-
-- PE 单元测试。
-- 小阵列测试。
-- `systolic_top` multipass 测试。
-
-### 3.4 partial sum 注入与多 K tile
-
-已经完成：
-
-- bias 注入。
-- external psum 注入。
-- `K=64/96` 风格的多 K tile 累加验证。
-- partial sum 原始值比较。
-
-相关 testbench：
-
-- `tb/tb_systolic_top_multipass.v`
-- `tb/tb_layer_scheduler_small.v`
-
-### 3.5 多 Cout block 语义
-
-当前已经在模型和调度计划中明确：
-
-- 一个 Cout block 对应 64 个输出通道。
-- `Cout > 64` 时更换权重块。
-- IFM 数据在不同 Cout block 间复用。
-- 输出写回不同 OFM 通道范围。
-
-目前还没有完成完整 `Cout=128` 的专用 RTL testbench，这是后续计划中的一个独立验证点。
-
-### 3.6 line buffer 与 window extract
-
-已经完成并修正：
-
-- `line_buffer_5bank.v`
-  - 5 bank。
-  - 3 physical line。
-  - 每行 3 份读副本，支持 `kx=0/1/2` 并行读。
-  - 新增 `line_fy_out`、`line_valid_out`、`wr_ptr_out`。
-  - `line_advance` 后才将当前 physical line 标记为 valid。
-
-- `window_extract.v`
-  - 使用 runtime `fm_h/fm_w/stride/pad/oy/ox/pass_base_k`。
-  - 修正了早期 `rd_x=ox/ox+1/ox+2` 与真实 `fx=ox*stride+kx-pad` 不一致的问题。
-  - 新增 `window_ready`。
-  - 对 padding 区域输出 0。
-  - 只有需要的输入行都在 line buffer 中时，`ifm_valid` 才有效。
-
-已覆盖：
-
-- `3x3 pad=1 stride=1`
-- `3x3 stride=2`
-- `1x1` 相关窗口语义的基础映射
-- 边界 padding
-- 连续写入 row0/1/2/3/4 后滑动读取 oy0/1/2
-
-### 3.7 连续流控制
-
-为了满足连续流要求，已经新增两个独立控制器。
-
-#### `line_stream_ctrl.v`
-
-负责输出行级调度：
-
-```text
-fill row 0
-fill row 1
-fill row 2
-compute oy 0
-prefetch row 3
-compute oy 1
-prefetch row 4
-compute oy 2
-done
-```
-
-特点：
-
-- 保守策略：当前输出行计算完成后才预取下一行。
-- 避免 line buffer 覆盖当前窗口仍然需要的 physical line。
-- 使用 `fill_req/fill_done` 与 `compute_start/compute_done` 握手。
-- 已通过带延迟应答的独立 testbench。
-
-#### `window_stream_ctrl.v`
-
-负责单个输出行内部的 `ox` 连续发射：
-
-- 接收 `start_oy` 与 `ofm_w`。
-- 维护稳定的 `oy/ox`。
-- 当 `window_ready && !ifm_fifo_full_any` 时产生 `ifm_push`。
-- 如果窗口未 ready 或 IFM FIFO full，则保持 `ox` 不变。
-- `ifm_push` 为组合 accept 信号，便于在采样边沿使用当前稳定的 `oy/ox`。
-
-该模块是后续 window feeder 的基础。
+| PE | `systolic/systolic_pe.v` | 已验证 signed int8、双权重、valid 延迟、psum 累加 |
+| 阵列 | `systolic/systolic_array_32x32.v` | 已接入 valid-based 数据传播 |
+| 顶层计算 | `systolic/systolic_top.v` | 支持手动 IFM FIFO 与 feeder 输入路径 |
+| IFM FIFO | `systolic/systolic_fifo.v` | 已用于 32 lane 输入 FIFO |
+| 行缓存 | `systolic/line_buffer_5bank.v` | 5 bank、3 physical lines、行有效标记 |
+| 窗口抽取 | `systolic/window_extract.v` | 支持 stride/pad/pass_base_k，padding 输出 0 |
+| 行调度 | `systolic/line_stream_ctrl.v` | 支持 `tile_oy_base/tile_ofm_h` 的行请求 |
+| 行内窗口流 | `systolic/window_stream_ctrl.v` | 支持 window ready 和 IFM FIFO 背压 |
+| 窗口 feeder | `systolic/window_feeder.v` | 已集成 line buffer、window extract、两级控制 |
+| feeder 顶层 | `systolic/systolic_top_feeder.v` | 已接入 systolic_top |
+| 层调度 | `systolic/layer_scheduler_stream.v` | 支持 K pass 与 Cout block 调度 |
+| 权重加载 | `systolic/weight_tile_loader.v` | 支持 weight tile 装载到阵列 FIFO |
+| PSUM ping-pong | `systolic/psum_pingpong_buffer.v` | 支持 partial sum feedback |
+| PSUM 流注入 | `systolic/psum_stream_feeder.v` | 支持倾斜注入 partial sum |
+| PSUM drain | `systolic/psum_drain_writer.v` | 支持从 PSUM FIFO 收集输出包 |
+| requant | `systolic/ofm_requant_writer.v` / `systolic/requant.v` | 已接入输出后处理路径 |
+| activation | `systolic/ofm_activation.v` / `systolic/leaky_lut.v` | 支持 bypass/ReLU/Leaky LUT |
+| OFM writeback | `systolic/ofm_writeback.v` | 支持 `pixel_base` 全局写回 |
+| 卷积层流顶层 | `systolic/conv_layer_top_stream.v` | 已串联 feeder、scheduler、psum、requant、activation、writeback |
+| 配置 wrapper | `systolic/conv_accel_core.v` | 已接入本地配置寄存器和量化寄存器 |
+| AXI-Lite 配置桥 | `systolic/axi_lite_cfg_bridge.v` | 已将 AXI-Lite 读写转换为本地 `cfg_*` 配置总线 |
 
 ---
 
-## 4. 当前测试与回归
+## 6. 当前验证结果
 
-统一回归脚本：
+### 6.1 Icarus 关键回归
+
+最近通过的关键 Icarus 测试：
+
+```text
+tb_layer_config_regs:                  20 pass, 0 fail
+tb_line_stream_ctrl:                   11 pass, 0 fail
+tb_line_stream_ctrl_tile:              11 pass, 0 fail
+tb_window_feeder:                      300 pass, 0 fail
+tb_window_feeder_pad1:                 832 pass, 0 fail
+tb_window_feeder_stride2:              139 pass, 0 fail
+tb_ofm_writeback:                      22 pass, 0 fail
+tb_systolic_top_feeder_singlepass:     73 pass, 0 fail
+tb_systolic_top_feeder_multipass_stream: 288 pass, 0 fail
+tb_systolic_top_feeder_cout_blocks:    144 pass, 0 fail
+```
+
+`tb_line_stream_ctrl_tile` 专门验证：
+
+- `tile_oy_base=2`
+- `tile_ofm_h=3`
+- `stride=1`
+- `pad=1`
+
+预期只请求 IFM 行 `1..5`，不会从第 0 行开始无效填充。
+
+### 6.2 XSIM 长回归
+
+当前使用 Vivado XSIM 运行较长测试：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File tb\run_iverilog_regression.ps1
+vivado -mode batch -source tcl\run_xsim_regression.tcl
 ```
 
-当前已纳入回归的 testbench：
-
-| Testbench | 目的 |
-|---|---|
-| `tb_tiling_model` | 分块 GEMM / pass 语义模型 |
-| `tb_systolic_pe` | 单 PE signed int8、双权重、valid、psum |
-| `tb_systolic_array_small` | 小阵列确定性验证 |
-| `tb_systolic_top_multipass` | 顶层多 K tile partial sum feedback |
-| `tb_window_top_singlepass` | line buffer + window + top 单 pass |
-| `tb_layer_scheduler_small` | 小层 K tile 调度、空间遍历、psum feedback |
-| `tb_line_stream_ctrl` | 连续流行级调度 |
-| `tb_window_stream_ctrl` | 输出行内部窗口发射与背压 |
-| `tb_window_extract` | stride/pad/window/lane 映射 |
-| `tb_linebuf_stream` | 行缓存连续滑动更新 |
-| `tb_requant` | requant 饱和、valid 链 |
-
-最近一次完整回归结果：
+最近通过结果：
 
 ```text
-all selected Icarus regressions passed
+tb_conv_accel_core_realistic_small:     1163 pass, 0 fail
+tb_layer_scheduler_cout64_fulltile:     84 pass, 0 fail
+tb_conv_accel_core_cout64_fulltile:     75 pass, 0 fail
+tb_conv_accel_core_cout128_blocks:      139 pass, 0 fail
+tb_conv_accel_core_spatial_tile:        443 pass, 0 fail
+tb_conv_accel_core_spatial_multitile:   1163 pass, 0 fail
+tb_conv_accel_core_ps_driver:           1163 pass, 0 fail
+tb_axi_lite_cfg_bridge:                 37 pass, 0 fail
 ```
 
+其中：
+
+- `tb_conv_accel_core_cout64_fulltile` 验证完整 64 输出通道 tile。
+- `tb_conv_accel_core_cout128_blocks` 验证 `Cout=128`，分两个 Cout block。
+- `tb_conv_accel_core_spatial_tile` 验证非零 `tile_oy_base` 的单个空间 tile。
+- `tb_conv_accel_core_spatial_multitile` 将 `8x8` OFM 分为 `3+3+2` 行三次启动，最终拼接出完整 OFM。
+- `tb_conv_accel_core_ps_driver` 固化 PS-style 调度契约，检查 start/done/clear、bias/weight/line fill 服务次数。
+- `tb_axi_lite_cfg_bridge` 验证 AXI-Lite 到本地配置总线的读写转换、`WSTRB` byte merge、start pulse 和 done clear。
+
 ---
 
-## 5. 最近提交节点
+## 7. 当前设计结论
 
-| Commit | 内容 |
+当前项目已经从“单个计算核正确”推进到“卷积层核心数据流基本闭环”：
+
+- K tile 多 pass 已验证。
+- Cout block 已验证到 `Cout=128`。
+- line buffer + window extract 的 stride/pad/padding 映射已验证。
+- partial sum ping-pong feedback 已验证。
+- requant / activation / writeback 已接入。
+- spatial tile 已验证单 tile 和多 tile 拼接。
+- PS-style layer driver 已覆盖多 spatial tile、多 K pass、多 Cout block 的软件调度顺序。
+
+因此，按当前思路继续推进是可行的。但现在还不能直接认为是完整可部署 IP，原因是外部系统接口和 PS 调度契约尚未固化。
+
+---
+
+## 8. 当前风险与待确认点
+
+### 8.1 AXI 接口尚未实现
+
+当前配置接口仍是本地寄存器风格，数据输入输出也还是 testbench 驱动模型。后续需要封装：
+
+- AXI-Lite 配置寄存器接口。
+- 权重/偏置加载接口。
+- IFM 行填充接口。
+- OFM 写回接口。
+
+### 8.2 DMA 调度契约需要固化
+
+在进入 AXI 前，需要先明确 PS/DMA 视角的协议：
+
+- 何时响应 `bias_load_req`。
+- 何时响应 `weight_load_req`。
+- 何时响应 `feeder_fill_req`。
+- 每个 spatial tile 如何配置 `num_pixels/tile_oy_base/tile_ofm_h/tile_pixel_base`。
+- 多 Cout block 时权重如何重新载入。
+- 多 K pass 时 partial sum buffer 如何保持与回灌。
+
+### 8.3 缓存深度仍需结合目标平台复核
+
+当前 FIFO/PSUM buffer 深度对测试用例足够，但面向 XCK26/Kria K26 部署时，需要结合 BRAM/URAM/DSP/LUT 资源和目标吞吐重新估算：
+
+- IFM FIFO 深度。
+- PSUM ping-pong buffer 深度。
+- OFM packet FIFO 深度。
+- weight tile buffer 容量。
+
+### 8.4 资源优化尚未开始
+
+目前优先保证正确性。后续可能需要评估：
+
+- `PSUM_W=32` 是否可降到 24/28 bit。
+- 阵列规模是否固定 32x32，或在 XCK26 上采用更小阵列。
+- `COUT_TILE=64` 对资源和带宽是否最优。
+
+---
+
+## 9. PS 调度契约
+
+当前已通过 `tb_conv_accel_core_ps_driver` 固化第一版 PS-style layer driver。该 driver 不引入 AXI 时序，只模拟未来 PS 软件和 DMA 服务端应完成的调度动作：
+
+1. 初始化 quant 参数。
+2. 写 layer-level 配置寄存器。
+3. 对每个 spatial tile 写 `num_pixels/tile_oy_base/tile_ofm_h/tile_pixel_base`。
+4. 写 `CTRL.start` 启动当前 tile。
+5. 响应 `bias_load_req`，按 `current_cout_base` 写入当前 Cout block 的 bias。
+6. 响应 `weight_load_req`，按 `current_cout_base/current_pass_base_k` 写入当前 weight tile。
+7. 响应 `feeder_fill_req`，按 `feeder_fill_fy/current_pass_base_k` 写入当前 K pass 需要的 IFM 行。
+8. 轮询 `done_sticky`。
+9. 写 `CTRL.clear_done` 清除 done，再启动下一个 spatial tile。
+10. 最后检查全局 OFM memory 与 golden convolution 一致。
+
+当前契约检查：
+
+| 检查项 | 期望 |
 |---|---|
-| `3d64d46` | 添加 systolic tiling 回归测试，`PSUM_W` 提升到 32 bit |
-| `e2db82d` | 添加 top multipass psum feedback 测试 |
-| `8b0a9f9` | 为 stagger shift register 添加 reset |
-| `eb1850f` | 使用 `num_pixels` 和 done pulse 约束 systolic compute |
-| `c44169d` | 添加 window 到 top 的 single pass 测试 |
-| `2ab9aee` | 添加 small layer scheduler regression |
-| `128d5bc` | 添加 line readiness，修正 streaming window 行有效性 |
-| `35db91f` | 添加 line stream scheduler control |
-| `07e243b` | 添加 window stream control |
+| tile start 次数 | `TILE_COUNT` |
+| done seen 次数 | `TILE_COUNT` |
+| done clear 次数 | `TILE_COUNT` |
+| bias service 次数 | `TILE_COUNT * COUT_BLOCKS` |
+| weight service 次数 | `TILE_COUNT * COUT_BLOCKS * K_PASSES` |
+| line fill service 次数 | 大于 0，并由 feeder 按窗口需要发起 |
+
+`tb_conv_accel_core_ps_driver` 当前配置：
+
+```text
+FM/OFM:      8x8
+Cin:         16
+K_TOTAL:     16 * 3 * 3 = 144
+K_PASSES:    5
+COLS:        4
+COUT_TILE:   8
+Cout:        18
+COUT_BLOCKS: 3
+Spatial:     3 tiles, rows 3 + 3 + 2
+```
+
+这一步完成后，AXI 接口的工作可以理解为把这些 testbench task 翻译成 AXI-Lite/AXI-Stream 或 memory-mapped DMA 事务。
 
 ---
 
-## 6. 当前可行性评估
+## 10. 下一步计划
 
-当前思路总体可行，原因是几个高风险语义已经被拆开并通过了独立验证：
+### Step A：继续文档化软件调度契约
 
-- PE 与阵列的 signed int8 乘累加语义已经验证。
-- IFM stagger 与 valid 传播已经验证。
-- K tile 多 pass partial sum feedback 已经验证。
-- line buffer 与 window extract 的 stride/pad/边界映射已经修正并验证。
-- 连续流下 line readiness 和窗口发射背压已经开始形成独立控制边界。
+需要明确每次 layer/tile 启动前 PS 必须配置：
 
-但还不能认为卷积 IP 层级已经完成，原因是：
+- `fm_h/fm_w`
+- `ofm_h/ofm_w`
+- `stride/pad`
+- `k_total`
+- `cout_total`
+- `num_pixels`
+- `tile_oy_base`
+- `tile_ofm_h`
+- `tile_pixel_base`
+- `activation_mode`
+- quant 参数
+- Leaky LUT 参数
 
-- 目前仍缺少正式的 `window_feeder` 集成模块。
-- `line_stream_ctrl` 和 `window_stream_ctrl` 尚未接入 `systolic_top`。
-- 多 Cout block 的真实调度还没有专用回归。
-- PSUM FIFO 到 requant/activation/writeback 的完整层级链路尚未形成统一 testbench。
-- AXI-Lite 配置、AXI-Stream DMA、PS 调度尚未开始对接。
+### Step B：AXI-Lite 配置接口
 
----
+当前已新增 `axi_lite_cfg_bridge.v`，完成 AXI-Lite 到 `cfg_*` 本地配置总线的第一版转换。下一步应将它接到 `conv_accel_core` 的配置端口，并新增 AXI-Lite 版本的 PS driver testbench，用 AXI-Lite transaction 替代当前直接调用 `cfg_write` 的 task。
 
-## 7. 已知问题与风险
+### Step C：数据搬运接口
 
-### 7.1 line buffer 预取策略偏保守
+在配置接口稳定后，再分别设计：
 
-当前 `line_stream_ctrl` 为了保证正确性，采用“当前输出行完成后再预取下一行”的策略。这能避免覆盖当前窗口需要的物理行，但吞吐率不是最优。
+- bias load stream 或 memory-mapped load。
+- weight tile stream 或 memory-mapped load。
+- IFM line fill DMA 接口。
+- OFM writeback DMA 接口。
 
-后续可以在 window feeder 验证稳定后，再考虑更激进的边计算边预取策略。
+### Step D：YOLOv3-tiny 代表层测试
 
-### 7.2 顶层 `systolic_top` 还缺少统一 window feeder 接口
-
-当前 `systolic_top` 仍然直接接收外部 `oy/ox`，并用 `compute_active || ctrl_pre_write` 作为 window 到 IFM FIFO 的写入条件。这在测试中可控，但不适合作为最终连续流架构。
-
-后续应该将：
-
-- line fill 调度
-- window ready 检查
-- `ox` 递增
-- IFM FIFO 背压
-
-整合到单独的 window feeder 或 layer scheduler 中。
-
-### 7.3 IFM FIFO 深度需要结合真实层参数复核
-
-当前 `IFM_FIFO_DEPTH=256`。这个深度对当前小型回归足够，但真实层中需要分析：
-
-- 阵列 drain latency。
-- window feeder 写入速度。
-- DMA 行填充暂停。
-- 多 K tile 与多 Cout block 复用方式。
-
-### 7.4 `PSUM_W=32` 仍需逐层量化范围分析
-
-32 bit 当前是正确优先的选择。后续如果要优化资源，可以根据 YOLOv3-tiny 每层的 `Cin * Kh * Kw`、输入量化范围、权重量化范围和 bias 范围，判断是否能降到 24 bit 或 28 bit。
-
----
-
-## 8. 后续计划
-
-### Step A：集成 window feeder
-
-新增一个小顶层模块，例如 `window_feeder.v`：
-
-- 接入 `line_buffer_5bank`。
-- 接入 `window_extract`。
-- 接入 `line_stream_ctrl`。
-- 接入 `window_stream_ctrl`。
-- 输出：
-  - `ifm_data[255:0]`
-  - `ifm_push`
-  - `busy`
-  - `done`
-
-对应 testbench：
-
-- `tb_window_feeder.v`
-- 输入 `5x5 Cin=5 Kh=3 Kw=3 stride=1 pad=0`
-- 验证完整 `ofm_h * ofm_w` 的窗口流。
-- 覆盖 window stall 和 IFM FIFO full stall。
-
-### Step B：将 window feeder 接入 `systolic_top`
-
-目标：
-
-- 不再由 testbench 手动驱动 `oy/ox`。
-- `systolic_top` 内部由 window feeder 产生 IFM FIFO 写入。
-- 阵列 `num_pixels` 与 window feeder 的输出窗口数量保持一致。
-
-验证：
-
-- 先复用 `tb_window_top_singlepass`。
-- 再扩展到 `5x5 Cin=5 Cout=64 Kh=3 Kw=3` 的完整单 pass。
-
-### Step C：多 K tile + window feeder
-
-目标：
-
-- 使用真实 line buffer/window feeder 生成 IFM。
-- 跑 `K=45` 或 `K=64/96` 的多 pass。
-- pass0 注入 bias。
-- pass1/pass2 注入 previous partial sum。
-
-验证：
-
-- 对比 Python golden convolution。
-- 同时检查 raw PSUM 与 requant 后 INT8。
-
-### Step D：多 Cout block
-
-新增 `Cout=128` 回归：
-
-- 分两个 64 通道块。
-- 同一 IFM 流复用。
-- 更换 weight block。
-- 输出写回不同 channel range。
-
-这是从“单阵列块正确”走向“层级调度正确”的关键一步。
-
-### Step E：完整单层调度
-
-选一个真实风格缩小层，例如：
-
-- `Cin=16`
-- `Cout=32/64`
-- `H/W` 使用缩小尺寸而不是直接上 208
-- `Kh=3, Kw=3`
-
-验证内容：
-
-- K 分块。
-- Cout 分块。
-- 空间像素遍历。
-- final pass 判定。
-- requant / activation / writeback。
-
-完成这一步后，才能认为卷积 IP 层级基本可用。
-
-### Step F：YOLOv3-tiny 代表层验证
-
-先验证 2 到 3 个代表层：
+优先选择 2 到 3 个代表层：
 
 - 首层。
 - `26 -> 13` 附近的 stride/downsample 层。
 - `13x13 Cin=512/1024` 大通道层。
 
-再串联参考项目采用的简化单尺度 YOLO 流程。
-
-### Step G：系统接口对接
-
-最后再进入：
-
-- AXI-Lite 配置寄存器。
-- AXI-Stream DMA。
-- PS 端调度。
-- 与参考项目部署流程对接。
+先做缩小版参数验证，再逐步靠近真实网络。
 
 ---
 
-## 9. 当前结论
+## 11. 当前建议
 
-当前项目已经从“计算核心是否正确”推进到“连续流窗口供应是否正确”的阶段。现在最重要的下一步不是直接做最终 top 或 YOLO 部署，而是把 `line_stream_ctrl + window_stream_ctrl + line_buffer + window_extract` 合并成可独立验证的 window feeder。
+下一步不建议马上写完整 AXI 数据接口。更稳妥的路线是：
 
-只要 window feeder 通过完整窗口流回归，后续再接 `systolic_top` 的成功率会明显高于直接做顶层大仿真。
+1. 继续完善 PS 调度契约文档。
+2. 将 `axi_lite_cfg_bridge` 接到 `conv_accel_core` 顶层配置端口。
+3. 用 AXI-Lite testbench 替代当前 `cfg_*` task。
+4. 最后接 DMA/AXI-Stream 数据路径。
+
+这样可以避免把调度语义问题和总线时序问题混在一起调试。
+
+---
+
+## 12. 2026-05-25 AXI-Lite 配置路径更新
+
+本轮已经完成第一版 AXI-Lite 配置路径闭环：
+
+- 新增 `systolic/axi_lite_cfg_bridge.v`，将 AXI-Lite read/write 转换为本地 `cfg_*` 配置总线。
+- 新增 `systolic/conv_accel_core_axi_lite.v`，在不改变计算 datapath 的前提下，用 AXI-Lite 替代 `conv_accel_core` 的本地 layer 配置端口。
+- 新增 `tb/tb_axi_lite_cfg_bridge.v`，覆盖普通读写、AW/W 分离到达、`WSTRB` byte merge、start pulse、done sticky/clear。
+- 新增 `tb/tb_conv_accel_core_axi_lite_ps_driver.v`，用 AXI-Lite transaction 执行与 `tb_conv_accel_core_ps_driver` 相同的 PS-style spatial tile 调度。
+
+当前通过的关键 XSIM 结果：
+
+```text
+tb_conv_accel_core_axi_lite_ps_driver: 1163 pass, 0 fail
+tb_conv_accel_core_ps_driver:          1163 pass, 0 fail
+tb_axi_lite_cfg_bridge:                37 pass, 0 fail
+```
+
+调试中确认过一个重要 testbench 细节：AXI master task 不能在 `RVALID/BVALID` 出现后的同一个半周期立即撤销 `RREADY/BREADY`，否则 bridge 可能没有在上升沿采样到 response handshake，导致后续读事务因为旧 `RVALID` 未清而卡住。当前 testbench 已修正为让 `RREADY/BREADY` 至少跨过一个上升沿。
+
+因此，配置路径目前已经从“本地寄存器 task”推进到“AXI-Lite 配置 wrapper + PS-style 调度仿真”。下一步可以开始固化数据搬运侧接口，优先顺序建议为：
+
+1. bias/weight tile load 的 memory-mapped 或 stream 协议。
+2. IFM line fill DMA 服务协议。
+3. OFM writeback 到外部 memory 的 DMA/AXI master 接口。
+4. 真实 YOLOv3-tiny 代表层的端到端 PS 调度脚本。
+
+---
+
+## 13. 2026-05-25 Bias/Weight Stream Load 更新
+
+在 AXI-Lite 配置路径通过后，本轮继续把 bias/weight 数据搬运从 testbench 的直接写端口推进到 ready/valid stream 协议。
+
+新增模块：
+
+- `systolic/bias_weight_stream_loader.v`
+  - 输入 `bias_load_req` 后，拉高 `bias_s_ready`，按 lane 顺序接收 `COUT_TILE` 个 bias word。
+  - 输出 `bias_wr_en/bias_wr_addr/bias_wr_data`，写入现有 bias 注入路径。
+  - 输入 `weight_load_req` 后，拉高 `weight_s_ready`，按 `row * COUT_TILE + cout_lane` 顺序接收一个完整 weight tile。
+  - 输出 `wgt_tile_wr_en/wgt_tile_wr_addr/wgt_tile_wr_data`，写入现有 `weight_tile_loader` 的 tile buffer。
+
+- `systolic/conv_accel_core_axi_lite_stream.v`
+  - 保留 AXI-Lite 配置端口。
+  - 将原本外露的 `bias_wr_*` 和 `wgt_tile_wr_*` 直接写端口替换为 bias/weight stream 端口。
+  - IFM line fill 和 OFM writeback 仍暂时保持现有本地端口，后续再逐步 DMA 化。
+
+新增验证：
+
+```text
+tb_bias_weight_stream_loader:                 70 pass, 0 fail
+tb_conv_accel_core_axi_lite_stream_ps_driver: 1163 pass, 0 fail
+```
+
+其中 `tb_conv_accel_core_axi_lite_stream_ps_driver` 覆盖：
+
+- AXI-Lite 配置 layer/tile 参数。
+- bias 通过 ready/valid stream 注入。
+- weight tile 通过 ready/valid stream 注入。
+- 3 个 spatial tile：`3 + 3 + 2` 输出行。
+- `Cin=16, K_TOTAL=144, K_PASSES=5`。
+- `Cout=18, COUT_TILE=8, COUT_BLOCKS=3`。
+- 最终 OFM 与 golden convolution 对比一致。
+
+调试中确认了一个重要 stream 时序规则：PS/DMA 服务端必须先等待 `bias_s_ready/weight_s_ready` 有效，再发送第一个 word。不能在 `*_load_req` 刚出现时就提前覆盖第一个数据，否则 loader 进入 busy 的第一个上升沿还不会采样该 word，可能导致 tile 少收一个元素。
+
+下一步建议开始做 IFM line fill DMA 协议：
+
+1. 将当前 `feeder_fill_req/feeder_fill_fy` 固化为 line-fill request。
+2. 定义一行 IFM 数据的 stream 顺序：`x=0..fm_w-1`，每个 x 写 5 个 bank。
+3. 用 ready/valid 或 burst-style 接口替代当前 testbench 直接驱动的 `dma_bank_wr_en/dma_wr_x/dma_wr_fy/dma_wr_data/dma_line_advance`。
+4. 新增 line-fill stream loader 单测，再接入 `conv_accel_core_axi_lite_stream` 级长测试。

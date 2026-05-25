@@ -1,10 +1,10 @@
 `timescale 1ns / 1ps
 
-module tb_line_stream_ctrl;
+module tb_line_stream_ctrl_tile;
     localparam AW = 4;
 
     reg clk, rst, start;
-    reg [AW-1:0] fm_h, ofm_h;
+    reg [AW-1:0] fm_h, ofm_h, start_oy, tile_ofm_h;
     reg [1:0] stride, pad;
     reg fill_done, compute_done;
     wire fill_req, compute_start, busy, done;
@@ -13,7 +13,7 @@ module tb_line_stream_ctrl;
     line_stream_ctrl #(.AW(AW)) dut (
         .clk(clk), .rst(rst), .start(start),
         .fm_h(fm_h), .ofm_h(ofm_h),
-        .start_oy({AW{1'b0}}), .tile_ofm_h({AW{1'b0}}),
+        .start_oy(start_oy), .tile_ofm_h(tile_ofm_h),
         .stride(stride), .pad(pad),
         .fill_done(fill_done), .compute_done(compute_done),
         .fill_req(fill_req), .fill_fy(fill_fy),
@@ -34,9 +34,7 @@ module tb_line_stream_ctrl;
             if (fill_fy !== exp[AW-1:0]) begin
                 $display("[FAIL] fill_fy got=%0d exp=%0d", fill_fy, exp);
                 fail = fail + 1;
-            end else begin
-                pass = pass + 1;
-            end
+            end else pass = pass + 1;
         end
     endtask
 
@@ -46,9 +44,7 @@ module tb_line_stream_ctrl;
             if (compute_oy !== exp[AW-1:0]) begin
                 $display("[FAIL] compute_oy got=%0d exp=%0d", compute_oy, exp);
                 fail = fail + 1;
-            end else begin
-                pass = pass + 1;
-            end
+            end else pass = pass + 1;
         end
     endtask
 
@@ -56,24 +52,28 @@ module tb_line_stream_ctrl;
         clk = 0;
         rst = 1;
         start = 0;
-        fm_h = 5;
-        ofm_h = 3;
+        fm_h = 8;
+        ofm_h = 8;
+        start_oy = 2;
+        tile_ofm_h = 3;
         stride = 1;
-        pad = 0;
+        pad = 1;
         fill_done = 0;
         compute_done = 0;
         pass = 0;
         fail = 0;
         fill_idx = 0;
         compute_idx = 0;
-        exp_fill[0] = 0;
-        exp_fill[1] = 1;
-        exp_fill[2] = 2;
-        exp_fill[3] = 3;
-        exp_fill[4] = 4;
-        exp_compute[0] = 0;
-        exp_compute[1] = 1;
-        exp_compute[2] = 2;
+
+        // For oy=2..4 and a 3x3 pad=1 window, required IFM rows are 1..5.
+        exp_fill[0] = 1;
+        exp_fill[1] = 2;
+        exp_fill[2] = 3;
+        exp_fill[3] = 4;
+        exp_fill[4] = 5;
+        exp_compute[0] = 2;
+        exp_compute[1] = 3;
+        exp_compute[2] = 4;
 
         repeat (3) @(negedge clk);
         rst = 0;
@@ -148,7 +148,7 @@ module tb_line_stream_ctrl;
             fail = fail + 1;
         end else pass = pass + 1;
 
-        $display("=== tb_line_stream_ctrl: %0d pass, %0d fail ===", pass, fail);
+        $display("=== tb_line_stream_ctrl_tile: %0d pass, %0d fail ===", pass, fail);
         if (fail != 0) $fatal(1);
         $finish;
     end

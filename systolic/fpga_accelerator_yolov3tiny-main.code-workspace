@@ -7,6 +7,9 @@
 		{
 			"name": "fpga_accelerator_yolov3tiny-main",
 			"path": "../../fpga_accelerator_yolov3tiny-main"
+		},
+		{
+			"path": "../../report"
 		}
 	],
 	"settings": {}

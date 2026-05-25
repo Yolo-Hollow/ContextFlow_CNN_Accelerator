@@ -14,6 +14,8 @@ module tb_layer_config_regs;
     wire [1:0] activation_mode;
     wire [10:0] k_total, cout_total;
     wire [15:0] num_pixels;
+    wire [8:0] tile_oy_base, tile_ofm_h;
+    wire [23:0] tile_pixel_base;
 
     layer_config_regs dut (
         .clk(clk), .rst(rst),
@@ -23,7 +25,9 @@ module tb_layer_config_regs;
         .fm_h(fm_h), .fm_w(fm_w), .ofm_h(ofm_h), .ofm_w(ofm_w),
         .conv_stride(conv_stride), .conv_pad(conv_pad),
         .activation_mode(activation_mode),
-        .k_total(k_total), .cout_total(cout_total), .num_pixels(num_pixels)
+        .k_total(k_total), .cout_total(cout_total), .num_pixels(num_pixels),
+        .tile_oy_base(tile_oy_base), .tile_ofm_h(tile_ofm_h),
+        .tile_pixel_base(tile_pixel_base)
     );
 
     always #5 clk = ~clk;
@@ -77,6 +81,8 @@ module tb_layer_config_regs;
         write_reg(6'h05, 32'd10);
         write_reg(6'h06, 32'd12);
         write_reg(6'h07, 32'd2);
+        write_reg(6'h08, {7'd0, 9'd3, 7'd0, 9'd2});
+        write_reg(6'h09, 32'd6);
 
         check_value(fm_h, 7, "fm_h");
         check_value(fm_w, 5, "fm_w");
@@ -88,11 +94,28 @@ module tb_layer_config_regs;
         check_value(cout_total, 10, "cout_total");
         check_value(num_pixels, 12, "num_pixels");
         check_value(activation_mode, 2, "activation");
+        check_value(tile_oy_base, 2, "tile_oy_base");
+        check_value(tile_ofm_h, 3, "tile_ofm_h");
+        check_value(tile_pixel_base, 6, "tile_pixel_base");
 
         cfg_addr = 6'h07;
         #1;
         if (cfg_rdata !== 32'd2) begin
             $display("[FAIL] act cfg read got=%h exp=2", cfg_rdata);
+            fail = fail + 1;
+        end else pass = pass + 1;
+
+        cfg_addr = 6'h08;
+        #1;
+        if (cfg_rdata !== {7'd0, 9'd3, 7'd0, 9'd2}) begin
+            $display("[FAIL] tile rows read got=%h", cfg_rdata);
+            fail = fail + 1;
+        end else pass = pass + 1;
+
+        cfg_addr = 6'h09;
+        #1;
+        if (cfg_rdata !== 32'd6) begin
+            $display("[FAIL] pixel base read got=%h exp=6", cfg_rdata);
             fail = fail + 1;
         end else pass = pass + 1;
 
