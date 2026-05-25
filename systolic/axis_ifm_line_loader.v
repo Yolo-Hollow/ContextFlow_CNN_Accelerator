@@ -10,13 +10,14 @@
 //   TDATA[39:32] = bank4
 //   TDATA[63:40] = don't care
 //
-// TKEEP[4:0] must be 5'b11111 for every accepted beat. TLAST must be asserted
+// TKEEP[BANKS-1:0] must all be 1 for every accepted beat. TLAST must be asserted
 // only on the final x beat of the requested row. Protocol errors are sticky
 // until rst.
 module axis_ifm_line_loader #(
     parameter AW = 9,
     parameter AXIS_W = 64,
-    parameter KEEP_W = AXIS_W / 8
+    parameter KEEP_W = AXIS_W / 8,
+    parameter BANKS = 5
 ) (
     input  clk,
     input  rst,
@@ -31,10 +32,10 @@ module axis_ifm_line_loader #(
     input  [KEEP_W-1:0] s_axis_tkeep,
     input           s_axis_tlast,
 
-    output [4:0]    dma_bank_wr_en,
+    output [BANKS-1:0] dma_bank_wr_en,
     output [AW-1:0] dma_wr_x,
     output [AW:0]   dma_wr_fy,
-    output [7:0]    dma_wr_data [0:4],
+    output [7:0]    dma_wr_data [0:BANKS-1],
     output          dma_line_advance,
 
     output reg      tkeep_error,
@@ -42,17 +43,18 @@ module axis_ifm_line_loader #(
 );
     reg active;
     reg [AW-1:0] beat_count;
-    wire [7:0] line_s_data [0:4];
+    wire [7:0] line_s_data [0:BANKS-1];
     wire axis_fire = s_axis_tvalid && s_axis_tready;
     wire expected_last = active && (beat_count == fm_w - 1'b1);
 
-    assign line_s_data[0] = s_axis_tdata[7:0];
-    assign line_s_data[1] = s_axis_tdata[15:8];
-    assign line_s_data[2] = s_axis_tdata[23:16];
-    assign line_s_data[3] = s_axis_tdata[31:24];
-    assign line_s_data[4] = s_axis_tdata[39:32];
+    genvar db;
+    generate
+        for (db = 0; db < BANKS; db = db + 1) begin : line_data_assign
+            assign line_s_data[db] = s_axis_tdata[db*8 +: 8];
+        end
+    endgenerate
 
-    ifm_line_stream_loader #(.AW(AW)) u_line_loader (
+    ifm_line_stream_loader #(.AW(AW), .BANKS(BANKS)) u_line_loader (
         .clk(clk),
         .rst(rst),
         .fm_w(fm_w),
@@ -81,7 +83,7 @@ module axis_ifm_line_loader #(
             end
 
             if (axis_fire) begin
-                if (s_axis_tkeep[4:0] != 5'b11111)
+                if (s_axis_tkeep[BANKS-1:0] != {BANKS{1'b1}})
                     tkeep_error <= 1'b1;
                 if (s_axis_tlast != expected_last)
                     tlast_error <= 1'b1;

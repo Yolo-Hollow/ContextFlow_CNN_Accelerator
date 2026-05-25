@@ -25,6 +25,7 @@ module conv_accel_core_axi_lite_axis_stream #(
     parameter FM_H_MAX = 416,
     parameter K_TILE = 32,
     parameter COUT_TILE = 64,
+    parameter IFM_BANKS = 5,
     parameter WGT_TILE_AW = 11,
     parameter PSUM_BUF_AW = 10,
     parameter PSUM_BUF_DEPTH = 1024,
@@ -116,10 +117,10 @@ module conv_accel_core_axi_lite_axis_stream #(
     wire [WGT_TILE_AW-1:0] wgt_tile_wr_addr;
     wire [WEIGHT_W-1:0] wgt_tile_wr_data;
 
-    wire [4:0] dma_bank_wr_en;
+    wire [IFM_BANKS-1:0] dma_bank_wr_en;
     wire [8:0] dma_wr_x;
     wire [9:0] dma_wr_fy;
-    wire [7:0] dma_wr_data [0:4];
+    wire [7:0] dma_wr_data [0:IFM_BANKS-1];
     wire dma_line_advance;
 
     wire core_ofm_wr_en;
@@ -139,6 +140,14 @@ module conv_accel_core_axi_lite_axis_stream #(
     wire weight_tlast_error;
     wire ifm_tkeep_error;
     wire ifm_tlast_error;
+    wire axi_cfg_fire;
+    reg [10:0] cfg_cout_total;
+    reg [15:0] cfg_num_pixels;
+    reg [31:0] ofm_expected_bytes;
+    reg [31:0] ofm_byte_count;
+    wire ofm_stream_fire = ofm_stream_valid && ofm_stream_ready;
+    wire ofm_stream_last = ofm_stream_valid && (ofm_expected_bytes != 32'd0) &&
+                           (ofm_byte_count == ofm_expected_bytes - 1'b1);
 
     assign ofm_mem_wr_en = ofm_stream_valid && ofm_stream_ready;
     assign ofm_mem_wr_addr = ofm_stream_addr;
@@ -146,6 +155,37 @@ module conv_accel_core_axi_lite_axis_stream #(
     assign bias_axis_error = bias_tkeep_error || bias_tlast_error;
     assign weight_axis_error = weight_tkeep_error || weight_tlast_error;
     assign ifm_axis_error = ifm_tkeep_error || ifm_tlast_error;
+    assign axi_cfg_fire = s_axi_awvalid && s_axi_awready && s_axi_wvalid && s_axi_wready;
+
+    always @(posedge clk) begin
+        if (rst) begin
+            cfg_cout_total <= 11'd0;
+            cfg_num_pixels <= 16'd0;
+            ofm_expected_bytes <= 32'd0;
+            ofm_byte_count <= 32'd0;
+        end else begin
+            if (axi_cfg_fire) begin
+                case (s_axi_awaddr[7:2])
+                    6'h00: begin
+                        if (s_axi_wdata[0]) begin
+                            ofm_expected_bytes <= cfg_num_pixels * cfg_cout_total;
+                            ofm_byte_count <= 32'd0;
+                        end
+                    end
+                    6'h05: cfg_cout_total <= s_axi_wdata[10:0];
+                    6'h06: cfg_num_pixels <= s_axi_wdata[15:0];
+                    default: begin end
+                endcase
+            end
+
+            if (ofm_stream_fire) begin
+                if (ofm_stream_last)
+                    ofm_byte_count <= 32'd0;
+                else
+                    ofm_byte_count <= ofm_byte_count + 1'b1;
+            end
+        end
+    end
 
     axis_bias_weight_loader #(
         .ROWS(ROWS),
@@ -188,7 +228,8 @@ module conv_accel_core_axi_lite_axis_stream #(
     axis_ifm_line_loader #(
         .AW(9),
         .AXIS_W(AXIS_W),
-        .KEEP_W(AXIS_KEEP_W)
+        .KEEP_W(AXIS_KEEP_W),
+        .BANKS(IFM_BANKS)
     ) u_axis_ifm_loader (
         .clk(clk),
         .rst(rst),
@@ -215,7 +256,7 @@ module conv_accel_core_axi_lite_axis_stream #(
         .WGT_FIFO_DEPTH(WGT_FIFO_DEPTH), .WGT_FIFO_AW(WGT_FIFO_AW),
         .PSUM_FIFO_DEPTH(PSUM_FIFO_DEPTH), .PSUM_FIFO_AW(PSUM_FIFO_AW),
         .FM_W_MAX(FM_W_MAX), .FM_H_MAX(FM_H_MAX),
-        .K_TILE(K_TILE), .COUT_TILE(COUT_TILE),
+        .K_TILE(K_TILE), .COUT_TILE(COUT_TILE), .IFM_BANKS(IFM_BANKS),
         .WGT_TILE_AW(WGT_TILE_AW), .PSUM_BUF_AW(PSUM_BUF_AW), .PSUM_BUF_DEPTH(PSUM_BUF_DEPTH),
         .MULT_W(MULT_W), .SHIFT_W(SHIFT_W), .ZP_W(ZP_W),
         .OFM_ADDR_W(OFM_ADDR_W), .OFM_FIFO_DEPTH(OFM_FIFO_DEPTH), .OFM_FIFO_AW(OFM_FIFO_AW)
@@ -301,7 +342,7 @@ module conv_accel_core_axi_lite_axis_stream #(
         .byte_data(ofm_stream_data),
         .byte_valid(ofm_stream_valid),
         .byte_ready(ofm_stream_ready),
-        .byte_last(1'b0),
+        .byte_last(ofm_stream_last),
         .m_axis_tdata(ofm_m_axis_tdata),
         .m_axis_tkeep(ofm_m_axis_tkeep),
         .m_axis_tvalid(ofm_m_axis_tvalid),

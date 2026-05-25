@@ -6,6 +6,12 @@
 `ifndef TB_CONV_ACCEL_CORE_COLS
 `define TB_CONV_ACCEL_CORE_COLS 4
 `endif
+`ifndef TB_CONV_ACCEL_CORE_ROWS
+`define TB_CONV_ACCEL_CORE_ROWS 32
+`endif
+`ifndef TB_CONV_ACCEL_CORE_IFM_BANKS
+`define TB_CONV_ACCEL_CORE_IFM_BANKS 5
+`endif
 `ifndef TB_CONV_ACCEL_CORE_FM_W
 `define TB_CONV_ACCEL_CORE_FM_W 8
 `endif
@@ -94,8 +100,9 @@
 `endif
 
 module `TB_CONV_ACCEL_CORE_MODULE;
-    localparam ROWS = 32;
+    localparam ROWS = `TB_CONV_ACCEL_CORE_ROWS;
     localparam COLS = `TB_CONV_ACCEL_CORE_COLS;
+    localparam IFM_BANKS = `TB_CONV_ACCEL_CORE_IFM_BANKS;
     localparam IFM_W = 8;
     localparam WGT_W = 8;
     localparam PSUM_W = 32;
@@ -132,10 +139,11 @@ module `TB_CONV_ACCEL_CORE_MODULE;
                             (PIXELS + TILE1_PIXELS + TILE2_PIXELS);
     localparam CIN = 16;
     localparam K_TOTAL = CIN * 3 * 3;
-    localparam K_PASSES = (K_TOTAL + 31) / 32;
+    localparam K_PASSES = (K_TOTAL + ROWS - 1) / ROWS;
     localparam COUT_TILE = COLS * 2;
     localparam COUT_TOTAL = `TB_CONV_ACCEL_CORE_COUT_TOTAL;
     localparam COUT_BLOCKS = (COUT_TOTAL + COUT_TILE - 1) / COUT_TILE;
+    localparam [7:0] IFM_TKEEP_MASK = 8'hff >> (8 - IFM_BANKS);
     localparam WGT_TILE_AW = 11;
     localparam PSUM_A = 6;
     localparam FULL_PIXELS = OFM_W * OFM_H;
@@ -212,14 +220,14 @@ module `TB_CONV_ACCEL_CORE_MODULE;
 `ifdef TB_CONV_ACCEL_CORE_USE_FULL_STREAM
     wire ifm_line_s_ready;
     reg ifm_line_s_valid;
-    reg [7:0] ifm_line_s_data [0:4];
+    reg [7:0] ifm_line_s_data [0:IFM_BANKS-1];
 `endif
     wire feeder_fill_req;
     wire [8:0] feeder_fill_fy;
-    reg [4:0] dma_bank_wr_en;
+    reg [IFM_BANKS-1:0] dma_bank_wr_en;
     reg [8:0] dma_wr_x;
     reg [9:0] dma_wr_fy;
-    reg [7:0] dma_wr_data [0:4];
+    reg [7:0] dma_wr_data [0:IFM_BANKS-1];
     reg dma_line_advance;
     reg quant_wr_en;
     reg [5:0] quant_wr_addr;
@@ -260,7 +268,7 @@ module `TB_CONV_ACCEL_CORE_MODULE;
         .WGT_FIFO_DEPTH(WGT_D), .WGT_FIFO_AW(WGT_AW),
         .PSUM_FIFO_DEPTH(PSUM_D), .PSUM_FIFO_AW(PSUM_AW),
         .FM_W_MAX(FM_W), .FM_H_MAX(FM_H),
-        .K_TILE(32), .COUT_TILE(COUT_TILE),
+        .K_TILE(ROWS), .COUT_TILE(COUT_TILE), .IFM_BANKS(IFM_BANKS),
         .WGT_TILE_AW(WGT_TILE_AW), .PSUM_BUF_AW(PSUM_A), .PSUM_BUF_DEPTH(PIXELS),
         .OFM_ADDR_W(16), .OFM_FIFO_DEPTH(64), .OFM_FIFO_AW(6)
     ) dut (
@@ -348,6 +356,9 @@ module `TB_CONV_ACCEL_CORE_MODULE;
     integer ifm_loader_write_count, ifm_loader_advance_count, ifm_loader_fail_count;
     integer ifm_loader_bank_ch, ifm_loader_expected;
 `endif
+`ifdef TB_CONV_ACCEL_CORE_USE_AXIS_STREAM
+    integer axis_ofm_tlast_count;
+`endif
     reg signed [7:0] feat [0:CIN-1][0:FM_H-1][0:FM_W-1];
     reg signed [7:0] weight [0:K_TOTAL-1][0:COUT_TOTAL-1];
     reg signed [PSUM_W-1:0] bias [0:COUT_TOTAL-1];
@@ -378,7 +389,7 @@ module `TB_CONV_ACCEL_CORE_MODULE;
         begin
             channel_for_bank = -1;
             for (c = 0; c < CIN; c = c + 1)
-                if (pass_needs_ch(k_base, c) && (c % 5 == bank))
+                if (pass_needs_ch(k_base, c) && (c % IFM_BANKS == bank))
                     channel_for_bank = c;
         end
     endfunction
@@ -514,15 +525,15 @@ module `TB_CONV_ACCEL_CORE_MODULE;
 `endif
 `ifdef TB_CONV_ACCEL_CORE_USE_FULL_STREAM
             ifm_line_s_valid = 1'b0;
-            for (b = 0; b < 5; b = b + 1)
+            for (b = 0; b < IFM_BANKS; b = b + 1)
                 ifm_line_s_data[b] = 8'd0;
             ofm_m_ready = 1'b1;
 `endif
-            dma_bank_wr_en = 5'd0;
+            dma_bank_wr_en = {IFM_BANKS{1'b0}};
             dma_wr_x = 9'd0;
             dma_wr_fy = 10'd0;
             dma_line_advance = 1'b0;
-            for (b = 0; b < 5; b = b + 1)
+            for (b = 0; b < IFM_BANKS; b = b + 1)
                 dma_wr_data[b] = 8'd0;
             quant_wr_en = 1'b0;
             quant_wr_addr = 6'd0;
@@ -546,7 +557,7 @@ module `TB_CONV_ACCEL_CORE_MODULE;
             wait(ifm_line_s_ready);
 `else
             @(negedge clk);
-            dma_bank_wr_en = 5'b11111;
+            dma_bank_wr_en = {IFM_BANKS{1'b1}};
             dma_wr_fy = row_y[9:0];
 `endif
             for (x = 0; x < FM_W; x = x + 1) begin
@@ -559,7 +570,7 @@ module `TB_CONV_ACCEL_CORE_MODULE;
 `else
                 dma_wr_x = x[8:0];
 `endif
-                for (b = 0; b < 5; b = b + 1) begin
+                for (b = 0; b < IFM_BANKS; b = b + 1) begin
                     bank_ch = channel_for_bank(k_base, b);
 `ifdef TB_CONV_ACCEL_CORE_USE_AXIS_STREAM
                     axis_word[b*8 +: 8] = (bank_ch >= 0) ? feat[bank_ch][row_y][x] : 8'd0;
@@ -571,7 +582,7 @@ module `TB_CONV_ACCEL_CORE_MODULE;
                 end
 `ifdef TB_CONV_ACCEL_CORE_USE_AXIS_STREAM
                 ifm_axis_tdata = axis_word;
-                ifm_axis_tkeep = 8'h1f;
+                ifm_axis_tkeep = IFM_TKEEP_MASK;
                 ifm_axis_tlast = (x == FM_W - 1);
                 ifm_axis_tvalid = 1'b1;
                 wait(ifm_axis_tready);
@@ -592,13 +603,13 @@ module `TB_CONV_ACCEL_CORE_MODULE;
 `elsif TB_CONV_ACCEL_CORE_USE_FULL_STREAM
             @(negedge clk);
             ifm_line_s_valid = 1'b0;
-            for (b = 0; b < 5; b = b + 1)
+            for (b = 0; b < IFM_BANKS; b = b + 1)
                 ifm_line_s_data[b] = 8'd0;
 `else
             dma_line_advance = 1'b1;
             @(negedge clk);
             dma_line_advance = 1'b0;
-            dma_bank_wr_en = 5'b00000;
+            dma_bank_wr_en = {IFM_BANKS{1'b0}};
 `endif
         end
     endtask
@@ -813,6 +824,13 @@ module `TB_CONV_ACCEL_CORE_MODULE;
         end
     end
 
+`ifdef TB_CONV_ACCEL_CORE_USE_AXIS_STREAM
+    always @(posedge clk) begin
+        if (!rst && ofm_m_axis_tvalid && ofm_m_axis_tready && ofm_m_axis_tlast)
+            axis_ofm_tlast_count <= axis_ofm_tlast_count + 1;
+    end
+`endif
+
 `ifdef TB_CONV_ACCEL_CORE_OFM_READY_STALL
     always @(posedge clk) begin
         if (rst) begin
@@ -862,7 +880,7 @@ module `TB_CONV_ACCEL_CORE_MODULE;
                         `TB_DUT_IFM_LOADER.dma_wr_fy, `TB_DUT_IFM_LOADER.dma_wr_x);
                     ifm_loader_fail_count <= ifm_loader_fail_count + 1;
                 end else begin
-                    for (b = 0; b < 5; b = b + 1) begin
+                    for (b = 0; b < IFM_BANKS; b = b + 1) begin
                         ifm_loader_bank_ch = channel_for_bank(current_pass_base_k, b);
                         ifm_loader_expected = (ifm_loader_bank_ch >= 0) ?
                             feat[ifm_loader_bank_ch][`TB_DUT_IFM_LOADER.dma_wr_fy][`TB_DUT_IFM_LOADER.dma_wr_x] :
@@ -907,6 +925,9 @@ module `TB_CONV_ACCEL_CORE_MODULE;
         ofm_stall_count = 0;
         ofm_stall_seen = 1'b0;
 `endif
+`endif
+`ifdef TB_CONV_ACCEL_CORE_USE_AXIS_STREAM
+        axis_ofm_tlast_count = 0;
 `endif
         clear_inputs();
         for (idx = 0; idx < OFM_WORDS; idx = idx + 1)
@@ -1011,6 +1032,18 @@ module `TB_CONV_ACCEL_CORE_MODULE;
         if (ifm_loader_write_count <= 0 || ifm_loader_advance_count <= 0) begin
             $display("[FAIL] IFM stream loader did not write rows writes=%0d advances=%0d",
                 ifm_loader_write_count, ifm_loader_advance_count);
+            fail = fail + 1;
+        end else pass = pass + 1;
+`endif
+`ifdef TB_CONV_ACCEL_CORE_USE_AXIS_STREAM
+        if (axis_ofm_tlast_count != TILE_COUNT) begin
+            $display("[FAIL] AXIS OFM TLAST count got=%0d exp=%0d",
+                axis_ofm_tlast_count, TILE_COUNT);
+            fail = fail + 1;
+        end else pass = pass + 1;
+        if (bias_axis_error || weight_axis_error || ifm_axis_error) begin
+            $display("[FAIL] AXIS protocol errors bias=%0d weight=%0d ifm=%0d",
+                bias_axis_error, weight_axis_error, ifm_axis_error);
             fail = fail + 1;
         end else pass = pass + 1;
 `endif

@@ -10,7 +10,8 @@ module systolic_top_feeder #(
     parameter WGT_FIFO_DEPTH = 64,  parameter WGT_FIFO_AW = 6,
     parameter PSUM_FIFO_DEPTH = 256, parameter PSUM_FIFO_AW = 8,
     parameter FM_W_MAX = 416,
-    parameter FM_H_MAX = 416
+    parameter FM_H_MAX = 416,
+    parameter IFM_BANKS = 5
 ) (
     input  clk,
     input  rst,
@@ -36,10 +37,10 @@ module systolic_top_feeder #(
     input  [1:0] conv_pad,
     input  [10:0] pass_base_k,
 
-    input  [4:0] dma_bank_wr_en,
+    input  [IFM_BANKS-1:0] dma_bank_wr_en,
     input  [8:0] dma_wr_x,
     input  [9:0] dma_wr_fy,
-    input  [7:0] dma_wr_data [0:4],
+    input  [7:0] dma_wr_data [0:IFM_BANKS-1],
     input        dma_line_advance,
 
     input  [5:0]                bias_wr_addr,
@@ -52,22 +53,22 @@ module systolic_top_feeder #(
     input                       psum_stream_valid,
     input                       use_psum_stream,
 
-    input  [31:0]                wgt_fifo_wr_en,
+    input  [ROWS-1:0]            wgt_fifo_wr_en,
     input  [ROWS*WEIGHT_W*2-1:0] wgt_fifo_wr_data,
-    output [31:0]                wgt_fifo_full,
+    output [ROWS-1:0]            wgt_fifo_full,
 
     input  [31:0]              psum_fifo_rd_en,
     output [COLS*PSUM_W*2-1:0] psum_fifo_rd_data,
     output [31:0]              psum_fifo_empty,
 
-    output [31:0] ifm_fifo_full
+    output [ROWS-1:0] ifm_fifo_full
 );
-    wire [255:0] feeder_ifm_data;
+    wire [ROWS*IFM_W-1:0] feeder_ifm_data;
     wire feeder_ifm_valid;
     wire feeder_window_ready;
     wire [8:0] feeder_oy, feeder_ox;
 
-    window_feeder #(.FM_W(FM_W_MAX), .FM_H(FM_H_MAX), .AW(9)) u_feeder (
+    window_feeder #(.FM_W(FM_W_MAX), .FM_H(FM_H_MAX), .AW(9), .ROWS(ROWS), .BANKS(IFM_BANKS)) u_feeder (
         .clk(clk),
         .rst(rst),
         .start(feeder_start),
@@ -97,7 +98,7 @@ module systolic_top_feeder #(
         .done(feeder_done)
     );
 
-    wire [31:0] ifm_fifo_full_legacy;
+    wire [ROWS-1:0] ifm_fifo_full_legacy;
     assign ifm_fifo_full = ifm_fifo_full_legacy;
     wire [7:0] unused_dma_wr_data [0:4];
     assign unused_dma_wr_data[0] = 8'd0;

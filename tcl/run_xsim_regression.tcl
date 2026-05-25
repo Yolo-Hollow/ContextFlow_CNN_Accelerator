@@ -73,6 +73,9 @@ set tests {
     {tb_conv_accel_core_axi_lite_stream_ps_driver tb/tb_conv_accel_core_axi_lite_stream_ps_driver.v}
     {tb_conv_accel_core_axi_lite_full_stream_ps_driver tb/tb_conv_accel_core_axi_lite_full_stream_ps_driver.v}
     {tb_conv_accel_core_axi_lite_axis_stream_smoke tb/tb_conv_accel_core_axi_lite_axis_stream_smoke.v}
+    {tb_conv_accel_core_axi_lite_axis_stream_r16_c16_smoke tb/tb_conv_accel_core_axi_lite_axis_stream_r16_c16_smoke.v}
+    {tb_conv_accel_core_axi_lite_axis_stream_r18_c16_smoke tb/tb_conv_accel_core_axi_lite_axis_stream_r18_c16_smoke.v}
+    {tb_conv_accel_core_axi_lite_axis_stream_r32_c16_smoke tb/tb_conv_accel_core_axi_lite_axis_stream_r32_c16_smoke.v}
     {tb_conv_accel_core_axi_lite_axis_stream_ps_driver tb/tb_conv_accel_core_axi_lite_axis_stream_ps_driver.v}
     {tb_conv_accel_core_axi_lite_full_stream_backpressure tb/tb_conv_accel_core_axi_lite_full_stream_backpressure.v}
     {tb_axi_lite_cfg_bridge tb/tb_axi_lite_cfg_bridge.v}

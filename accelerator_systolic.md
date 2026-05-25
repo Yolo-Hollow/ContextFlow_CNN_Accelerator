@@ -916,8 +916,229 @@ tb_conv_accel_core_axi_lite_axis_stream_ps_driver: 1163 pass, 0 fail
 
 该测试的 xsim 仿真结束时间为 `307160 ns`，覆盖 3 个 spatial tile、多个 K pass、多个 Cout block，以及 AXI-Lite + AXI-Stream 输入输出边界。
 
+### 16.6 OFM TLAST 更新
+
+AXI 顶层已经增加 OFM `TLAST` 生成逻辑。
+
+生成方式：
+
+- AXI 顶层旁路监听 AXI-Lite 写配置。
+- 写 `COUT_TOTAL` 时保存 `cfg_cout_total`。
+- 写 `NUM_PIXELS` 时保存 `cfg_num_pixels`。
+- 写 CTRL.start 时锁存：
+
+```text
+ofm_expected_bytes = cfg_num_pixels * cfg_cout_total
+```
+
+- OFM debug stream 每成功发送一个 byte 递增计数。
+- 当 `ofm_byte_count == ofm_expected_bytes - 1` 时，在该 byte 上拉高 `ofm_m_axis_tlast`。
+- 因此当前 `TLAST` 语义是：**一个 spatial tile 的最后一个 OFM byte**。
+
+该语义适合当前 PS 调度模型：每个 tile 单独 start，PS/DMA 能用 `TLAST` 判定本 tile 输出事务结束。
+
+更新后的验证：
+
+```text
+tb_conv_accel_core_axi_lite_axis_stream_smoke:     53 pass, 0 fail
+tb_conv_accel_core_axi_lite_axis_stream_ps_driver: 1165 pass, 0 fail
+```
+
+新增检查项：
+
+- 每个 spatial tile 恰好产生一个 OFM `TLAST`。
+- bias/weight/IFM 三路 AXI-Stream 协议错误标志均保持为 0。
+
 下一步：
 
-1. 给 AXI 顶层增加一个 OFM `TLAST` 规划：至少能标记 spatial tile 或 Cout block 结束。
-2. 开始准备 Vivado synthesis 工程脚本，先拿 XCK26 资源和 Fmax 初值。
-3. 在 synthesis 前再跑一次包含 smoke + 3-tile AXI 长测的 xsim 回归。
+1. 开始准备 Vivado synthesis 工程脚本，先拿 XCK26 资源和 Fmax 初值。
+2. 在 synthesis 前再跑一次包含 smoke + 3-tile AXI 长测的 xsim 回归。
+3. 后续将 OFM debug stream 优化为连续 HWC 64-bit/128-bit burst stream。
+
+---
+
+## 17. 2026-05-25 XCK26 综合初步结果
+
+已经新增综合脚本：
+
+```text
+tcl/run_synth_xck26.tcl
+tcl/report_synth_xck26.tcl
+tcl/run_opt_report_xck26.tcl
+```
+
+目标器件：
+
+```text
+xck26-sfvc784-2LV-c
+```
+
+### 17.1 32x32 阵列结果
+
+参数：
+
+```text
+ROWS=32
+COLS=32
+K_TILE=32
+COUT_TILE=64
+```
+
+综合成功，但资源明显超过 XCK26：
+
+```text
+CLB LUTs:       230531 / 117120 = 196.83%
+CLB Registers: 202296 / 234240 = 86.36%
+BRAM Tile:          89 / 144    = 61.81%
+DSP48E2:          1155 / 1248   = 92.55%
+```
+
+100 MHz post-synth setup timing：
+
+```text
+WNS = +1.809 ns
+TNS = 0
+```
+
+判断：
+
+- 默认 32x32/COUT_TILE=64 版本不适合直接落到 XCK26。
+- 主要瓶颈是 LUT，DSP 也已经接近上限。
+- `Bonded IOB` 超限是当前仿真顶层把 AXI-Lite/AXI-Stream 展成裸顶层端口导致的 OOC 现象，真正封装成 IP 并接 AXI interconnect 后不应按封装 IO 数理解。
+
+### 17.2 16x16 阵列候选
+
+参数：
+
+```text
+ROWS=16
+COLS=16
+K_TILE=16
+COUT_TILE=32
+```
+
+综合结果：
+
+```text
+CLB LUTs:        70996 / 117120 = 60.62%
+CLB Registers:  55879 / 234240 = 23.86%
+BRAM Tile:        44.5 / 144    = 30.90%
+DSP48E2:           323 / 1248   = 25.88%
+```
+
+100 MHz post-synth setup timing：
+
+```text
+WNS = +2.144 ns
+TNS = 0
+```
+
+判断：
+
+- 16x16 是比较稳妥的 XCK26 可落地资源点。
+- 代价是 `K_TILE` 从 32 降到 16，多通道卷积的 K pass 数翻倍。
+
+### 17.3 32x16 阵列候选
+
+用户提出的思路是保留 32 行 K_TILE，同时把物理列数降到 16。由于每个 PE 支持双 INT8 输出，16 列物理阵列对应 32 个输出通道 lane：
+
+```text
+ROWS=32
+COLS=16
+K_TILE=32
+COUT_TILE=32
+```
+
+功能验证：
+
+```text
+tb_conv_accel_core_axi_lite_axis_stream_r32_c16_smoke: 213 pass, 0 fail
+```
+
+综合结果：
+
+```text
+CLB LUTs:       123878 / 117120 = 105.77%
+CLB Registers: 102766 / 234240 = 43.87%
+BRAM Tile:        44.5 / 144    = 30.90%
+DSP48E2:           579 / 1248   = 46.39%
+```
+
+100 MHz post-synth setup timing：
+
+```text
+WNS = +1.873 ns
+TNS = 0
+```
+
+`opt_design` 后：
+
+```text
+CLB LUTs:       123893 / 117120 = 105.78%
+CLB Registers: 102776 / 234240 = 43.88%
+DSP48E2:           579 / 1248   = 46.39%
+```
+
+判断：
+
+- 32x16 的计算语义成立：`K_TILE=32`，`COUT_TILE=32`。
+- 相比 16x16，它保留了每个 K pass 的 32 输入 lane，性能更接近原始设计。
+- 当前 RTL 下 LUT 仍略超 XCK26，约 5.8%。
+- 这是一个值得优化的目标点，但还不能直接认为可落地。
+
+### 17.4 18x16 阵列实现结果
+
+进一步选择折中的 `18x16` 配置，并将行缓冲 bank 数同步缩减为 2：
+
+```text
+ROWS=18
+COLS=16
+K_TILE=18
+COUT_TILE=32
+IFM_BANKS=2
+```
+
+功能验证：
+
+```text
+tb_conv_accel_core_axi_lite_axis_stream_r18_c16_smoke: 213 pass, 0 fail
+```
+
+由于 AXI 顶层作为裸芯片顶层时展开为 `504` 个 I/O，超过 XCK26 `sfvc784` 封装的 `468` 个用户 I/O，物理实现使用 OOC IP 评估流程，并为 OOC 时钟端口指定 `HD.CLK_SRC=BUFGCE_X0Y0`。
+
+route 后物理优化结果：
+
+```text
+CLB LUTs:        73075 / 117120 = 62.39%
+CLB Registers:   61738 / 234240 = 26.36%
+BRAM Tile:        44.5 / 144    = 30.90%
+DSP48E2:           355 / 1248   = 28.45%
+
+WNS = +0.262 ns
+TNS =  0.000 ns
+WHS = +0.011 ns
+THS =  0.000 ns
+```
+
+路由状态：
+
+```text
+fully routed nets:       118309
+nets with routing errors:     0
+```
+
+判断：
+
+- `18x16` 在 XCK26 上能够完成路由并满足 100 MHz 核心内部时序约束。
+- 它比 `16x16` 增加有限的 LUT/DSP 开销，同时比 `32x16` 避免 LUT 超容。
+- hold 裕量仅 `+0.011 ns`，完整 Block Design 集成后仍需结合真实 AXI 互连和时钟位置复核系统级时序。
+
+### 17.5 下一步资源优化方向
+
+优先级建议：
+
+1. 将 `com_shift_reg`/valid skew 中的大量 SRL 和分布式 RAM 优化为更轻的 valid 计数或集中式延迟控制。
+2. 检查 `systolic_array` 内部双 INT8 DSP 封装是否产生过多旁路 LUT，重点看 `u_array`，32x16 下其 LUT 约 90k。
+3. 将 activation LUT、packet FIFO、OFM debug writer 做成可裁剪配置，综合性能评估时先关闭 Leaky LUT 或改成共享 LUT。
+4. 尝试 `ROWS=32,COLS=14,K_TILE=32,COUT_TILE=28` 或 `ROWS=32,COLS=12,K_TILE=32,COUT_TILE=24`，寻找不超 LUT 的 K_TILE=32 资源点。
+5. 后续再做真正 IP 封装，避免裸顶层 AXI 端口导致 OOC IOB 数超限。

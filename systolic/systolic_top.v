@@ -17,9 +17,9 @@ module systolic_top #(
     output compute_fire_out,
 
     // ---- Manual IFM FIFO fill (USE_DMA_IFM=0) ----
-    input  [31:0]               ifm_fifo_wr_en,
+    input  [ROWS-1:0]           ifm_fifo_wr_en,
     input  [ROWS*IFM_W-1:0]     ifm_fifo_wr_data,
-    output [31:0]               ifm_fifo_full_legacy,
+    output [ROWS-1:0]           ifm_fifo_full_legacy,
 
     // ---- DMA / line buffer interface (USE_DMA_IFM=1) ----
     input  [4:0]    dma_bank_wr_en,
@@ -45,9 +45,9 @@ module systolic_top #(
     input                       use_psum_stream,
 
     // ---- Weight FIFO write ports (fill externally) ----
-    input  [31:0]               wgt_fifo_wr_en,
+    input  [ROWS-1:0]           wgt_fifo_wr_en,
     input  [ROWS*WEIGHT_W*2-1:0] wgt_fifo_wr_data,
-    output [31:0]               wgt_fifo_full,
+    output [ROWS-1:0]           wgt_fifo_full,
 
     // ---- PSUM FIFO read ports (drain externally) ----
     input  [31:0]               psum_fifo_rd_en,
@@ -78,7 +78,7 @@ module systolic_top #(
     // rd_en = start||ctrl_w_load: pre-reads 1 cycle before weight load
     wire wgt_fifo_rd = ctrl_w_load || start;
     wire [ROWS*WEIGHT_W*2-1:0] wgt_fifo_rd_data;
-    wire [31:0] wgt_fifo_empty;
+    wire [ROWS-1:0] wgt_fifo_empty;
     genvar r;
     generate
         for (r = 0; r < ROWS; r = r + 1) begin : wgt_fifo_gen
@@ -133,26 +133,28 @@ module systolic_top #(
         end
     endgenerate
 
-    wire [31:0] ifm_fifo_rd_en;
+    wire [ROWS-1:0] ifm_full_active;
+    wire [ROWS-1:0] ifm_fifo_empty_active;
+    wire [ROWS-1:0] ifm_fifo_rd_en_active;
     generate
         for (r = 0; r < ROWS; r = r + 1) begin : ifm_fifo_gen
-            assign ifm_fifo_rd_en[r] = ifm_rd_stagger[r] && !ifm_fifo_empty[r];
+            assign ifm_fifo_rd_en_active[r] = ifm_rd_stagger[r] && !ifm_fifo_empty_active[r];
 
             systolic_fifo #(.WIDTH(IFM_W), .DEPTH(IFM_FIFO_DEPTH), .AW(IFM_FIFO_AW))
             u_ifm_fifo (.clk(clk), .rst(rst),
                 .wr_en(USE_DMA_IFM ? we_ifm_valid : ifm_fifo_wr_en[r]),
-                .rd_en(ifm_fifo_rd_en[r]),
+                .rd_en(ifm_fifo_rd_en_active[r]),
                 .data_in(USE_DMA_IFM ? we_ifm_data[(r+1)*IFM_W-1 : r*IFM_W]
                                      : ifm_fifo_wr_data[(r+1)*IFM_W-1 : r*IFM_W]),
                 .data_out(ifm_fifo_rd_data[(r+1)*IFM_W-1 : r*IFM_W]),
-                .empty(ifm_fifo_empty[r]), .full(ifm_full_int[r]));
+                .empty(ifm_fifo_empty_active[r]), .full(ifm_full_active[r]));
         end
     endgenerate
 
     reg [ROWS-1:0] ifm_fifo_rd_valid;
     always @(posedge clk) begin
         if (rst) ifm_fifo_rd_valid <= {ROWS{1'b0}};
-        else     ifm_fifo_rd_valid <= ifm_fifo_rd_en;
+        else     ifm_fifo_rd_valid <= ifm_fifo_rd_en_active;
     end
 
     // ---- Bias buffer (64 × 24-bit, 1 entry per OFM channel) ----
@@ -191,9 +193,9 @@ module systolic_top #(
     wire [COLS*2*PSUM_W-1:0] psum_top_init = use_psum_stream ? psum_stream_skewed : psum_top_static;
 
     // Route IFM full to correct port
-    wire [31:0] ifm_full_int;
-    assign ifm_fifo_full = USE_DMA_IFM ? ifm_full_int : 32'd0;
-    assign ifm_fifo_full_legacy = USE_DMA_IFM ? 32'd0 : ifm_full_int;
+    assign ifm_fifo_empty = {{(32-ROWS){1'b0}}, ifm_fifo_empty_active};
+    assign ifm_fifo_full = USE_DMA_IFM ? {{(32-ROWS){1'b0}}, ifm_full_active} : 32'd0;
+    assign ifm_fifo_full_legacy = USE_DMA_IFM ? {ROWS{1'b0}} : ifm_full_active;
 
     // ---- Systolic array ----
     wire [COLS*2*PSUM_W-1:0] psum_bot;

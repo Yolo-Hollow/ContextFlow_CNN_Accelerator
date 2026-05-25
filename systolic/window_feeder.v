@@ -6,7 +6,9 @@
 module window_feeder #(
     parameter FM_W = 416,
     parameter FM_H = 416,
-    parameter AW   = 9
+    parameter AW   = 9,
+    parameter ROWS = 32,
+    parameter BANKS = 5
 ) (
     input  clk,
     input  rst,
@@ -27,15 +29,15 @@ module window_feeder #(
     output [AW-1:0] fill_fy,
 
     // Row write path from the external source into the internal line buffer.
-    input  [4:0]    dma_bank_wr_en,
+    input  [BANKS-1:0] dma_bank_wr_en,
     input  [AW-1:0] dma_wr_x,
     input  [AW:0]   dma_wr_fy,
-    input  [7:0]    dma_wr_data [0:4],
+    input  [7:0]    dma_wr_data [0:BANKS-1],
     input           dma_line_advance,
 
     // Downstream IFM FIFO backpressure.
     input           ifm_fifo_full_any,
-    output [255:0]  ifm_data,
+    output [ROWS*8-1:0] ifm_data,
     output          ifm_valid,
 
     output [AW-1:0] cur_oy,
@@ -44,7 +46,7 @@ module window_feeder #(
     output          busy,
     output          done
 );
-    wire [7:0] lb_rd [0:4][0:2][0:2];
+    wire [7:0] lb_rd [0:BANKS-1][0:2][0:2];
     wire [AW:0] line_fy [0:2];
     wire line_valid [0:2];
     wire [1:0] line_wr_ptr;
@@ -61,7 +63,7 @@ module window_feeder #(
     wire [AW-1:0] rd_x2 = ((rd_fx2_s < 0) || (rd_fx2_s >= $signed({1'b0, fm_w}))) ?
                           {AW{1'b0}} : rd_fx2_s[AW-1:0];
 
-    line_buffer_5bank #(.FM_W(FM_W), .AW(AW)) u_linebuf (
+    line_buffer_5bank #(.FM_W(FM_W), .AW(AW), .BANKS(BANKS)) u_linebuf (
         .clk(clk), .rst(rst),
         .bank_wr_en(dma_bank_wr_en),
         .wr_x(dma_wr_x),
@@ -75,9 +77,9 @@ module window_feeder #(
         .wr_ptr_out(line_wr_ptr)
     );
 
-    wire [255:0] window_data;
+    wire [ROWS*8-1:0] window_data;
     wire window_ifm_valid;
-    window_extract #(.FM_W(FM_W), .FM_H(FM_H), .AW(AW)) u_window (
+    window_extract #(.FM_W(FM_W), .FM_H(FM_H), .AW(AW), .ROWS(ROWS), .BANKS(BANKS)) u_window (
         .fm_h(fm_h),
         .fm_w(fm_w),
         .stride(stride),

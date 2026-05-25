@@ -26,6 +26,7 @@ module conv_accel_core_axi_lite_full_stream #(
     parameter FM_H_MAX = 416,
     parameter K_TILE = 32,
     parameter COUT_TILE = 64,
+    parameter IFM_BANKS = 5,
     parameter WGT_TILE_AW = 11,
     parameter PSUM_BUF_AW = 10,
     parameter PSUM_BUF_DEPTH = 1024,
@@ -75,7 +76,7 @@ module conv_accel_core_axi_lite_full_stream #(
     input  [8:0] ifm_line_words,
     output       ifm_line_s_ready,
     input        ifm_line_s_valid,
-    input  [7:0] ifm_line_s_data [0:4],
+    input  [7:0] ifm_line_s_data [0:IFM_BANKS-1],
 
     input         quant_wr_en,
     input  [5:0]  quant_wr_addr,
@@ -95,10 +96,10 @@ module conv_accel_core_axi_lite_full_stream #(
     output [7:0]                ofm_m_data,
     output                      ofm_packet_full
 );
-    wire [4:0] dma_bank_wr_en;
+    wire [IFM_BANKS-1:0] dma_bank_wr_en;
     wire [8:0] dma_wr_x;
     wire [9:0] dma_wr_fy;
-    wire [7:0] dma_wr_data [0:4];
+    wire [7:0] dma_wr_data [0:IFM_BANKS-1];
     wire dma_line_advance;
     wire core_ofm_wr_en;
     wire core_ofm_wr_ready;
@@ -111,7 +112,7 @@ module conv_accel_core_axi_lite_full_stream #(
     assign ofm_mem_wr_addr = ofm_m_addr;
     assign ofm_mem_wr_data = ofm_m_data;
 
-    ifm_line_stream_loader #(.AW(9)) u_ifm_loader (
+    ifm_line_stream_loader #(.AW(9), .BANKS(IFM_BANKS)) u_ifm_loader (
         .clk(clk), .rst(rst),
         .fm_w(ifm_line_words), .fill_req(feeder_fill_req), .fill_fy(feeder_fill_fy),
         .line_s_ready(ifm_line_s_ready), .line_s_valid(ifm_line_s_valid),
@@ -127,7 +128,7 @@ module conv_accel_core_axi_lite_full_stream #(
         .WGT_FIFO_DEPTH(WGT_FIFO_DEPTH), .WGT_FIFO_AW(WGT_FIFO_AW),
         .PSUM_FIFO_DEPTH(PSUM_FIFO_DEPTH), .PSUM_FIFO_AW(PSUM_FIFO_AW),
         .FM_W_MAX(FM_W_MAX), .FM_H_MAX(FM_H_MAX),
-        .K_TILE(K_TILE), .COUT_TILE(COUT_TILE),
+        .K_TILE(K_TILE), .COUT_TILE(COUT_TILE), .IFM_BANKS(IFM_BANKS),
         .WGT_TILE_AW(WGT_TILE_AW), .PSUM_BUF_AW(PSUM_BUF_AW), .PSUM_BUF_DEPTH(PSUM_BUF_DEPTH),
         .MULT_W(MULT_W), .SHIFT_W(SHIFT_W), .ZP_W(ZP_W),
         .OFM_ADDR_W(OFM_ADDR_W), .OFM_FIFO_DEPTH(OFM_FIFO_DEPTH), .OFM_FIFO_AW(OFM_FIFO_AW)

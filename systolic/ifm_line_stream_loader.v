@@ -12,7 +12,8 @@
 // This module is bus-agnostic. A later DMA/AXI-Stream wrapper can map a wider
 // memory beat into line_s_data[0:4] and use line_s_ready for backpressure.
 module ifm_line_stream_loader #(
-    parameter AW = 9
+    parameter AW = 9,
+    parameter BANKS = 5
 ) (
     input  clk,
     input  rst,
@@ -23,12 +24,12 @@ module ifm_line_stream_loader #(
 
     output          line_s_ready,
     input           line_s_valid,
-    input  [7:0]    line_s_data [0:4],
+    input  [7:0]    line_s_data [0:BANKS-1],
 
-    output [4:0]    dma_bank_wr_en,
+    output [BANKS-1:0] dma_bank_wr_en,
     output [AW-1:0] dma_wr_x,
     output [AW:0]   dma_wr_fy,
-    output [7:0]    dma_wr_data [0:4],
+    output [7:0]    dma_wr_data [0:BANKS-1],
     output          dma_line_advance
 );
     reg busy;
@@ -43,14 +44,14 @@ module ifm_line_stream_loader #(
     wire last_x = (x_count == fm_w - 1'b1);
 
     assign line_s_ready = busy;
-    assign dma_bank_wr_en = fire ? 5'b11111 : 5'd0;
+    assign dma_bank_wr_en = fire ? {BANKS{1'b1}} : {BANKS{1'b0}};
     assign dma_wr_x = x_count;
     assign dma_wr_fy = fy_latched;
     assign dma_line_advance = advance_pending;
 
     genvar db;
     generate
-        for (db = 0; db < 5; db = db + 1) begin : dma_data_assign
+        for (db = 0; db < BANKS; db = db + 1) begin : dma_data_assign
             assign dma_wr_data[db] = line_s_data[db];
         end
     endgenerate

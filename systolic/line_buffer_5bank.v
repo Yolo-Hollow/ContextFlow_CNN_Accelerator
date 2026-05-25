@@ -1,19 +1,20 @@
 `timescale 1ns / 1ps
 
-// 5-bank x 3-line line buffer for 3x3 convolution.
+// Parameterized bank x 3-line line buffer for 3x3 convolution.
 // Each physical line has three read copies so kx=0/1/2 can be read in parallel.
 module line_buffer_5bank #(
     parameter FM_W = 416,
-    parameter AW = 9
+    parameter AW = 9,
+    parameter BANKS = 5
 ) (
     input  clk, rst,
-    input  [4:0]      bank_wr_en,
+    input  [BANKS-1:0] bank_wr_en,
     input  [AW-1:0]   wr_x,
-    input  [7:0]      wr_data [0:4],
+    input  [7:0]      wr_data [0:BANKS-1],
     input             line_advance,
     input  [AW:0]     wr_fy,
     input  [AW-1:0]   rd_x0, rd_x1, rd_x2,
-    output [7:0]      rd_data [0:4][0:2][0:2],
+    output [7:0]      rd_data [0:BANKS-1][0:2][0:2],
     output [AW:0]     line_fy_out [0:2],
     output            line_valid_out [0:2],
     output [1:0]      wr_ptr_out
@@ -54,7 +55,7 @@ module line_buffer_5bank #(
 
     genvar b, l;
     generate
-        for (b = 0; b < 5; b = b + 1) begin : bank
+        for (b = 0; b < BANKS; b = b + 1) begin : bank
             for (l = 0; l < 3; l = l + 1) begin : line
                 reg [7:0] m0 [0:FM_W-1];
                 reg [7:0] m1 [0:FM_W-1];

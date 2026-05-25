@@ -20,6 +20,7 @@ module conv_accel_core_axi_lite #(
     parameter FM_H_MAX = 416,
     parameter K_TILE = 32,
     parameter COUT_TILE = 64,
+    parameter IFM_BANKS = 5,
     parameter WGT_TILE_AW = 11,
     parameter PSUM_BUF_AW = 10,
     parameter PSUM_BUF_DEPTH = 1024,
@@ -68,10 +69,10 @@ module conv_accel_core_axi_lite #(
 
     output feeder_fill_req,
     output [8:0] feeder_fill_fy,
-    input  [4:0] dma_bank_wr_en,
+    input  [IFM_BANKS-1:0] dma_bank_wr_en,
     input  [8:0] dma_wr_x,
     input  [9:0] dma_wr_fy,
-    input  [7:0] dma_wr_data [0:4],
+    input  [7:0] dma_wr_data [0:IFM_BANKS-1],
     input        dma_line_advance,
 
     input         quant_wr_en,
@@ -128,7 +129,7 @@ module conv_accel_core_axi_lite #(
         .WGT_FIFO_DEPTH(WGT_FIFO_DEPTH), .WGT_FIFO_AW(WGT_FIFO_AW),
         .PSUM_FIFO_DEPTH(PSUM_FIFO_DEPTH), .PSUM_FIFO_AW(PSUM_FIFO_AW),
         .FM_W_MAX(FM_W_MAX), .FM_H_MAX(FM_H_MAX),
-        .K_TILE(K_TILE), .COUT_TILE(COUT_TILE),
+        .K_TILE(K_TILE), .COUT_TILE(COUT_TILE), .IFM_BANKS(IFM_BANKS),
         .WGT_TILE_AW(WGT_TILE_AW), .PSUM_BUF_AW(PSUM_BUF_AW), .PSUM_BUF_DEPTH(PSUM_BUF_DEPTH),
         .MULT_W(MULT_W), .SHIFT_W(SHIFT_W), .ZP_W(ZP_W),
         .OFM_ADDR_W(OFM_ADDR_W), .OFM_FIFO_DEPTH(OFM_FIFO_DEPTH), .OFM_FIFO_AW(OFM_FIFO_AW)
