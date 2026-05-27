@@ -1,0 +1,280 @@
+\chapter{数据流与分块策略}
+\label{chap:dataflow}
+
+本章系统阐述加速器的数据流组织和三级分块调度策略，包括卷积到分块 GEMM 的映射方法、K 分块/Cout 分块/Spatial 分块的三级调度、层调度有限状态机以及 PS/DMA 调度契约。
+
+\section{卷积到分块 GEMM 的映射}
+
+如第~\ref{chap:related}章所述，卷积运算可经 im2col 展开转化为 GEMM 形式。然而对于 YOLOv3-tiny 中的典型卷积层（如 $C_{in}=512$, $C_{out}=1024$, $K_h=K_w=3$），展开后的矩阵维度 $K_{total} \times C_{out}$ 可达 $4608 \times 1024$，远超脉动阵列的物理规模（$K_{TILE}=18$, $COUT_{TILE}=32$）。因此，本文采用三级分块策略将大规模 GEMM 分解为可装入阵列的子矩阵序列：
+
+\begin{equation}
+\text{OFM}[p, c_{out}] = \text{Bias}[c_{out}] + \sum_{p=0}^{K_{p}-1}\ \sum_{k=0}^{K_{T}-1} \text{IFM}[p, p K_{T} + k] \cdot W[p K_{T} + k, c_{out}]
+\label{eq:tiled_gemm}
+\end{equation}
+
+分块的三个维度分别为：（1）K 维度——将 $K_{total}$ 个展开 IFM lane 按 $K_{TILE}$ 粒度切分；（2）Cout 维度——将输出通道按 $COUT_{TILE}$ 粒度切分；（3）Spatial 维度——将 OFM 空间像素按输出行范围切分。
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+    >=Latex,
+    every node/.style={font=\small},
+    matrixbox/.style={
+        draw,
+        thick,
+        minimum width=72mm,
+        minimum height=42mm
+    },
+    tilebox/.style={
+        draw,
+        thick,
+        fill=gray!10
+    },
+    dashline/.style={
+        dashed,
+        line width=0.8pt
+    },
+    dimarrow/.style={
+        <->,
+        thick
+    },
+    label/.style={
+        font=\small,
+        align=center
+    },
+    smalllabel/.style={
+        font=\scriptsize,
+        align=center
+    }
+]
+
+% ===================== Weight matrix =====================
+\coordinate (A) at (0,0);
+\coordinate (B) at (7.2,0);
+\coordinate (C) at (7.2,4.2);
+\coordinate (D) at (0,4.2);
+
+\draw[thick] (A) rectangle (C);
+
+\node[label] at (3.6,4.55) {权重矩阵 $W$};
+\node[smalllabel] at (3.6,4.22) {$K_{\mathrm{total}} \times C_{\mathrm{out}}$};
+
+% ===================== One tile =====================
+\draw[tilebox] (0,2.65) rectangle (2.1,4.2);
+\node[label] at (1.05,3.42) {One Tile};
+
+% ===================== K passes =====================
+\draw[dashline] (0,2.65) -- (7.2,2.65);
+\draw[dashline] (0,1.35) -- (7.2,1.35);
+
+\node[label, right=2mm] at (7.2,3.43) {Pass 0};
+\node[label, right=2mm] at (7.2,2.00) {Pass 1};
+\node[label, right=2mm] at (7.2,0.70) {$\cdots$};
+
+% ===================== Cout blocks =====================
+\draw[dashline] (2.1,0) -- (2.1,4.2);
+\draw[dashline] (4.4,0) -- (4.4,4.2);
+
+\node[label] at (1.05,4.85) {Block 0};
+\node[label] at (3.25,4.85) {Block 1};
+\node[label] at (5.80,4.85) {$\cdots$};
+
+% ===================== Dimension arrows =====================
+\draw[dimarrow] (-0.45,0) -- (-0.45,4.2);
+\node[label, rotate=90] at (-0.85,2.1) {$K_{\mathrm{total}}$};
+
+\draw[dimarrow] (0,-0.45) -- (7.2,-0.45);
+\node[label] at (3.6,-0.85) {$C_{\mathrm{out}}$};
+
+\draw[dimarrow] (0,4.38) -- (2.1,4.38);
+\node[smalllabel, above=1mm] at (1.05,4.38) {$COUT_{\mathrm{TILE}}$};
+
+\draw[dimarrow] (-0.20,2.65) -- (-0.20,4.2);
+\node[smalllabel, left=1mm] at (-0.20,3.43) {$K_{\mathrm{TILE}}$};
+
+% ===================== Spatial tiles =====================
+\begin{scope}[xshift=9.3cm, yshift=0.15cm]
+    \draw[thick] (0,0) rectangle (1.2,3.9);
+    \draw[dashline] (0,2.6) -- (1.2,2.6);
+    \draw[dashline] (0,1.3) -- (1.2,1.3);
+
+    \node[smalllabel] at (0.6,3.25) {Tile 0};
+    \node[smalllabel] at (0.6,1.95) {Tile 1};
+    \node[smalllabel] at (0.6,0.65) {$\cdots$};
+
+    \node[label, right=4mm] at (1.2,1.95) {Spatial\\Tiles};
+    \node[smalllabel, right=4mm] at (1.2,0.95) {按输出行切分};
+\end{scope}
+
+% ===================== Legend =====================
+\node[smalllabel, align=left] at (5.5,-1.55) {
+    K 分块：沿纵向切分，多 Pass 累加 \quad
+    Cout 分块：沿横向切分，逐 Block 替换权重 \quad
+    Spatial 分块：按输出行范围切分
+};
+
+\end{tikzpicture}
+\caption{三级分块策略示意图：K 维度、Cout 维度与 Spatial 维度}
+\label{fig:tiling_strategy}
+\end{figure}
+
+\section{K 分块多轮累加}
+
+K 分块将 $K_{total} = C_{in} \times K_h \times K_w$ 个展开输入维度切分为 $K\_passes = \lceil K_{total} / K_{TILE} \rceil$ 个连续子块，每个 K Pass 在一个 $K_{TILE} \times COUT_{TILE}$ 子矩阵上完成乘加运算。K Pass 间的 PSUM 通过乒乓缓冲传递：
+
+\begin{enumerate}
+    \item \textbf{Pass \#0}：注入 Bias 作为初始累加值，计算第一组 $K_{TILE}$ 个输入 lane 的乘加。PSUM 经 Drain 后存入乒乓缓冲。
+    \item \textbf{Pass \#1 至 Pass \#(K\_passes-2)}：从乒乓缓冲读取上轮 PSUM 注入阵列顶部作为初始值，继续累加当前 K 子块。结果写回乒乓缓冲。
+    \item \textbf{最终 Pass}：从乒乓缓冲读取上轮 PSUM，执行最后 $K_{TILE}$ 个输入 lane 的乘加。结果直接发送至 Requant $\rightarrow$ Activation $\rightarrow$ Writeback 后处理链路。
+\end{enumerate}
+
+当 $K_{total}$ 不是 $K_{TILE}$ 的整倍数时，最后 K Pass 仅包含 $K_{total} \bmod K_{TILE}$ 个有效输入 lane，其余 lane 的 IFM 输入恒为零，PSUM 仅加上零增量后继续向下传播。
+
+对于典型的 YOLOv3-tiny 中间层（$C_{in}=16, K_h=K_w=3$），$K_{total}=144$。以 $K_{TILE}=32$ 为例需要 5 个 K Pass，以 $K_{TILE}=18$ 为例需要 8 个 K Pass。K Pass 数与延迟成线性正比，与硬件资源（阵列行数）成反比。
+
+\section{输出通道（Cout）分块}
+
+当 $C_{out} > COUT_{TILE}$ 时，输出通道按 $COUT_{TILE}$ 粒度切分为连续块。Cout 分块的处理逻辑如下：
+
+\begin{enumerate}
+    \item 对每个 $cout\_base \in \{0, COUT_{TILE}, 2 \cdot COUT_{TILE}, \dots\}$，加载对应权重子矩阵（$K_{TILE} \times COUT_{TILE}$）。
+    \item 遍历所有 K Pass 完成该 Cout Block 的完整累加。
+    \item 在最终 Pass 后，OFM 写回时以 $(cout\_base + lane)$ 计算写回通道地址，不同 Cout Block 写到同一像素的不同通道范围。
+\end{enumerate}
+
+关键优化：IFM 窗口数据在不同 Cout Block 间完全复用。这意味着对于同一 Spatial Tile 内的同一组 IFM 行，不需要重复窗口提取和 IFM 加载，仅需重新加载权重和执行累加。这显著节省了 IFM 带宽。
+
+对于 YOLOv3-tiny 最后层（$C_{out}=1024$），以 $COUT_{TILE}=64$ 需 16 个 Cout Block，每个 Block 均需重新加载权重 tile 并完成全部 K Pass 循环。
+
+\section{空间（Spatial）分块}
+
+对于大尺寸特征图，片上 PSUM 缓冲容量和行缓存深度不足以容纳完整 OFM。空间分块将 OFM 按输出行切分为多个 Spatial Tile。
+
+空间分块的四个配置参数为：
+
+\begin{itemize}
+    \item \texttt{tile\_oy\_base}：Tile 在全局 OFM 的起始输出行。
+    \item \texttt{tile\_ofm\_h}：Tile 覆盖的输出行数（0 表示完整 OFM 高度）。
+    \item \texttt{tile\_pixel\_base}：Tile 在 HWC OFM 中的全局像素起始下标，通常 $= tile\_oy\_base \times OFM\_W$。
+    \item \texttt{num\_pixels}：Tile 输出像素总数，通常 $= tile\_ofm\_h \times OFM\_W$。
+\end{itemize}
+
+OFM 写回的全局地址计算公式（详见第~\ref{chap:architecture}章）保证了不同 Spatial Tile 的 OFM 数据在全局内存中按地址范围拼接，无需 PS 侧做额外重组。
+
+以 8×8 OFM 分为 3 个 Spatial Tile 的典型场景为例：
+\begin{itemize}
+    \item Tile \#0：行 0-2, 覆盖 3×8=24 pixels, $tile\_pixel\_base=0$。
+    \item Tile \#1：行 3-5, 覆盖 3×8=24 pixels, $tile\_pixel\_base=24$。
+    \item Tile \#2：行 6-7, 覆盖 2×8=16 pixels, $tile\_pixel\_base=48$。
+\end{itemize}
+
+\section{层调度有限状态机}
+
+层调度器（Layer Scheduler Stream）以有限状态机（FSM）协调三级分块的完整执行流程。FSM 的主要状态及转移关系如下：
+
+\begin{enumerate}
+    \item \textbf{IDLE}：等待外部写入 CTRL.start 脉冲。start 置位后跳转至 BIAS\_LOAD。
+    \item \textbf{BIAS\_LOAD}：发起 bias 加载请求，等待偏置流传输完成。完成后跳转至 WEIGHT\_LOAD。
+    \item \textbf{WEIGHT\_LOAD}：发起权重加载请求，等待权重 Tile 传输完成。完成后跳转至 LINE\_FILL。
+    \item \textbf{LINE\_FILL}：根据当前 $oy$ 范围和 K Pass 的展开基地址向 Window Feeder 发出行填充请求。收到 Line Buffer 的窗口就绪信号后跳转至 COMPUTE。
+    \item \textbf{COMPUTE}：使能阵列 IFM FIFO 读，启动窗口流推进。$\text{num\_pixels}$ 个像素全部流过后跳转。若非最终 K Pass 则跳转至 PSUM\_DRAIN；若为最终 K Pass 则跳转至 FINAL\_DRAIN。
+    \item \textbf{PSUM\_DRAIN}：从 PSUM FIFO 排出 $\text{num\_pixels}$ 个 PSUM 包存入乒乓缓冲。完成后更新 K Pass 计数器，跳转回 WEIGHT\_LOAD 执行下一 K Pass。
+    \item \textbf{FINAL\_DRAIN}：将最终 PSUM 包排出并推入后处理流水线（Requant $\rightarrow$ Activation $\rightarrow$ Writeback）。完成所有像素后检查 Cout Block 和 Spatial Tile 的循环状态：
+    \begin{itemize}
+        \item 若还有未处理的 Cout Block，更新 $cout\_base$ 跳转回 BIAS\_LOAD。
+        \item 若所有 Cout Block 已完成且还有未处理的 Spatial Tile，跳转至 DONE。
+        \item 若所有 Tile 完成，跳转至 IDLE。
+    \end{itemize}
+    \item \textbf{DONE}：置位 STATUS.done\_sticky 标志，等待外部写入 CTRL.clear\_done 清除后跳转至 IDLE。
+\end{enumerate}
+
+\begin{figure}[htb]
+\centering
+\begin{tikzpicture}[
+    state/.style = {rectangle, draw=black, thick, rounded corners=2pt, minimum width=1.8cm, minimum height=0.7cm, font=\footnotesize, align=center, fill=black!3},
+    arr/.style = {->, >=stealth, thick},
+    cond/.style = {font=\scriptsize, fill=white, inner sep=1pt},
+]
+    % Row 1: loading chain
+    \node[state] (idle) at (0,0) {IDLE};
+    \node[state] (bias) at (2.5,0) {Bias Load};
+    \node[state] (weight) at (5.0,0) {Weight Load};
+    \node[state] (line) at (7.5,0) {Line Fill};
+    % Row 2: compute + drain
+    \node[state] (comp) at (7.5,-2.5) {Compute};
+    \node[state] (pdrain) at (5.0,-2.5) {PSUM Drain};
+    \node[state] (fdrain) at (2.5,-2.5) {Final Drain};
+    \node[state] (done) at (0,-2.5) {DONE};
+
+    % Forward: IDLE -> ... -> COMPUTE
+    \draw[arr] (idle) -- (bias) node[cond, above, midway] {start};
+    \draw[arr] (bias) -- (weight);
+    \draw[arr] (weight) -- (line);
+    \draw[arr] (line.south) -- ++(0,-0.3) -| (comp.north);
+
+    % COMPUTE -> PSUM Drain (non-final K)
+    \draw[arr] (comp.west) -- ++(-0.6,0) |- (pdrain.north) node[cond, pos=0.6, left] {last K?};
+
+    % COMPUTE -> Final Drain (final K)
+    \draw[arr] (comp.west) -- ++(-2.8,0) |- (fdrain.north) node[cond, pos=0.3, left] {final K};
+
+    % PSUM Drain -> Weight Load (K loop)
+    \draw[arr, blue!60] (pdrain.west) -- ++(-0.6,0) |- (weight.north) node[cond, pos=0.4, above, sloped] {next K};
+
+    % Final Drain -> Bias Load (Cout loop)
+    \draw[arr] (fdrain.west) -- ++(-1.0,0) |- (bias.north) node[cond, pos=0.3, above, sloped] {next Cout};
+
+    % Final Drain -> DONE
+    \draw[arr] (fdrain.south) -- (done.north) node[cond, midway, right] {全部完成};
+
+    % DONE -> IDLE
+    \draw[arr] (done.west) -- ++(-0.8,0) |- (idle.south) node[cond, pos=0.7, left] {clear};
+
+    % Annotations
+    \draw[arr, dashed, gray] (-0.8, 0.8) -- (idle.north);
+    \node[gray] at (-0.8, 1.0) {\footnotesize CTRL.start};
+    \node[gray] at (done.south) [below=0.2cm] {\footnotesize done sticky};
+
+    % Group box for loading states
+    \begin{scope}[on background layer]
+    \node[rectangle, draw=gray!50, dashed, inner sep=8pt, fit=(bias)(weight)(line)] (load_box) {};
+    \node[gray] at (load_box.north) [above=2pt] {\footnotesize 服务请求阶段};
+    \end{scope}
+\end{tikzpicture}
+\caption{层调度器有限状态机状态转移图}
+\label{fig:scheduler_fsm}
+\end{figure}
+
+\section{PS/DMA 调度契约}
+
+从系统软件（PS 侧 ARM Cortex-A53）和 DMA 控制器的视角，一次完整的卷积层推理遵循以下调度契约：
+
+\begin{enumerate}
+    \item \textbf{初始化量化参数}：通过 AXI-Lite 向量化寄存器写入每路输出通道的 mult、shift、zp 参数。
+    \item \textbf{写入 Layer 级配置}：FM/OFM 尺寸、stride、pad、k\_total、cout\_total、activation\_mode。
+    \item \textbf{Spatial Tile 循环}（对每个 Tile 执行）：
+    \begin{enumerate}[(a)]
+        \item 写 Tile 配置：num\_pixels、tile\_oy\_base、tile\_ofm\_h、tile\_pixel\_base。
+        \item 写 CTRL.start 启动 Tile。
+        \item 服务 bias\_load\_req：按当前 $cout\_base$ 发送对应偏置。
+        \item 服务 weight\_load\_req：按当前 $cout\_base$ 和 $k\_pass$ 发送对应权重块。
+        \item 服务 feeder\_fill\_req：按请求的 $f_y$ 和 $k\_pass$ 发送 IFM 行数据。
+        \item 轮询 STATUS.done\_sticky 直至为 1。
+        \item 写 CTRL.clear\_done 清除完成标志。
+    \end{enumerate}
+    \item 验证 OFM 与 Golden 卷积结果一致。
+\end{enumerate}
+
+经验证的调度契约关键检查项包括：Tile 启动次数、Done 观测次数、Done Clear 次数、Bias 服务次数（$= Tile\_count \times Cout\_blocks$）、Weight 服务次数（$= Tile\_count \times Cout\_blocks \times K\_passes$），以及 Line Fill 服务次数（由 Feeder 按窗口需要动态发起，大于 0）。
+
+\section{分块对性能与资源的影响}
+
+三级分块参数的选择在性能和资源之间存在直接的折中关系：
+
+\begin{itemize}
+    \item $K_{TILE}$ 越大，单 K Pass 覆盖的输入维度越多，总 Pass 数减少，延迟降低；但阵列行数（ROWS）增大，DSP 和 LUT 开销近似线性增长。
+    \item $COUT_{TILE}$ 越大，单 Cout Block 覆盖的输出通道越多，权重重载次数减少；但阵列列数（COLS）增大，DSP 数量翻番（每列 2 通道）。
+    \item Spatial Tile 数增加会给调度引入额外启动开销，但对片上 SRAM 的需求降低。实际部署时，Spatial Tile 的大小主要由 PSUM 缓冲深度和 OFM Packet FIFO 容量共同决定。
+\end{itemize}
+
+综合 XCK26 的资源约束（详见第~\ref{chap:results}章），当前选定 $K_{TILE}=18, COUT_{TILE}=32$ 作为平衡性能与资源的最优实际配置。

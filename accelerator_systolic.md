@@ -1142,3 +1142,124 @@ nets with routing errors:     0
 3. 将 activation LUT、packet FIFO、OFM debug writer 做成可裁剪配置，综合性能评估时先关闭 Leaky LUT 或改成共享 LUT。
 4. 尝试 `ROWS=32,COLS=14,K_TILE=32,COUT_TILE=28` 或 `ROWS=32,COLS=12,K_TILE=32,COUT_TILE=24`，寻找不超 LUT 的 K_TILE=32 资源点。
 5. 后续再做真正 IP 封装，避免裸顶层 AXI 端口导致 OOC IOB 数超限。
+
+## 18. 2026-05-27 PS/DMA Block Design 脚本
+
+为第一次上板验证新增最小系统集成脚本：
+
+```text
+tcl/create_ps_dma_bd_xck26.tcl
+```
+
+该脚本以 `conv_accel_core_axi_lite_axis_stream` 的 `ROWS=18, COLS=16,
+K_TILE=18, COUT_TILE=32, IFM_BANKS=2` 配置打包为本地自定义 IP，
+在 Vivado 2022.2 中建立如下数据通路：
+
+```text
+PS M_AXI_HPM0_FPD -> SmartConnect -> accelerator AXI-Lite / 4x DMA AXI-Lite / GPIO
+
+DDR <- PS S_AXI_HP0_FPD <- SmartConnect <- 3x DMA MM2S + 1x DMA S2MM
+
+DMA bias MM2S   -> bias_s_axis
+DMA weight MM2S -> weight_s_axis
+DMA IFM MM2S    -> ifm_s_axis
+ofm_m_axis      -> DMA OFM S2MM
+```
+
+DMA 缓冲区不要求与 CPU cache 保持硬件一致性，因此数据通路选用非一致性的
+`S_AXI_HP0_FPD`，软件在启动 DMA 前后负责必要的 cache flush/invalidate。
+
+第一版使用 AXI GPIO 的通道 1 写入 `ifm_line_words`，通道 2 读取请求和错误状态：
+
+| GPIO2 bit | 信号 |
+|---:|---|
+| 0 | `bias_load_req` |
+| 1 | `weight_load_req` |
+| 2 | `feeder_fill_req` |
+| 3 | `ofm_packet_full` |
+| 4 | `bias_axis_error` |
+| 5 | `weight_axis_error` |
+| 6 | `ifm_axis_error` |
+| `15:7` | `feeder_fill_fy`，PS 启动 IFM DMA 时选择的 DDR 行号 |
+
+`feeder_fill_req` 与 `feeder_fill_fy` 必须一起提供给软件：PS 检测到
+`feeder_fill_req=1` 后读取 `[15:7]`，根据该行号计算 IFM DDR 地址，
+然后启动一行长度的 MM2S transaction。仅由软件假定请求顺序会使驱动依赖
+当前调度器行为，无法可靠覆盖 padding、stride 或后续流水调度变化。
+
+初版 AXI-Lite 地址分配如下：
+
+| 基地址 | 外设 |
+|---:|---|
+| `0xA000_0000` | 加速核配置寄存器，4 KB |
+| `0xA001_0000` | AXI GPIO，64 KB |
+| `0xA002_0000` | bias DMA，64 KB |
+| `0xA003_0000` | weight DMA，64 KB |
+| `0xA004_0000` | IFM DMA，64 KB |
+| `0xA005_0000` | OFM DMA，64 KB |
+
+量化寄存器复位值本身为单位量化，激活配置可选择 bypass，因此首次
+PS/DMA smoke test 将 `quant_wr_*` 与 `act_lut_wr_*` 固定为 0。后续若需要
+验证真实量化/LUT，应将这些配置端口一并纳入 AXI-Lite 寄存器映射。
+
+脚本默认执行结构验证：
+
+```powershell
+& 'C:\Xilinx\Vivado\2022.2\bin\vivado.bat' -mode batch `
+  -source tcl\create_ps_dma_bd_xck26.tcl
+```
+
+增加 `-generate_targets` 参数会一并生成 BD HDL wrapper 与 IP 输出目标。
+
+Vivado 2022.2 中查询到的 KV260 SOM board part 为：
+
+```text
+xilinx.com:kv260_som:part0:1.2
+xilinx.com:kv260_som:part0:1.3
+xilinx.com:kv260_som:part0:1.4
+```
+
+`kv260_som` 只描述 SOM 本体和 DDR/FIXED_IO。载板文件
+`xilinx.com:kv260_carrier:1.3` 已安装，但它不是独立的 `board_part`；
+需要通过 `BOARD_CONNECTIONS` 将其 SOM240 接口连接到所选 SOM。这样
+PS board automation 会同时应用载板 preset，包括板载调试串口
+`UART1 / MIO 36..37`、SD1、USB0 和 ENET3：
+
+```powershell
+& 'C:\Xilinx\Vivado\2022.2\bin\vivado.bat' -mode batch `
+  -source tcl\create_ps_dma_bd_xck26.tcl `
+  -tclargs -board_part xilinx.com:kv260_som:part0:1.4 `
+  -board_connection {som240_1_connector xilinx.com:kv260_carrier:som240_1_connector:1.3} `
+  -generate_targets
+```
+
+## 19. KV260 系统综合与硬件平台导出
+
+在 BD 结构验证通过后，使用以下脚本自动执行完整 Vivado 硬件构建：
+
+```text
+tcl/build_kv260_system_xck26.tcl
+```
+
+默认流程包括：
+
+```text
+创建带 K26 SOM 与 KV260 carrier Board Flow preset 的 BD 工程
+-> 生成 HDL wrapper 和 IP 输出目标
+-> Run Synthesis
+-> Run Implementation / Generate Bitstream
+-> 输出系统级 utilization / timing / route status 报告
+-> 导出包含 bitstream 的 XSA
+```
+
+执行命令：
+
+```powershell
+& 'C:\Xilinx\Vivado\2022.2\bin\vivado.bat' -mode batch `
+  -source tcl\build_kv260_system_xck26.tcl
+```
+
+若只需快速复核系统综合资源，可追加 `-tclargs -synth_only`；若已经完成综合并
+只需继续实现和导出，可在同一 `-build_dir` 上追加 `-tclargs -reuse_synth`。
+完整流程产生的
+`.xsa` 才是后续 Vitis 裸机 DMA 验证工程的硬件平台输入。

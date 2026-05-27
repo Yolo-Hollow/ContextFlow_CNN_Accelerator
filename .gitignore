@@ -11,4 +11,6 @@ dfx_runtime.txt
 build_iverilog/
 build_xsim/
 build_synth_xck26/
+build_bd_*/
+build_system_*/
 clockInfo.txt

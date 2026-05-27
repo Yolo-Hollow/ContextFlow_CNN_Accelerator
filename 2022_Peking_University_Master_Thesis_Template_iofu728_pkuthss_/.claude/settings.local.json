@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(tasklist)",
+      "Bash(taskkill //F //PID 36904 //PID 36352)",
+      "Bash(rm -f main.aux main.bcf main.log main.out main.pdf main.run.xml main.synctex* main.toc main.lot main.lof main.blg)",
+      "Bash(xelatex -interaction=nonstopmode -synctex=1 main.tex)"
+    ]
+  }
+}

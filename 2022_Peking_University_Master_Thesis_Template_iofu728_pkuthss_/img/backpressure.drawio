@@ -1,0 +1,113 @@
+<mxGraphModel dx="700" dy="800" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="700" pageHeight="800">
+  <root>
+    <mxCell id="0"/>
+    <mxCell id="1" parent="0"/>
+
+    <!-- Core boundary box -->
+    <mxCell id="core_box" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#999999;strokeWidth=1;dashed=1;dashPattern=8 4;" vertex="1" parent="1">
+      <mxGeometry x="100" y="60" width="260" height="620" as="geometry"/>
+    </mxCell>
+    <mxCell id="core_label" value="Accelerator Core" style="text;html=1;strokeColor=none;fillColor=none;fontSize=12;fontStyle=1;fontColor=#999999;" vertex="1" parent="1">
+      <mxGeometry x="160" y="62" width="140" height="20" as="geometry"/>
+    </mxCell>
+
+    <!-- Blocks stacked vertically -->
+    <mxCell id="ps_drain" value="PSUM Drain Writer" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+      <mxGeometry x="140" y="120" width="180" height="50" as="geometry"/>
+    </mxCell>
+    <mxCell id="ps_fifo" value="PSUM Packet FIFO" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#333333;fontSize=12;" vertex="1" parent="1">
+      <mxGeometry x="140" y="210" width="180" height="50" as="geometry"/>
+    </mxCell>
+    <mxCell id="act" value="OFM Activation" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#333333;fontSize=12;" vertex="1" parent="1">
+      <mxGeometry x="140" y="300" width="180" height="50" as="geometry"/>
+    </mxCell>
+    <mxCell id="ofm_pfifo" value="OFM Packet FIFO" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;" vertex="1" parent="1">
+      <mxGeometry x="140" y="390" width="180" height="50" as="geometry"/>
+    </mxCell>
+    <mxCell id="wb" value="OFM Writeback" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#333333;fontSize=12;" vertex="1" parent="1">
+      <mxGeometry x="140" y="480" width="180" height="50" as="geometry"/>
+    </mxCell>
+    <mxCell id="byte_fifo" value="OFM Byte Stream FIFO" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;" vertex="1" parent="1">
+      <mxGeometry x="140" y="570" width="180" height="50" as="geometry"/>
+    </mxCell>
+
+    <!-- almost_full annotation -->
+    <mxCell id="almost_full" value="almost_full 预警" style="text;html=1;strokeColor=none;fillColor=none;fontSize=9;fontColor=#d6b656;fontStyle=2;" vertex="1" parent="1">
+      <mxGeometry x="60" y="400" width="70" height="30" as="geometry"/>
+    </mxCell>
+
+    <!-- Data flow arrows (downward, left side) -->
+    <mxCell id="e1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=1.5;endArrow=block;" edge="1" parent="1" source="ps_drain" target="ps_fifo">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="e1_label" value="data" style="edgeLabel;html=1;fontSize=8;fontStyle=2;align=center;verticalAlign=middle;resizable=0;points=[];" vertex="1" connectable="0" parent="e1">
+      <mxGeometry x="-0.1" y="1" relative="1" as="geometry"><mxPoint x="-16" y="1" as="offset"/></mxGeometry>
+    </mxCell>
+
+    <mxCell id="e2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=1.5;endArrow=block;" edge="1" parent="1" source="ps_fifo" target="act"/>
+    <mxCell id="e3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=1.5;endArrow=block;" edge="1" parent="1" source="act" target="ofm_pfifo"/>
+    <mxCell id="e4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=1.5;endArrow=block;" edge="1" parent="1" source="ofm_pfifo" target="wb"/>
+    <mxCell id="e5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=1.5;endArrow=block;" edge="1" parent="1" source="wb" target="byte_fifo"/>
+
+    <!-- Backpressure arrows (upward, right side, red) -->
+    <mxCell id="b1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;endArrow=block;strokeColor=#D83B01;" edge="1" parent="1" source="byte_fifo" target="wb">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="360" y="595"/>
+          <mxPoint x="360" y="505"/>
+        </Array>
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="b1_label" value="ready=0" style="edgeLabel;html=1;fontSize=9;fontStyle=2;strokeColor=#D83B01;fontColor=#D83B01;align=center;verticalAlign=middle;resizable=0;points=[];" vertex="1" connectable="0" parent="b1">
+      <mxGeometry x="-0.1" y="1" relative="1" as="geometry"><mxPoint x="18" y="1" as="offset"/></mxGeometry>
+    </mxCell>
+
+    <mxCell id="b2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;endArrow=block;strokeColor=#D83B01;" edge="1" parent="1" source="wb" target="ofm_pfifo">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="350" y="505"/>
+          <mxPoint x="350" y="415"/>
+        </Array>
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="b3" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;endArrow=block;strokeColor=#D83B01;" edge="1" parent="1" source="ofm_pfifo" target="act">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="340" y="415"/>
+          <mxPoint x="340" y="325"/>
+        </Array>
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="b4" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;endArrow=block;strokeColor=#D83B01;" edge="1" parent="1" source="act" target="ps_fifo">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="330" y="325"/>
+          <mxPoint x="330" y="235"/>
+        </Array>
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="b5" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;endArrow=block;strokeColor=#D83B01;" edge="1" parent="1" source="ps_fifo" target="ps_drain">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="320" y="235"/>
+          <mxPoint x="320" y="145"/>
+        </Array>
+      </mxGeometry>
+    </mxCell>
+
+    <!-- External tready source -->
+    <mxCell id="ext_label" value="AXI-Stream&lt;br&gt;tready = 0" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=10;fontColor=#b85450;" vertex="1" parent="1">
+      <mxGeometry x="420" y="570" width="90" height="50" as="geometry"/>
+    </mxCell>
+    <mxCell id="e_ext" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;endArrow=block;strokeColor=#D83B01;" edge="1" parent="1" source="ext_label" target="byte_fifo"/>
+
+    <!-- Labels -->
+    <mxCell id="flow_label" value="Data Flow (valid=1, data)" style="text;html=1;strokeColor=none;fillColor=none;fontSize=10;fontStyle=2;fontColor=#82b366;" vertex="1" parent="1">
+      <mxGeometry x="140" y="100" width="160" height="16" as="geometry"/>
+    </mxCell>
+    <mxCell id="bp_label" value="Backpressure (ready=0)" style="text;html=1;strokeColor=none;fillColor=none;fontSize=10;fontStyle=2;fontColor=#D83B01;" vertex="1" parent="1">
+      <mxGeometry x="400" y="680" width="150" height="16" as="geometry"/>
+    </mxCell>
+
+  </root>
+</mxGraphModel>

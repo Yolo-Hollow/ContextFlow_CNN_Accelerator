@@ -1,0 +1,91 @@
+% Copyright (c) 2008-2009 solvethis
+% Copyright (c) 2010-2016,2018-2019,2022 Casper Ti. Vector
+% Copyright (c) 2021 Kurapica
+% Copyright (c) 2022 iofu728
+% Overleaf version.
+
+%*********************************************************************
+% iofu728-pkuthss: 北京大学研究生学位论文模板
+% 2022/07/16 v1.1.0
+%
+% 重要提示：
+%   1. 当前overleaf版符合2022研究生学位论文要求，可通过图书馆审核
+%   2. 当前版本基于pkuthss v1.9.2
+%   3. 请使用UTF-8编码，XeLaTeX方式编译
+%   4. 请仔细阅读用户文档
+%   5. 修改、使用、发布本文档类请务必遵循LaTeX Project Public License和知识共享4.0
+%   6. 如有疑问github/iofu728/pkuthss上提问或联系作者@iofu728
+%*********************************************************************
+
+\PassOptionsToPackage{shortlabels}{enumitem}
+\documentclass[fontset=fandol,ugly,language=chinese]{pkuthss}
+  % 学位论文模式  ugly    (默认打开，请保留)
+  % 盲审模式     blind   (默认关闭)
+  % 语言        language (默认chinese | english)
+  % 字体库       fontset
+  %   auto | windows | windows@overleaf | mac | fandol | ubuntu | none
+  % windows*, mac为商业字体，如需使用请遵循相应版权协议(默认下overleaf中不可用)
+  % fandol与windows效果相近，但字符库偏少，推荐使用(默认);
+  % ubuntu字体效果偏差较大; 设为none时需自行配置字体集;
+
+\usepackage[backend=bibtex,style=gb7714-2015]{biblatex}
+  % 参考文献遵循GB/T 7714-2015标准，使用biblatex-gb7714-2015 宏包。
+  % 此处使用顺序编码制，如使用著者-出版年制则更改为b7714-2015ay。
+  % 注：MiKTeX biber 存在 Windows 路径兼容问题，改用 bibtex 后端。
+
+% 工程硕士论文常用宏包
+\usepackage{booktabs,multirow,longtable,makecell}
+\usepackage{amsmath}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta, shapes.geometric, shapes.multipart, positioning, fit, backgrounds, calc, chains}
+\renewcommand{\v}[1]{\boldsymbol{#1}}
+\newcommand\pkg[1]{\textsf{#1}}
+
+% 参考文献边距字体
+\setlength{\bibitemsep}{3bp}
+\renewcommand*{\bibfont}{\zihao{5}\linespread{1.27}\selectfont}
+
+\pkuthssinfo{
+    ctitle = {基于权重驻留脉动阵列的轻量级卷积神经网络FPGA加速器设计},
+    etitle = {Design of a Lightweight CNN FPGA Accelerator Based on Weight-Stationary Systolic Array},
+}
+
+\addbibresource{ref.bib}
+
+% 重新定义页眉：用章节标题替代默认的"北京大学硕士学位论文"
+\fancypagestyle{plain}{
+    \fancyhf{}
+    \renewcommand*{\headrulewidth}{0.75bp}
+    \fancyfoot[C]{\zihao{5}\normalfont{\thepage}}
+    \fancyhead[C]{\zihao{5}\normalfont\leftmark}
+}
+
+\begin{document}
+    \frontmatter
+    \pagestyle{empty}
+    \setcounter{page}{0}
+    \pagenumbering{Roman}
+
+    \include{chap/abs}
+    \cleardoublepage
+    \tableofcontents\markboth{目录}{}
+    \cleardoublepage
+    \listoftables\markboth{表格索引}{}
+    \cleardoublepage
+    \listoffigures\markboth{插图索引}{}
+    \cleardoublepage
+    \include{chap/deno}
+
+    \mainmatter
+    \pagestyle{plain}
+    \include{chap/chap1}
+    \include{chap/chap2}
+    \include{chap/chap3}
+    \include{chap/chap4}
+    \include{chap/chap5}
+    \include{chap/chap6}
+
+    \appendix
+    \printbibliography[heading = bibintoc]
+
+\end{document}

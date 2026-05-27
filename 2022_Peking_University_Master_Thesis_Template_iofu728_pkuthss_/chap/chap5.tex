@@ -1,0 +1,201 @@
+\chapter{接口设计与系统集成}
+\label{chap:interface}
+
+本章介绍加速器的接口层设计和系统集成方案，涵盖 AXI-Lite 配置寄存器桥、64-bit AXI-Stream 四路数据搬运接口的标准协议实现、IFM 行填充与 OFM 输出流的 DMA 协议、OFM TLAST 生成逻辑以及背压链设计。
+
+\section{AXI-Lite 配置寄存器接口}
+
+\subsection{本地寄存器映射}
+
+加速器内部通过 10 个可寻址寄存器管理全部配置参数，寄存器映射如表~\ref{tab:regmap}所示。
+
+\begin{table}[htb]
+\centering
+\caption{配置寄存器映射表}
+\label{tab:regmap}
+\begin{tabular}{cll}
+\toprule
+\textbf{地址} & \textbf{名称} & \textbf{位域} \\
+\midrule
+0x00 & CTRL/STATUS & [0] start (写), [1] clear\_done (写); [0] busy (读), [1] done\_sticky (读) \\
+0x01 & FM\_SIZE    & [8:0] fm\_h, [24:16] fm\_w \\
+0x02 & OFM\_SIZE   & [8:0] ofm\_h, [24:16] ofm\_w \\
+0x03 & CONV        & [1:0] stride, [9:8] pad \\
+0x04 & K\_TOTAL    & [10:0] k\_total \\
+0x05 & COUT\_TOTAL & [10:0] cout\_total \\
+0x06 & NUM\_PIXELS & [15:0] num\_pixels \\
+0x07 & ACT\_CFG    & [1:0] activation\_mode (0=Bypass, 1=ReLU, 2=Leaky) \\
+0x08 & TILE\_ROWS  & [8:0] tile\_oy\_base, [24:16] tile\_ofm\_h \\
+0x09 & PIXEL\_BASE & [23:0] tile\_pixel\_base \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+此外，量化参数寄存器（quant\_param\_regs）为每路输出通道存储 16-bit multiplier、4-bit shift 和 8-bit zero-point，总计 $COUT_{TILE} \times (16+4+8) = 32 \times 28 = 896$ bit 的寄存器资源。
+
+\subsection{AXI-Lite 桥设计}
+
+AXI-Lite 配置桥（axi\_lite\_cfg\_bridge）负责将标准 AXI4-Lite 读写事务转换为内部本地 cfg\_* 总线。设计要点：
+
+\begin{itemize}
+    \item \textbf{AW/W 通道}：支持 AWADDR 和 WDATA/WSTRB 分离到达（AW 和 W 通道独立握手），对 AW 到达后 W 尚未就绪的情况使用状态机暂存地址。
+    \item \textbf{WSTRB 字节合并}：对于 32-bit 寄存器中的部分字节写，采用 Read-Modify-Write 策略——先从寄存器读旧值，按 WSTRB 掩码替换目标字节后写回。
+    \item \textbf{B 通道}：写事务完成后返回 BVALID+BRESP 响应。
+    \item \textbf{AR/R 通道}：读事务支持在空闲写状态下穿插执行。读数据通过 RVALID+RRESP 返回。
+    \item \textbf{Start 脉冲}：对 CTRL 寄存器的 bit0 写操作以单周期脉冲形式传递给加速器核心，避免持续电平导致的多次误启动。
+\end{itemize}
+
+关键时序约束：testbench 中的 AXI Master 必须在 RVALID/BVALID 出现后保持 RREADY/BREADY 至少跨越一个时钟沿，避免 Bridge 漏采样握手完成事件。
+
+\section{AXI-Stream 数据搬运接口}
+
+加速器四条数据路径（Bias、Weight、IFM Line、OFM）均采用 64-bit AXI-Stream 接口，遵从 TVALID/TREADY/TLAST/TKEEP 四信号全握手协议~\cite{arm2021axi}。
+
+\subsection{Bias Stream 打包}
+
+Bias 数据宽度为 32 bit（PSUM 等宽），64-bit TDATA 每 beat 打包 2 个偏置值：
+
+\begin{equation}
+\text{beat } i:\ \text{TDATA}[31:0] = bias[2i],\ \text{TDATA}[63:32] = bias[2i+1]
+\end{equation}
+
+每个 Cout Block 的偏置加载需要 $\lceil COUT_{TILE} / 2 \rceil$ beats。TLAST 在最后一个 beat 拉高。TKEEP 必须为全 1。
+
+\subsection{Weight Stream 打包}
+
+每个 64-bit beat 打包 8 个 INT8 权重，按 load 顺序填满 TDATA 字节 lane：
+
+\begin{equation}
+\text{TDATA}[7:0],\ \text{TDATA}[15:8],\ \dots,\ \text{TDATA}[63:56]
+\end{equation}
+
+每个 Weight Tile（$K_{TILE} \times COUT_{TILE}$）需要 $K_{TILE} \times COUT_{TILE} / 8$ beats。TLAST 在 Tile 的最后一 beat 拉高。
+
+\subsection{IFM Line Stream 打包}
+
+IFM Line 的逻辑 beat 为单像素位置的 5 个 Bank 字节。64-bit TDATA 打包方式为：
+
+\begin{equation}
+\text{TDATA}[7:0] = \text{bank}_0,\ \dots,\ \text{TDATA}[39:32] = \text{bank}_4,\ \text{TDATA}[63:40] = 0
+\end{equation}
+
+每行 IFM 需要 $fm\_w$ beats。TLAST 在一行的最后一个 x beat 拉高。TKEEP[4:0] 必须为 5'b11111。
+
+\subsection{OFM Debug Stream}
+
+当前 OFM 输出采用调试友好格式（Route A）：
+
+\begin{equation}
+\text{TDATA}[\text{ADDR\_W-1}:0] = \text{byte\_addr},\ \text{TDATA}[\text{ADDR\_W}+:\!8] = \text{byte\_data}
+\end{equation}
+
+每个 beat 传输一个 OFM 字节及其 HWC 地址。TLAST 在一个 Spatial Tile 的最后一个 OFM 字节处拉高（详见第~\ref{sec:tlast}节）。
+
+Route A 的优点是验证直观（每个字节携带完整地址信息），缺点是带宽利用率低。最终优化目标为 Route B——将连续 HWC 字节打包为 64-bit/128-bit 突发流，利用 TKEEP 标记末尾有效字节。
+
+\section{OFM TLAST 生成}
+\label{sec:tlast}
+
+OFM TLAST 信号通过监听 AXI-Lite 配置写入实时计算预期字节数：
+
+\begin{enumerate}
+    \item 当 PS 通过 AXI-Lite 写入 COUT\_TOTAL 和 NUM\_PIXELS 寄存器时，顶层旁路截获并保存 $cfg\_cout\_total$ 和 $cfg\_num\_pixels$。
+    \item 当 CTRL.start 写入时，锁存：
+    \begin{equation}
+    ofm\_expected\_bytes = cfg\_num\_pixels \times cfg\_cout\_total
+    \end{equation}
+    \item OFM Debug Stream 每成功传输一个 byte（$TREADY \land TVALID$），内部计数器 $ofm\_byte\_count$ 递增。
+    \item 当 $ofm\_byte\_count = ofm\_expected\_bytes - 1$ 时，在当前 byte 的 TLAST 上拉高。
+\end{enumerate}
+
+这一设计保证 TLAST 的语义为：一个 Spatial Tile 的最后一个 OFM byte。PS/DMA 可利用 TLAST 判断本 Tile 输出事务的结束时机，无需额外轮询寄存器。
+
+\section{OFM 背压链设计}
+
+OFM 输出路径实现了从 AXI-Stream 下游到阵列 PSUM Drain 的全链路背压（Backpressure）机制。当外部 DMA/PS 因缓冲满或其他原因拉低 $ofm\_m\_axis\_tready$ 时，背压沿以下链路逐级向上游传播：
+
+\begin{equation}
+\text{ofm\_m\_axis\_tready} \rightarrow \text{ofm\_byte\_stream\_fifo} \rightarrow \text{ofm\_writeback} \rightarrow \text{ofm\_packet\_fifo} \rightarrow \text{ofm\_activation} \rightarrow \text{psum\_packet\_fifo} \rightarrow \text{psum\_drain\_writer}
+\label{eq:backpressure}
+\end{equation}
+
+\begin{figure}[htb]
+\centering
+\begin{tikzpicture}[
+    block/.style = {rectangle, draw=black, thick, fill=black!3, minimum width=3.2cm, minimum height=0.7cm, font=\footnotesize, align=center},
+    arr/.style = {->, >=stealth, thick},
+    barr/.style = {->, >=stealth, thick, red!60},
+]
+    % Left column: blocks stacked vertically
+    \node[block] (ps_drain) at (0,0) {PSUM Drain Writer};
+    \node[block] (ps_fifo) at (0,-1.3) {PSUM Packet FIFO};
+    \node[block] (act) at (0,-2.6) {OFM Activation};
+    \node[block] (ofm_pfifo) at (0,-3.9) {OFM Packet FIFO};
+    \node[block] (wb) at (0,-5.2) {OFM Writeback};
+    \node[block] (byte_fifo) at (0,-6.5) {OFM Byte Stream FIFO};
+
+    % Data flow arrows (downward, left side)
+    \draw[arr] (ps_drain) -- (ps_fifo) node[midway, left, font=\tiny] {data};
+    \draw[arr] (ps_fifo) -- (act) node[midway, left, font=\tiny] {data};
+    \draw[arr] (act) -- (ofm_pfifo) node[midway, left, font=\tiny] {data};
+    \draw[arr] (ofm_pfifo) -- (wb) node[midway, left, font=\tiny] {data};
+    \draw[arr] (wb) -- (byte_fifo) node[midway, left, font=\tiny] {data};
+
+    % Backpressure arrows (upward, right side, red)
+    \draw[barr] (byte_fifo.east) -- ++(1.0,0) |- (wb.east) node[pos=0.25, right, font=\tiny] {ready=0};
+    \draw[barr] (wb.east) -- ++(0.8,0) |- (ofm_pfifo.east);
+    \draw[barr] (ofm_pfifo.east) -- ++(0.6,0) |- (act.east);
+    \draw[barr] (act.east) -- ++(0.4,0) |- (ps_fifo.east);
+    \draw[barr] (ps_fifo.east) -- ++(0.2,0) |- (ps_drain.east);
+
+    % External tready source
+    \node[red!60] at (5.2, -6.5) {\footnotesize $\xleftarrow{tready=0}$ AXI-Stream};
+    \draw[arr, red!60] (5.2, -6.5) -- (byte_fifo.east |- 0, -6.5);
+
+    % Annotation
+    \node[gray] at (ofm_pfifo.west) [left=0.5cm] {\footnotesize almost\_full};
+
+    % Boundary
+    \begin{scope}[on background layer]
+    \node[rectangle, draw=gray, dashed, inner sep=8pt, fit=(ps_drain)(byte_fifo)] (core_box) {};
+    \node[gray] at (core_box.south) [below=2pt] {\footnotesize Accelerator Core};
+    \end{scope}
+\end{tikzpicture}
+\caption{OFM 输出背压链：下游 tready 拉低逐级向上游传播}
+\label{fig:backpressure}
+\end{figure}
+
+关键设计细节：
+
+\begin{itemize}
+    \item \textbf{OFM Byte Stream FIFO}：作为 OFM Writeback 与 AXI-Stream 边界之间的解耦缓冲。支持 $ofm\_m\_valid/ofm\_m\_ready$ 握手，FIFO 将满时拉低上游 \texttt{wr\_ready}。
+    \item \textbf{OFM Packet FIFO}：在 Requant 后和 Activation 后各插入一级 Packet FIFO，并在 Requant 后 FIFO 中设置 $almost\_full$ 预警（预留飞行中 packet 的缓冲空间），避免固定流水级被背压打乱。
+    \item \textbf{PSUM Packet FIFO}：在 PSUM Drain Writer 与 Requant 之间缓冲 Final PSUM Packet，当下游不 Ready 时暂停读 PSUM FIFO，避免数据丢失。
+\end{itemize}
+
+当前背压能力定位为：可承受短 Burst 型 OFM DMA Ready 拉低，但不建议将 $ofm\_m\_ready$ 长时间拉低作为正常工作模式。若 DMA 可能长时间停收，应增加 FIFO 深度或在调度层限制后端积压。
+
+\section{AXI-Stream 边界模块实现}
+
+AXI-Stream 协议边界由三个独立模块实现，每一模块均进行了独立仿真验证：
+
+\begin{itemize}
+    \item \texttt{axis\_bias\_weight\_loader}：从 64-bit AXI-Stream 接收偏置和权重数据，解包后驱动内部 bias SRAM 写口和 weight tile 写口。区分 Bias 事务和 Weight 事务（基于内部状态机），分别检查 TLAST/TKEEP 协议完整性。
+    \item \texttt{axis\_ifm\_line\_loader}：从 64-bit AXI-Stream 接收 IFM 行数据（TDATA[39:0] 解包为 5 个 Bank 字节），TLAST 标记行尾。输出经典 DMA 写接口（$dma\_bank\_wr\_en$, $dma\_wr\_x$, $dma\_wr\_f_y$, $dma\_wr\_data$, $dma\_line\_advance$）。
+    \item \texttt{axis\_ofm\_byte\_writer}：将 OFM byte stream（$ofm\_m\_addr + ofm\_m\_data$）封装为标准 AXI-Stream 输出（TDATA 包含地址+数据），TLAST 直通传递。
+\end{itemize}
+
+这些边界模块均直连到加速器核心的数据端口，不经过额外的 bus-agnostic loader 嵌套，以最小化组合逻辑层数和资源开销。
+
+\section{最终顶层集成}
+
+最终顶层 \texttt{conv\_accel\_core\_axi\_lite\_axis\_stream} 将上述所有子系统集成为一个完整的 AXI 边界加速器 IP：
+
+\begin{itemize}
+    \item AXI-Lite 从接口：地址译码后驱动 axi\_lite\_cfg\_bridge $\rightarrow$ layer\_config\_regs + quant\_param\_regs。
+    \item AXI-Stream 从接口（Bias + Weight）：axis\_bias\_weight\_loader $\rightarrow$ bias buffer + weight tile loader。
+    \item AXI-Stream 从接口（IFM Line）：axis\_ifm\_line\_loader $\rightarrow$ line buffer DMA 写口。
+    \item AXI-Stream 主接口（OFM）：core OFM byte write $\rightarrow$ ofm\_byte\_stream\_fifo $\rightarrow$ axis\_ofm\_byte\_writer $\rightarrow$ ofm\_m\_axis\_*。
+\end{itemize}
+
+该顶层可直接接入 Zynq UltraScale+ PS/PL 的 AXI Interconnect 体系，作为从 PS 侧 DMA 控制器调度的内存映射外设进行部署。

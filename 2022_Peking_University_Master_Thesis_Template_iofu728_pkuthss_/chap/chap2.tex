@@ -1,0 +1,113 @@
+\chapter{背景与相关工作}
+\label{chap:related}
+
+本章介绍与本文设计相关的基础理论与技术背景，包括卷积运算的数学定义及其 GEMM 转化、脉动阵列架构分类、INT8 量化原理、FPGA CNN 加速器相关工作以及目标硬件平台。
+
+\section{卷积神经网络与卷积运算}
+
+\subsection{标准卷积运算}
+
+标准卷积层是 CNN 中最核心的计算算子。给定输入特征图（Input Feature Map, IFM） $I \in \mathbb{R}^{C_{in} \times H \times W}$、卷积核 $W \in \mathbb{R}^{C_{out} \times C_{in} \times K_h \times K_w}$ 和偏置 $B \in \mathbb{R}^{C_{out}}$，输出特征图（Output Feature Map, OFM） $O \in \mathbb{R}^{C_{out} \times H_{out} \times W_{out}}$ 的计算公式为：
+
+\begin{equation}
+O[c_{out}][y][x] = B[c_{out}] + \sum_{c_{in}=0}^{C_{in}-1} \sum_{k_y=0}^{K_h-1} \sum_{k_x=0}^{K_w-1} I[c_{in}][y \cdot S + k_y - P][x \cdot S + k_x - P] \cdot W[c_{out}][c_{in}][k_y][k_x]
+\label{eq:conv2d}
+\end{equation}
+
+其中，$S$ 为步长（Stride），$P$ 为填充（Padding），$H_{out} = (H + 2P - K_h) / S + 1$，$W_{out} = (W + 2P - K_w) / S + 1$。
+
+YOLOv3-tiny 网络中主要使用 3×3 卷积（$K_h=K_w=3$）和 1×1 卷积（通道变换层）。本文加速器专门针对 3×3 卷积的硬件友好展开进行了优化，1×1 卷积可作为 3×3 卷积的特例进行处理。
+
+\subsection{卷积到 GEMM 的映射}
+
+卷积运算可以通过 im2col（Image to Column）变换转化为矩阵乘法（GEMM）形式。将 IFM 中与每个滑动窗口位置对应的 $C_{in} \times K_h \times K_w$ 个元素展开为一行，将 $C_{out}$ 组卷积核分别展开为一列，即可将式~\ref{eq:conv2d}转化为：
+
+\begin{equation}
+\text{OFM}[p, c_{out}] = \text{Bias}[c_{out}] + \sum_{k=0}^{K_{total}-1} \text{IFM}[p, k] \cdot W[k, c_{out}]
+\label{eq:gemm}
+\end{equation}
+
+其中，$p = oy \times W_{out} + ox$ 为输出像素的一维坐标，$K_{total} = C_{in} \times K_h \times K_w$ 为展开后的输入维度。这一映射将 6 层嵌套循环（输出通道、输出高度、输出宽度、输入通道、卷积核高度、卷积核宽度）约简为标准的矩阵乘法问题，极大便利了硬件加速器设计。
+
+\section{脉动阵列架构}
+
+\subsection{基本概念}
+
+脉动阵列（Systolic Array）是一种由规整排列的处理单元（Processing Element, PE）组成的二维计算网格。数据以脉动方式在相邻 PE 间逐周期传递，每个 PE 在每个时钟周期执行固定模式的乘加运算。脉动阵列的主要优点包括：
+
+\begin{enumerate}
+    \item \textbf{规整性}：所有 PE 结构相同，适合 VLSI/FPGA 大规模阵列化实现。
+    \item \textbf{数据复用}：权重、输入和部分和在阵列中以脉动传播，大幅减少对全局存储的带宽需求。
+    \item \textbf{可扩展性}：通过改变阵列行列数即可调整计算吞吐与资源开销的折中。
+\end{enumerate}
+
+\subsection{数据流分类}
+
+根据 Sze 等人~\cite{sze2017efficient}的分类体系，脉动阵列的数据流可按权重、输入和部分和的驻留策略分为以下四类：
+
+\begin{enumerate}
+    \item \textbf{权重驻留（Weight-Stationary）}：每个 PE 存储一个或多个权重值，IFM 在行方向流动，PSUM 在列方向流动。代表作为 Google TPU~\cite{jouppi2017tpu}。优点是权重从外部内存加载后驻留在 PE 中，适合权重重用率较高的场景。
+
+    \item \textbf{输出驻留（Output-Stationary）}：每个 PE 负责累加一个输出像素的所有乘积累积，IFM 和权重在阵列中流动。优点是部分和驻留在 PE 内，避免了 PSUM 的片外存储需求。
+
+    \item \textbf{输入驻留（Input-Stationary）}：每个 PE 存储一个 IFM 元素，权重在阵列中流动。适合 IFM 数据量较小的场景。
+
+    \item \textbf{行静态（Row-Stationary）}：Eyeriss~\cite{chen2016eyeriss} 提出的数据流，在 1D PE 行维度保持 IFM 元素驻留，在 2D PE 列维度保持 filter 行元素驻留，以最大化本地数据复用并最小化数据搬运能量。
+\end{enumerate}
+
+本文选择权重驻留数据流，原因如下：（1）YOLOv3-tiny 的 3×3 卷积核权重总量相对有限，适合驻留在 PE 内部；（2）权重驻留方案的控制逻辑更为简洁，有利于 FPGA 实现中减少 LUT 开销；（3）在 K 分块多轮累加场景下，权重可在多个 PSUM 反馈轮次间保持驻留不变，减少了权重重载次数。
+
+\section{INT8 量化}
+
+神经网络的量化是指将浮点权重和激活值映射到低位宽整数的过程。Jacob 等人提出的整数量化方案~\cite{jacob2018quantization}将推理过程完全转换为整数运算：
+
+\begin{equation}
+q = \text{clamp}\left(\text{round}\left(\frac{r}{S}\right) + Z,\ q_{min},\ q_{max}\right)
+\label{eq:quant}
+\end{equation}
+
+其中 $r$ 为浮点值，$S$ 为缩放因子（Scale），$Z$ 为零点（Zero Point），$q_{min}$ 和 $q_{max}$ 为量化范围（对于 INT8 为 -128 和 127）。
+
+在推理时，卷积计算完全以整数完成：
+
+\begin{equation}
+q_{out} = Z_{out} + \frac{S_w S_{in}}{S_{out}} \sum (q_w - Z_w)(q_{in} - Z_{in})
+\label{eq:int8conv}
+\end{equation}
+
+其中，预计算的乘数因子 $\frac{S_w S_{in}}{S_{out}}$ 可转化为定点乘加移位操作。本文加速器通过重量化（Requantization）模块，以每一路输出通道一个 16-bit 乘数因子加 4-bit 移位量的参数化方式实现了此量化方案。
+
+\section{FPGA CNN 加速器相关工作}
+
+FPGA CNN 加速器的研究可追溯至 Qiu 等人~\cite{qiu2016going}的工作，该文首次系统性地探索了在嵌入式 FPGA 上部署 CNN 的完整设计流程。随后 Guo 等人在此基础上发布了 Angel-Eye 工具链~\cite{guo2019angel}，实现了从 Caffe 模型到 FPGA 比特流的自动化映射。
+
+在脉动阵列 FPGA 实现方面，Wei 等人~\cite{wei2017automated}提出了自动化脉动阵列综合框架，支持从高层描述生成针对不同 FPGA 器件的 RTL 代码。Ding 等人~\cite{ding2022tinyyolo}报道了一款面向 YOLOv3-tiny 的轻量级 FPGA CNN 加速器设计。然而，这些工作大多侧重于高层设计空间探索或单一模块优化，缺乏从 PE 级 DSP 原语到顶层 AXI-Stream 系统接口的端到端闭环设计和验证数据。
+
+\section{Zynq UltraScale+ XCK26 平台}
+
+本文目标平台为 Xilinx Kria K26 核心 FPGA 器件 XCK26（具体型号 xck26-sfvc784-2LV-c），属于 Zynq UltraScale+ MPSoC 系列。其主要逻辑资源如表~\ref{tab:xck26-resources}所示。
+
+\begin{table}[htb]
+\centering
+\caption{XCK26 (sfvc784-2LV-c) 主要逻辑资源}
+\label{tab:xck26-resources}
+\begin{tabular}{lc}
+\toprule
+\textbf{资源类型} & \textbf{可用数量} \\
+\midrule
+系统逻辑单元 (SLC) & 约 256K \\
+CLB LUT          & 117,120 \\
+CLB 触发器       & 234,240 \\
+Block RAM Tile   & 144 (36Kb 等效) \\
+DSP48E2 Slice    & 1,248 \\
+用户 I/O         & 468 \\
+\midrule
+内部互联总线      & AXI4-Lite / AXI4-Stream / AXI4-MM \\
+PS 侧处理器       & Quad-core ARM Cortex-A53 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+XCK26 的 DSP48E2 是一款高性能乘累加原语，支持 27×18-bit 乘法器和 48-bit 累加器~\cite{xilinx2023dsp}。其关键特性之一是通过 (A+D)×B 的预加法运算模式，可以在单个 DSP 内完成两项独立乘法的合并计算，为本文的双 INT8 乘累加 PE 设计提供了硬件基础。
+
+硬件平台的另一关键特性是完备的 AXI 互联体系。Zynq UltraScale+ 的处理系统（Processing System, PS）与可编程逻辑（Programmable Logic, PL）之间通过 AXI 接口实现高带宽低延迟的数据与控制交互~\cite{arm2021axi, xilinx2023axi}。本文加速器设计的 AXI-Lite 配置接口和 AXI-Stream 数据接口即为后续 PS/DMA 协同调度的直接对接边界。

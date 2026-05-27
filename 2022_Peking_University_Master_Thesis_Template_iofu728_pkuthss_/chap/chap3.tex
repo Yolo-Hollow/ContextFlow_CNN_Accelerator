@@ -1,0 +1,318 @@
+\chapter{加速器硬件架构设计}
+\label{chap:architecture}
+
+本章详细阐述基于权重驻留脉动阵列的卷积加速器硬件架构设计，包括整体架构、处理单元（PE）设计、二维脉动阵列结构、行缓存与窗口提取、权重加载与偏置注入、部分和反馈路径以及后处理流水线。
+
+\section{整体架构概览}
+
+加速器顶层数据流遵循以下路径：DDR/DMA 通过 AXI-Stream 接口向行缓存注入 IFM 行数据；五体行缓存存储卷积窗口所需的输入特征图行；窗口提取器根据当前输出坐标 $(oy, ox)$、步长和填充并行提取 32 路 IFM 元素；IFM 通过 FIFO 以脉动偏斜时序注入二维脉动阵列；阵列中的每个 PE 驻留 2 个 INT8 权重，IFM 在行方向传播，PSUM 在列方向传播；阵列底部收集的 32 路 PSUM 经 PSUM FIFO 缓冲后，非最终 K 轮次的 PSUM 存入乒乓缓冲等待反馈，最终轮次的 PSUM 进入后处理流水线；后处理流水线包含重量化、激活和 OFM 写回三级，最终输出 INT8 OFM 字节流。
+
+\begin{figure}[htbp]
+\centering
+\resizebox{\textwidth}{!}{
+\begin{tikzpicture}[node distance=9mm and 11mm,
+    block/.style = {rectangle, draw=black, thick, fill=black!4, minimum width=22mm, minimum height=8mm, font=\footnotesize, align=center, inner sep=2pt},
+    smallblock/.style = {rectangle, draw=black, thick, fill=black!4, minimum width=22mm, minimum height=7mm, font=\footnotesize, align=center},
+    stream/.style = {->, >=stealth, thick},
+    weightflow/.style = {->, >=stealth, thick, blue!60},
+    psumflow/.style = {->, >=stealth, thick, red!60},
+    group/.style = {rectangle, draw=gray!50, dashed, inner sep=7pt, rounded corners=2pt},
+    labeltxt/.style = {font=\footnotesize, gray},
+]
+
+\node[block] (ddr0) {DDR / DMA};
+\node[block, right=of ddr0] (ifm) {AXI-Stream\\IFM Line};
+\node[block, right=of ifm] (lb) {Line Buffer\\5-Bank, 3-Line};
+\node[block, right=of lb] (win) {Window\\Extract};
+\node[block, right=of win] (fifo) {IFM FIFOs\\Staggered};
+
+\node[block, right=14mm of fifo, minimum width=25mm, minimum height=13mm] (array)
+{Systolic Array\\18$\times$16\\576 ops/cyc};
+
+\node[block, right=14mm of array] (requant) {Requant\\32-lane};
+\node[block, right=of requant] (act) {Activation\\Bypass/ReLU};
+\node[block, right=of act] (wb) {OFM\\Writeback};
+\node[block, right=of wb] (ddr1) {DDR / DMA};
+
+\node[smallblock, above=10mm of array] (wgt) {Weight\\Loader};
+\node[smallblock, above=10mm of requant] (bias) {Bias\\Buffer};
+
+\node[block, below=11mm of array] (psum) {PSUM\\FIFOs};
+\node[block, right=of psum] (drain) {PSUM\\Drain};
+\node[block, left=of psum] (pingpong) {Ping-Pong\\Buffer};
+
+\draw[stream] (ddr0) -- (ifm);
+\draw[stream] (ifm) -- (lb);
+\draw[stream] (lb) -- (win);
+\draw[stream] (win) -- (fifo);
+\draw[stream] (fifo) -- (array);
+\draw[stream] (array) -- (requant);
+\draw[stream] (requant) -- (act);
+\draw[stream] (act) -- (wb);
+\draw[stream] (wb) -- (ddr1);
+
+\draw[weightflow] (wgt) -- (array);
+\draw[weightflow] (bias) -- (array);
+
+\draw[psumflow] (array) -- (psum);
+\draw[psumflow] (psum) -- (drain);
+\draw[psumflow] (drain) |- (pingpong);
+\draw[psumflow] (pingpong) -| (array);
+
+\node[group, fit=(ifm)(lb)(win)(fifo), label={[labeltxt]above:Frontend}] {};
+\node[group, fit=(array)(psum)(drain)(pingpong), label={[labeltxt]below:Compute Core}] {};
+\node[group, fit=(requant)(act)(wb), label={[labeltxt]above:Backend}] {};
+
+\end{tikzpicture}
+}
+\caption{加速器整体架构框图}
+\label{fig:overall-arch}
+\end{figure}
+
+\section{处理单元设计}
+
+处理单元（Processing Element, PE）是脉动阵列的基本计算节点，其硬件实现直接影响阵列的面积、吞吐和时序性能。
+
+\subsection{DSP48E2 双 INT8 乘法方案}
+
+Xilinx UltraScale+ 架构的 DSP48E2 原语内建 27×18-bit 乘法器和 48-bit 累加器~\cite{xilinx2023dsp}。为实现单 DSP 双 INT8 乘累加，本文利用 DSP48E2 的 (A+D)×B 预加法运算模式：
+
+\begin{itemize}
+    \item 端口 A 载入 INT8 权重 $a$（符号扩展至 18 bit），端口 D 载入 INT8 权重 $b$（符号扩展至 18 bit）。
+    \item 预加器计算 $A+D$，形成 27-bit 中间值。
+    \item 端口 B 载入当前 IFM 值 $c$（符号扩展至 27 bit）。
+    \item DSP 内部执行 $(A+D) \times B = A \times B + D \times B$，在同一乘法周期内获得 $ac = a \times c$ 和 $bc = b \times c$ 两项乘积。
+\end{itemize}
+
+当 $b$ 为负数时需对 $ac$ 结果进行符号校正，该逻辑在 DSP 旁路 LUT 中实现。整体计算管线包含 4 级流水：输入寄存、乘法、累加、输出寄存，在 100 MHz 时钟下每 DSP 每秒可完成 2 亿次 INT8 乘加操作。
+
+\subsection{PE 内部数据通路}
+
+每个 PE 内部包含以下关键路径：
+
+\begin{itemize}
+    \item \textbf{IFM 水平传播链}：从左侧 PE 接收 IFM 值，寄存器一级后送往 DSP B 端口，同时寄存后传递至右侧 PE。水平方向 Valid 信号经 4 级流水延迟对齐计算管线。
+    \item \textbf{权重驻留寄存器}：两个 INT8 权重值 $w_a$ 和 $w_b$ 分别锁存在 A 端口和 D 端口对应的寄存器中，在整个计算轮次（K Pass 或 Cout Block）内保持不变。
+    \item \textbf{PSUM 垂直累加链}：从上方 PE 接收 PSUM 值（32-bit），与 DSP 输出的两项乘积求和后传递给下方 PE。垂直方向 Valid 信号经 5 级流水延迟。
+\end{itemize}
+
+\begin{table}[htb]
+\centering
+\caption{单 PE 输入输出端口}
+\label{tab:pe_ports}
+\begin{tabular}{lll}
+\toprule
+\textbf{信号} & \textbf{位宽} & \textbf{方向/含义} \\
+\midrule
+ifm\_in / ifm\_out       & 8 bit  & 水平 IFM 传播（左入右出）\\
+psum\_in / psum\_out     & 32 bit & 垂直 PSUM 传播（上入下出）\\
+wgt\_a / wgt\_b          & 8 bit  & 双 INT8 权重驻留\\
+valid\_h\_in / valid\_h\_out & 1 bit & 水平 Valid 传播\\
+valid\_v\_in / valid\_v\_out & 1 bit & 垂直 Valid 传播\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+    >=Latex,
+    node distance=8mm and 10mm,
+    every node/.style={font=\small},
+    pebox/.style={
+        draw,
+        dashed,
+        rounded corners=2pt,
+        inner xsep=10mm,
+        inner ysep=8mm
+    },
+    dsp/.style={
+        draw,
+        thick,
+        rounded corners=2pt,
+        align=center,
+        minimum width=36mm,
+        minimum height=24mm,
+        fill=gray!6
+    },
+    reg/.style={
+        draw,
+        rounded corners=1pt,
+        align=center,
+        minimum width=12mm,
+        minimum height=6mm,
+        font=\scriptsize,
+        fill=white
+    },
+    flow/.style={->, thick},
+    note/.style={font=\scriptsize, gray!70}
+]
+
+% ================= Core DSP block =================
+\node[dsp] (dsp) {
+    \textbf{DSP48E2}\\[1mm]
+    $(A+D)\times B$\\
+    $27\times18$ Mult\\
+    48-bit Acc\\
+    4-stage pipeline
+};
+
+% ================= Boundary =================
+\node[pebox, fit=(dsp),
+      label={[font=\large]above:Processing Element (PE)}] (pe) {};
+
+% ================= IFM path =================
+\coordinate (ifmin)  at ($(dsp.west)+(-18mm,0)$);
+\coordinate (ifmout) at ($(dsp.east)+(18mm,0)$);
+
+\draw[flow] (ifmin) -- node[above, font=\small] {ifm\_in} (dsp.west);
+\draw[flow] (dsp.east) -- node[above, font=\small] {ifm\_out} (ifmout);
+
+% ================= PSUM path =================
+\coordinate (psumtop) at ($(dsp.north)+(0,15mm)$);
+\coordinate (psumbot) at ($(dsp.south)+(0,-15mm)$);
+
+\draw[flow] (psumtop) -- node[right, font=\small] {PSUM in} (dsp.north);
+\draw[flow] (dsp.south) -- node[right, font=\small] {PSUM out} (psumbot);
+
+\node[font=\scriptsize, above=1mm of dsp.north] {32-bit};
+\node[font=\scriptsize, below=1mm of dsp.south] {32-bit};
+
+% ================= Weight registers =================
+\node[reg, above left=8mm and 8mm of dsp.west] (wa) {$w_a$\\INT8};
+\node[reg, below left=8mm and 8mm of dsp.west] (wb) {$w_b$\\INT8};
+
+\draw[flow] (wa.east) -- ($(dsp.west)+(0,5mm)$);
+\draw[flow] (wb.east) -- ($(dsp.west)+(0,-5mm)$);
+
+% ================= Valid note =================
+\node[note, below right=3mm and -2mm of dsp.south east, align=left] {
+    valid\_h: 4-stage delay\\
+    valid\_v: 5-stage delay
+};
+
+\end{tikzpicture}
+\caption{处理单元（PE）内部结构及 DSP48E2 双 INT8 数据通路}
+\label{fig:pe_datapath}
+\end{figure}
+
+\section{二维脉动阵列}
+
+\subsection{阵列拓扑}
+
+二维脉动阵列由 $\text{ROWS} \times \text{COLS}$ 的 PE 网格组成，主要配置为 ROWS=18、COLS=16。阵列采用权重驻留数据流：
+
+\begin{itemize}
+    \item \textbf{权重按列加载}：每列的 18 个 PE 驻留来自 18 个不同输入 lane 的权重，列内共享 2 个输出通道的计算。
+    \item \textbf{IFM 按行脉动}：阵列第 $r$ 行的 16 个 PE 共享同一 IFM 输入值。第 $r$ 行的 FIFO 读使能通过 $r \times 5$ 周期偏斜（Stagger）对齐阵列传播，保证各 PE 在正确时刻接收到正确的 IFM 元素。
+    \item \textbf{PSUM 按列累加}：PSUM 在列内从上向下传播并累加。第 0 行（顶端）接收外部注入的偏置或上一轮部分和；第 ROWS-1 行（底端）输出当前 K 轮次的累积结果。
+    \item \textbf{PSUM 位宽}：当前设定为 32 bit。YOLO 风格的大输入通道层存在 $C_{in}=512/1024$ 的长累加链，保守选择 32 bit 以避免溢出。
+\end{itemize}
+
+\subsection{阵列吞吐分析}
+
+在当前 18×16 配置下，阵列满流水时每时钟周期完成 $18 \times 16 \times 2 = 576$ 次 INT8 乘累加。在 100 MHz 核心时钟下等效峰值吞吐为 57.6 GOPS。作为对比，若扩展至 32×32 配置（$K_{TILE}=32$, $COUT_{TILE}=64$），理论峰值吞吐可达 $32 \times 32 \times 2 \times 100\text{MHz} = 204.8$ GOPS，但 XCK26 的 LUT 资源不足以支撑该规模。
+
+\section{行缓存与窗口提取}
+
+\subsection{五体行缓存}
+
+行缓存模块（Line Buffer）为窗口提取器提供 3×3 卷积所需的 3 行并行像素访问。其设计要点如下：
+
+\begin{itemize}
+    \item \textbf{存储结构}：5 Bank × 3 物理 Line。每条物理 Line 包含输入特征图一整行的像素数据，采用环形替换策略（最老行被最新填充行覆盖）。
+    \item \textbf{Bank 交错}：物理 Line 的 $x$ 坐标像素分布于 5 个 Bank，Bank 索引 $= x \bmod 5$。对于 YOLOv3-tiny 通常的 5 通道输入，此交错策略可避免 3×3 窗口内 Bank 访问冲突。当目标网络输入通道数较小时，Bank 数可相应缩减为 2。
+    \item \textbf{三路并行读出}：每条物理 Line 支持 $k_x=0$, $k_x=1$, $k_x=2$ 三个独立读地址，对应 3×3 卷积窗口的水平三列同时展开。
+    \item \textbf{填充接口}：通过 DMA 侧行填充服务驱动写入，协议为 $feeder\_fill\_req + feeder\_fill\_f_y$ 发起请求，外部按 $x=0..fm\_w-1$ 顺序每拍发送 5 个 Bank 字节，以 $dma\_line\_advance$ 完成一行提交。
+\end{itemize}
+
+\subsection{窗口提取}
+
+窗口提取器（Window Extract）负责将当前输出坐标 $(oy, ox)$ 映射为 32-lane 的 IFM 向量，供脉动阵列消费：
+
+\begin{itemize}
+    \item 根据 $(oy, ox)$、stride 和 pad 计算 3×3 窗口中 9 个位置的 IFM 空间坐标 $(f_{y_i}, f_{x_i})$。
+    \item 从 Line Buffer 并行读出 3 行 × 3 列对应的像素值，按 $k = c_{in} \times 3 \times 3 + k_y \times 3 + k_x$ 的展开顺序映射到 32 个并行 lane。
+    \item 越界或填充位置的 lane 输出为 0。
+    \item 通过检查 Line Buffer 的行有效标记（$line\_valid$）和 $f_y$ 匹配（当前窗口需要的行已全部就位）判定窗口是否就绪（Window Ready）。未就绪时暂停 $ox/oy$ 推进。
+\end{itemize}
+
+\section{权重加载与偏置注入}
+
+权重加载模块（Weight Tile Loader）按 $K_{TILE} \times COUT_{TILE}$ 规模将权重 Tile 载入阵列中各 PE 的权重寄存器。加载顺序为：
+
+\begin{equation}
+\text{for } k\_lane = 0..K_{TILE}-1:\ \text{for } cout\_lane = 0..COUT_{TILE}-1:\ w[k\_lane][cout\_lane]
+\end{equation}
+
+外部以 64-bit AXI-Stream 发送，每 beat 打包 8 个 INT8 权重，TLAST 在一个权重 Tile 的最后一 beat 拉高。对于当前典型 $K_{TILE}=18, COUT_{TILE}=32$ 的配置，每次权重加载需要 $18 \times 32 / 8 = 72$ beats。
+
+偏置（Bias）通过偏置缓冲模块向每列 PE 顶部注入。32-bit 偏置值按 $cout\_lane = 0..COUT_{TILE}-1$ 顺序注入，仅在每个 Cout Block 的第一个 K Pass 时注入。后续 K Pass 以 PSUM 流注入替代偏置注入。
+
+\section{部分和反馈路径}
+
+PSUM 乒乓缓冲（Ping-Pong Buffer）是 K Pass 之间部分和数据的桥接模块。其工作原理为：
+
+\begin{itemize}
+    \item PSUM 排出模块（PSUM Drain Writer）从阵列底部的 32 路 PSUM FIFO 中读取数据，每个像素产生一个 $COUT_{TILE}$ 宽的 PSUM 包。
+    \item 非最终 K Pass 的 PSUM 包写入乒乓缓冲的写半区。
+    \item 下一 K Pass 开始时，PSUM 流注入模块（PSUM Stream Feeder）从乒乓缓冲的读半区读出 PSUM 包，以倾斜时序（Staggered）注入阵列顶部对应列。
+    \item 最终 K Pass 的 PSUM 包不经过乒乓缓冲，直接推入后处理流水线。
+\end{itemize}
+
+乒乓双半区的设计使得一 K Pass 的 PSUM 排空（Drain）可以与下一 K Pass 的 PSUM 注入（Feed）在时间上重叠，减少流水线气泡。
+
+\section{后处理流水线}
+
+\subsection{重量化}
+
+重量化模块（Requant）将 32-bit PSUM 值转化为 INT8 结果。每路输出通道独立配置量化参数：
+
+\begin{equation}
+\text{OFM}_{int8}[c] = \text{clamp}^{127}_{-128}\Big(\big\lfloor (\text{PSUM}[c] \times \text{mult}[c]) \gg \text{shift}[c] \big\rfloor + \text{zp}[c]\Big)
+\label{eq:requant_detail}
+\end{equation}
+
+硬件实现为 4 级流水线：符号扩展乘法（32-bit × 16-bit）、舍入加法、算术右移、零点加法与钳位。对于 $COUT_{TILE}=32$ 的配置，实例化 32 路并行重量化通道。
+
+\subsection{激活}
+
+激活模块支持三种模式：
+
+\begin{itemize}
+    \item \textbf{Bypass}（mode=0）：直通输出。
+    \item \textbf{ReLU}（mode=1）：$\text{ReLU}(x) = \max(0, x)$，以组合逻辑中的符号位检测实现。
+    \item \textbf{Leaky ReLU}（mode=2）：$x \ge 0$ 时输出 $x$，$x < 0$ 时输出 $\text{LUT}[|x|]$。查找表为 256-entry × 8-bit 的单端口 ROM。
+\end{itemize}
+
+\subsection{OFM 写回}
+
+OFM 写回模块（OFM Writeback）将 $COUT_{TILE}$ 宽的 INT8 OFM 包展开为字节流，按 HWC 布局生成全局地址：
+
+\begin{equation}
+wr\_addr = (tile\_pixel\_base + local\_pixel) \times cout\_total + (cout\_base + lane)
+\label{eq:hwc_detail}
+\end{equation}
+
+其中 $tile\_pixel\_base$ 为空间分块的全局像素基址，$local\_pixel$ 为 Tile 内像素序号，$cout\_base$ 为当前 Cout Block 的输出通道基址，$lane$ 为并行通道编号。通过地址空间隔离实现 Spatial Tile 和 Cout Block 的独立写回。
+
+\section{模块层次封装}
+
+为支持从本地寄存器接口到标准总线的渐进集成，加速器核心通过 5 层封装逐步添加接口功能，如表~\ref{tab:wrapper_hierarchy}所示。每层封装均保持核心计算链路不变。
+
+\begin{table}[htb]
+\centering
+\caption{加速器顶层封装层次}
+\label{tab:wrapper_hierarchy}
+\begin{tabular}{lp{7cm}}
+\toprule
+\textbf{模块} & \textbf{接口特征} \\
+\midrule
+\texttt{conv\_accel\_core} & 本地 \texttt{cfg\_*} 配置总线 + 直接数据端口 \\
+\texttt{conv\_accel\_core\_axi\_lite} & + AXI-Lite 配置桥 \\
+\texttt{conv\_accel\_core\_axi\_lite\_stream} & + bias/weight ready-valid 流接口 \\
+\texttt{conv\_accel\_core\_axi\_lite\_full\_stream} & + IFM/OFM 流接口（全四路） \\
+\texttt{conv\_accel\_core\_axi\_lite\_axis\_stream} & + AXI-Stream 64-bit 标准协议（TVALID/TREADY/TLAST/TKEEP） \\
+\bottomrule
+\end{tabular}
+\end{table}

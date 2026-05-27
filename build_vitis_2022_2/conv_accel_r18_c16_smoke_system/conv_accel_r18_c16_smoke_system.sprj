@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="ASCII"?>
+<systemproject:SystemProject xmi:version="2.0" xmlns:xmi="http://www.omg.org/XMI" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:sdsproject="http://www.xilinx.com/sdsproject" xmlns:systemproject="http://www.xilinx.com/systemproject" name="conv_accel_r18_c16_smoke_system" platform="D:/MPSoC/accelerator_systolic/build_vitis_2022_2/conv_accel_kv260_platform/export/conv_accel_kv260_platform/conv_accel_kv260_platform.xpfm" platformUID="xilinx:kv260_som::0.0(custom)" sysConfig="conv_accel_kv260_platform" runtime="C/C++">
+  <configuration name="Debug" id="com.xilinx.sdx.system.managedbuilder.debugConfiguration.1192597583">
+    <configBuildOptions xsi:type="systemproject:SystemOptions">
+      <options xsi:type="sdsproject:Option" gensdcard="true" dmclkid="0"/>
+    </configBuildOptions>
+  </configuration>
+  <configuration name="Release" id="com.xilinx.sdx.system.managedbuilder.releaseConfiguration.1461921938">
+    <configBuildOptions xsi:type="systemproject:SystemOptions">
+      <options xsi:type="sdsproject:Option" gensdcard="true" dmclkid="0"/>
+    </configBuildOptions>
+  </configuration>
+</systemproject:SystemProject>

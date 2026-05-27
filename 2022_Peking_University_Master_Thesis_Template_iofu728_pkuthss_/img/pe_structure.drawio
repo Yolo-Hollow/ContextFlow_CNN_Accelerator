@@ -1,0 +1,99 @@
+<mxGraphModel dx="900" dy="700" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="900" pageHeight="650">
+  <root>
+    <mxCell id="0"/>
+    <mxCell id="1" parent="0"/>
+
+    <!-- PE boundary box -->
+    <mxCell id="pe_box" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#999999;strokeWidth=1;dashed=1;dashPattern=8 4;" vertex="1" parent="1">
+      <mxGeometry x="100" y="40" width="700" height="550" as="geometry"/>
+    </mxCell>
+    <mxCell id="pe_label" value="Processing Element (PE)" style="text;html=1;strokeColor=none;fillColor=none;fontSize=14;fontStyle=1;fontColor=#666666;" vertex="1" parent="1">
+      <mxGeometry x="350" y="42" width="200" height="24" as="geometry"/>
+    </mxCell>
+
+    <!-- DSP48E2 main block -->
+    <mxCell id="dsp" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#333333;strokeWidth=2;" vertex="1" parent="1">
+      <mxGeometry x="280" y="170" width="320" height="260" as="geometry"/>
+    </mxCell>
+    <mxCell id="dsp_title" value="DSP48E2" style="text;html=1;strokeColor=none;fillColor=none;fontSize=16;fontStyle=1;" vertex="1" parent="1">
+      <mxGeometry x="370" y="180" width="140" height="24" as="geometry"/>
+    </mxCell>
+    <mxCell id="dsp_formula" value="(A+D) × B" style="text;html=1;strokeColor=none;fillColor=none;fontSize=13;fontStyle=2;" vertex="1" parent="1">
+      <mxGeometry x="380" y="220" width="120" height="20" as="geometry"/>
+    </mxCell>
+    <mxCell id="dsp_mult" value="27×18-bit Multiply" style="text;html=1;strokeColor=none;fillColor=none;fontSize=11;fontColor=#555555;" vertex="1" parent="1">
+      <mxGeometry x="370" y="270" width="140" height="16" as="geometry"/>
+    </mxCell>
+    <mxCell id="dsp_acc" value="48-bit Accumulate" style="text;html=1;strokeColor=none;fillColor=none;fontSize=11;fontColor=#555555;" vertex="1" parent="1">
+      <mxGeometry x="370" y="300" width="140" height="16" as="geometry"/>
+    </mxCell>
+    <mxCell id="dsp_pipe" value="4-stage Pipeline" style="text;html=1;strokeColor=none;fillColor=none;fontSize=11;fontColor=#555555;" vertex="1" parent="1">
+      <mxGeometry x="370" y="340" width="140" height="16" as="geometry"/>
+    </mxCell>
+
+    <!-- IFM in (left) -->
+    <mxCell id="ifm_in" value="IFM c (8-bit)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="1">
+      <mxGeometry x="120" y="280" width="100" height="40" as="geometry"/>
+    </mxCell>
+    <mxCell id="ifm_left" value="ifm_in&lt;br&gt;from left PE" style="text;html=1;strokeColor=none;fillColor=none;fontSize=9;fontColor=#6c8ebf;" vertex="1" parent="1">
+      <mxGeometry x="20" y="280" width="90" height="40" as="geometry"/>
+    </mxCell>
+
+    <!-- IFM out (right) -->
+    <mxCell id="ifm_out" value="IFM c (8-bit)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="1">
+      <mxGeometry x="680" y="280" width="100" height="40" as="geometry"/>
+    </mxCell>
+    <mxCell id="ifm_right" value="ifm_out&lt;br&gt;to right PE" style="text;html=1;strokeColor=none;fillColor=none;fontSize=9;fontColor=#6c8ebf;" vertex="1" parent="1">
+      <mxGeometry x="790" y="280" width="90" height="40" as="geometry"/>
+    </mxCell>
+
+    <!-- Weights (top-left) -->
+    <mxCell id="wa" value="w_a (INT8)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;" vertex="1" parent="1">
+      <mxGeometry x="120" y="160" width="90" height="40" as="geometry"/>
+    </mxCell>
+    <mxCell id="wb" value="w_b (INT8)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;" vertex="1" parent="1">
+      <mxGeometry x="120" y="220" width="90" height="40" as="geometry"/>
+    </mxCell>
+    <mxCell id="wreg_note" value="驻留在PE中" style="text;html=1;strokeColor=none;fillColor=none;fontSize=9;fontColor=#9673a6;" vertex="1" parent="1">
+      <mxGeometry x="20" y="180" width="80" height="16" as="geometry"/>
+    </mxCell>
+
+    <!-- PSUM in (top) -->
+    <mxCell id="psum_in" value="PSUM in (32-bit)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">
+      <mxGeometry x="370" y="100" width="140" height="40" as="geometry"/>
+    </mxCell>
+
+    <!-- PSUM out (bottom) -->
+    <mxCell id="psum_out" value="PSUM out (32-bit)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">
+      <mxGeometry x="370" y="480" width="140" height="40" as="geometry"/>
+    </mxCell>
+
+    <!-- Flow direction labels -->
+    <mxCell id="dir_ifm" value="→ IFM flow →" style="text;html=1;strokeColor=none;fillColor=none;fontSize=9;fontColor=#6c8ebf;fontStyle=2;" vertex="1" parent="1">
+      <mxGeometry x="370" y="440" width="140" height="16" as="geometry"/>
+    </mxCell>
+    <mxCell id="dir_psum" value="↓ PSUM ↓" style="text;html=1;strokeColor=none;fillColor=none;fontSize=9;fontColor=#82b366;fontStyle=2;" vertex="1" parent="1">
+      <mxGeometry x="430" y="450" width="80" height="16" as="geometry"/>
+    </mxCell>
+
+    <!-- === EDGES === -->
+    <mxCell id="e1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=1.5;endArrow=block;" edge="1" parent="1" source="ifm_left" target="ifm_in"/>
+    <mxCell id="e2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=1.5;endArrow=block;" edge="1" parent="1" source="ifm_in" target="dsp"/>
+    <mxCell id="e3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=1.5;endArrow=block;" edge="1" parent="1" source="dsp" target="ifm_out"/>
+    <mxCell id="e4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=1.5;endArrow=block;" edge="1" parent="1" source="ifm_out" target="ifm_right"/>
+
+    <mxCell id="e5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=1.5;endArrow=block;" edge="1" parent="1" source="wa" target="dsp"/>
+    <mxCell id="e6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=1.5;endArrow=block;" edge="1" parent="1" source="wb" target="dsp"/>
+    <mxCell id="e7" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=1.5;endArrow=block;" edge="1" parent="1" source="psum_in" target="dsp"/>
+    <mxCell id="e8" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=1.5;endArrow=block;" edge="1" parent="1" source="dsp" target="psum_out"/>
+
+    <!-- Valid chains -->
+    <mxCell id="valid_h" value="valid_h (4-stage)" style="text;html=1;strokeColor=none;fillColor=none;fontSize=9;fontColor=#999999;fontStyle=2;" vertex="1" parent="1">
+      <mxGeometry x="350" y="450" width="120" height="16" as="geometry"/>
+    </mxCell>
+    <mxCell id="valid_v" value="valid_v (5-stage)" style="text;html=1;strokeColor=none;fillColor=none;fontSize=9;fontColor=#999999;fontStyle=2;" vertex="1" parent="1">
+      <mxGeometry x="460" y="155" width="120" height="16" as="geometry"/>
+    </mxCell>
+
+  </root>
+</mxGraphModel>

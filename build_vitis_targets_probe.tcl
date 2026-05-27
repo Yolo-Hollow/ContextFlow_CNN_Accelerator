@@ -1,0 +1,3 @@
+connect
+targets
+exit
