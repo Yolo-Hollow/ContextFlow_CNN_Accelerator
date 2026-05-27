@@ -13,4 +13,11 @@ build_xsim/
 build_synth_xck26/
 build_bd_*/
 build_system_*/
+!build_system_kv260_carrier/
+build_system_kv260_carrier/*
+!build_system_kv260_carrier/conv_accel_ps_dma_minimal.xsa
+build_vitis_2022_2*/
+/build_vitis_*.tcl
 clockInfo.txt
+.Xil/
+.ip_user_files/

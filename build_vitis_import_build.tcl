@@ -1,4 +1,0 @@
-setws D:/MPSoC/accelerator_systolic/build_vitis_2022_2
-importprojects D:/MPSoC/accelerator_systolic/build_vitis_2022_2/conv_accel_r18_c16_smoke
-app build -name conv_accel_r18_c16_smoke
-exit

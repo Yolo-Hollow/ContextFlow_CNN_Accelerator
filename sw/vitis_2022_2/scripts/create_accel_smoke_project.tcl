@@ -3,7 +3,7 @@ set sw_dir [file dirname $script_dir]
 set root [file dirname [file dirname $sw_dir]]
 
 set workspace [file normalize [file join $root build_vitis_2022_2]]
-set xsa [file normalize [file join $root build_system_fix conv_accel_ps_dma_minimal.xsa]]
+set xsa [file normalize [file join $root build_system_kv260_carrier conv_accel_ps_dma_minimal.xsa]]
 set platform_name conv_accel_kv260_platform
 set app_name conv_accel_r18_c16_smoke
 set proc_name psu_cortexa53_0

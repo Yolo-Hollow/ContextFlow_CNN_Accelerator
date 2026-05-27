@@ -29,3 +29,12 @@ xsct sw/vitis_2022_2/scripts/create_accel_smoke_project.tcl
 ```
 
 The generated workspace is `build_vitis_2022_2`.
+
+This script uses the carrier-based hardware export:
+
+```text
+build_system_kv260_carrier/conv_accel_ps_dma_minimal.xsa
+```
+
+That XSA is expected to include the KV260 carrier board preset and the GPIO2
+exposure of `feeder_fill_fy`.

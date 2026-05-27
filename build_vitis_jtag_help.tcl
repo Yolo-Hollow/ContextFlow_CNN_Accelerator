@@ -1,2 +1,0 @@
-help jtagterminal
-exit
