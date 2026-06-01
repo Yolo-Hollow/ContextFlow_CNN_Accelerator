@@ -72,6 +72,17 @@ module axi_lite_cfg_bridge #(
         end
     endfunction
 
+    function [DATA_W-1:0] apply_wstrb_mask;
+        input [DATA_W-1:0] data;
+        input [DATA_W/8-1:0] strb;
+        begin
+            apply_wstrb_mask = {DATA_W{1'b0}};
+            for (i = 0; i < DATA_W/8; i = i + 1)
+                if (strb[i])
+                    apply_wstrb_mask[i*8 +: 8] = data[i*8 +: 8];
+        end
+    endfunction
+
     wire write_can_accept = !s_axi_bvalid && (wr_state == WR_IDLE);
     wire aw_fire = s_axi_awvalid && s_axi_awready;
     wire w_fire = s_axi_wvalid && s_axi_wready;
@@ -128,8 +139,8 @@ module axi_lite_cfg_bridge #(
                 cfg_addr <= write_addr[7:2];
                 aw_hold_valid <= 1'b0;
                 w_hold_valid <= 1'b0;
-                if (write_strb == {DATA_W/8{1'b1}}) begin
-                    cfg_wdata <= write_data;
+                if (write_strb == {DATA_W/8{1'b1}} || write_addr[7:2] == 6'h00) begin
+                    cfg_wdata <= (write_addr[7:2] == 6'h00) ? apply_wstrb_mask(write_data, write_strb) : write_data;
                     cfg_wr_en <= 1'b1;
                     s_axi_bresp <= 2'b00;
                     s_axi_bvalid <= 1'b1;

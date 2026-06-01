@@ -77,7 +77,7 @@ module ifm_line_stream_loader #(
             if (!fill_req)
                 last_done_valid <= 1'b0;
 
-            if (!busy && !advance_pending && !cooldown && fill_req &&
+            if (!busy && !advance_pending && !cooldown && fill_req && (fm_w != {AW{1'b0}}) &&
                 !(last_done_valid && last_done_fy == fill_fy)) begin
                 busy <= 1'b1;
                 x_count <= {AW{1'b0}};

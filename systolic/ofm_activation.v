@@ -28,15 +28,8 @@ module ofm_activation #(
     output reg [ADDR_W-1:0]     out_addr,
     output reg [10:0]           out_cout_base,
     output reg [COUT_TILE-1:0]  out_channel_valid,
-    output [COUT_TILE*8-1:0]    out_data
+    output reg [COUT_TILE*8-1:0] out_data
 );
-    reg [COUT_TILE*8-1:0] bypass_relu_data;
-    reg [COUT_TILE*8-1:0] leaky_data_r;
-    reg [1:0] mode_r;
-    reg [ADDR_W-1:0] addr_r;
-    reg [10:0] cout_base_r;
-    reg [COUT_TILE-1:0] mask_r;
-    reg valid_r;
     wire can_advance = !out_valid || out_ready;
     assign in_ready = can_advance;
 
@@ -44,6 +37,7 @@ module ofm_activation #(
     generate
         for (lane = 0; lane < COUT_TILE; lane = lane + 1) begin : lut_gen
             wire [7:0] lut_out;
+            wire signed [7:0] in_lane_signed = in_data[lane*8 +: 8];
             leaky_lut u_lut (
                 .clk(clk),
                 .wr_en(lut_wr_en),
@@ -52,48 +46,35 @@ module ofm_activation #(
                 .data_in(in_data[lane*8 +: 8]),
                 .data_out(lut_out)
             );
-            assign out_data[lane*8 +: 8] =
-                (mode_r == 2'd2) ? leaky_data_r[lane*8 +: 8] : bypass_relu_data[lane*8 +: 8];
 
             always @(posedge clk) begin
-                if (!rst && can_advance && in_valid)
-                    leaky_data_r[lane*8 +: 8] <= lut_out;
+                if (rst) begin
+                    out_data[lane*8 +: 8] <= 8'd0;
+                end else if (can_advance && in_valid) begin
+                    if (mode == 2'd2)
+                        out_data[lane*8 +: 8] <= lut_out;
+                    else if (mode == 2'd1 && in_lane_signed < 0)
+                        out_data[lane*8 +: 8] <= 8'd0;
+                    else
+                        out_data[lane*8 +: 8] <= in_data[lane*8 +: 8];
+                end
             end
         end
     endgenerate
 
-    integer i;
     always @(posedge clk) begin
         if (rst) begin
             out_valid <= 1'b0;
             out_addr <= {ADDR_W{1'b0}};
             out_cout_base <= 11'd0;
             out_channel_valid <= {COUT_TILE{1'b0}};
-            bypass_relu_data <= {COUT_TILE*8{1'b0}};
-            mode_r <= 2'd0;
-            addr_r <= {ADDR_W{1'b0}};
-            cout_base_r <= 11'd0;
-            mask_r <= {COUT_TILE{1'b0}};
-            valid_r <= 1'b0;
         end else if (can_advance) begin
-            valid_r <= in_valid;
+            out_valid <= in_valid;
             if (in_valid) begin
-                mode_r <= mode;
-                addr_r <= in_addr;
-                cout_base_r <= in_cout_base;
-                mask_r <= in_channel_valid;
-                for (i = 0; i < COUT_TILE; i = i + 1) begin
-                    if (mode == 2'd1 && $signed(in_data[i*8 +: 8]) < 0)
-                        bypass_relu_data[i*8 +: 8] <= 8'd0;
-                    else
-                        bypass_relu_data[i*8 +: 8] <= in_data[i*8 +: 8];
-                end
+                out_addr <= in_addr;
+                out_cout_base <= in_cout_base;
+                out_channel_valid <= in_channel_valid;
             end
-
-            out_valid <= valid_r;
-            out_addr <= addr_r;
-            out_cout_base <= cout_base_r;
-            out_channel_valid <= mask_r;
         end
     end
 endmodule

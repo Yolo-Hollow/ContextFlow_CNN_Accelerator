@@ -12,6 +12,11 @@
 //   0x07 ACT_CFG:     [1:0]=activation_mode, 0=bypass, 1=ReLU, 2=Leaky LUT
 //   0x08 TILE_ROWS:   [8:0]=tile_oy_base, [24:16]=tile_ofm_h, 0 tile_ofm_h means full ofm_h
 //   0x09 PIXEL_BASE:  [23:0]=tile_pixel_base
+//   0x0a DBG_EXPECTED: expected OFM AXIS packets for the current tile
+//   0x0b DBG_CORE_WR:  OFM packets accepted from core writeback
+//   0x0c DBG_AXIS_WR:  OFM AXIS packets accepted by the downstream sink
+//   0x0d DBG_TLASTS:   OFM AXIS TLAST handshake count
+//   0x0e DBG_LAST_END: packet count at the most recent TLAST handshake
 module layer_config_regs (
     input  clk,
     input  rst,
@@ -24,6 +29,11 @@ module layer_config_regs (
 
     input  layer_busy,
     input  layer_done,
+    input  [31:0] dbg_expected_bytes,
+    input  [31:0] dbg_core_wr_count,
+    input  [31:0] dbg_axis_wr_count,
+    input  [31:0] dbg_tlast_count,
+    input  [31:0] dbg_last_tlast_index,
     output reg start_pulse,
 
     output reg [8:0]  fm_h,
@@ -41,6 +51,7 @@ module layer_config_regs (
     output reg [23:0] tile_pixel_base
 );
     reg done_sticky;
+    wire cfg_idle = !layer_busy;
 
     always @(posedge clk) begin
         if (rst) begin
@@ -67,7 +78,7 @@ module layer_config_regs (
             if (cfg_wr_en) begin
                 case (cfg_addr)
                     6'h00: begin
-                        if (cfg_wdata[0]) begin
+                        if (cfg_wdata[0] && cfg_idle) begin
                             start_pulse <= 1'b1;
                             done_sticky <= 1'b0;
                         end
@@ -75,26 +86,34 @@ module layer_config_regs (
                             done_sticky <= 1'b0;
                     end
                     6'h01: begin
-                        fm_h <= cfg_wdata[8:0];
-                        fm_w <= cfg_wdata[24:16];
+                        if (cfg_idle) begin
+                            fm_h <= cfg_wdata[8:0];
+                            fm_w <= cfg_wdata[24:16];
+                        end
                     end
                     6'h02: begin
-                        ofm_h <= cfg_wdata[8:0];
-                        ofm_w <= cfg_wdata[24:16];
+                        if (cfg_idle) begin
+                            ofm_h <= cfg_wdata[8:0];
+                            ofm_w <= cfg_wdata[24:16];
+                        end
                     end
                     6'h03: begin
-                        conv_stride <= cfg_wdata[1:0];
-                        conv_pad <= cfg_wdata[9:8];
+                        if (cfg_idle) begin
+                            conv_stride <= cfg_wdata[1:0];
+                            conv_pad <= cfg_wdata[9:8];
+                        end
                     end
-                    6'h04: k_total <= cfg_wdata[10:0];
-                    6'h05: cout_total <= cfg_wdata[10:0];
-                    6'h06: num_pixels <= cfg_wdata[15:0];
-                    6'h07: activation_mode <= cfg_wdata[1:0];
+                    6'h04: if (cfg_idle) k_total <= cfg_wdata[10:0];
+                    6'h05: if (cfg_idle) cout_total <= cfg_wdata[10:0];
+                    6'h06: if (cfg_idle) num_pixels <= cfg_wdata[15:0];
+                    6'h07: if (cfg_idle) activation_mode <= cfg_wdata[1:0];
                     6'h08: begin
-                        tile_oy_base <= cfg_wdata[8:0];
-                        tile_ofm_h <= cfg_wdata[24:16];
+                        if (cfg_idle) begin
+                            tile_oy_base <= cfg_wdata[8:0];
+                            tile_ofm_h <= cfg_wdata[24:16];
+                        end
                     end
-                    6'h09: tile_pixel_base <= cfg_wdata[23:0];
+                    6'h09: if (cfg_idle) tile_pixel_base <= cfg_wdata[23:0];
                     default: begin end
                 endcase
             end
@@ -113,6 +132,11 @@ module layer_config_regs (
             6'h07: cfg_rdata = {30'd0, activation_mode};
             6'h08: cfg_rdata = {7'd0, tile_ofm_h, 7'd0, tile_oy_base};
             6'h09: cfg_rdata = {8'd0, tile_pixel_base};
+            6'h0a: cfg_rdata = dbg_expected_bytes;
+            6'h0b: cfg_rdata = dbg_core_wr_count;
+            6'h0c: cfg_rdata = dbg_axis_wr_count;
+            6'h0d: cfg_rdata = dbg_tlast_count;
+            6'h0e: cfg_rdata = dbg_last_tlast_index;
             default: cfg_rdata = 32'd0;
         endcase
     end

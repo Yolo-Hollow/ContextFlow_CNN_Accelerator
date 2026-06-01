@@ -21,7 +21,10 @@ module tb_layer_config_regs;
         .clk(clk), .rst(rst),
         .cfg_wr_en(cfg_wr_en), .cfg_addr(cfg_addr), .cfg_wdata(cfg_wdata),
         .cfg_rd_en(cfg_rd_en), .cfg_rdata(cfg_rdata),
-        .layer_busy(layer_busy), .layer_done(layer_done), .start_pulse(start_pulse),
+        .layer_busy(layer_busy), .layer_done(layer_done),
+        .dbg_expected_bytes(32'd0), .dbg_core_wr_count(32'd0),
+        .dbg_axis_wr_count(32'd0), .dbg_tlast_count(32'd0),
+        .dbg_last_tlast_index(32'd0), .start_pulse(start_pulse),
         .fm_h(fm_h), .fm_w(fm_w), .ofm_h(ofm_h), .ofm_w(ofm_w),
         .conv_stride(conv_stride), .conv_pad(conv_pad),
         .activation_mode(activation_mode),
@@ -33,6 +36,14 @@ module tb_layer_config_regs;
     always #5 clk = ~clk;
 
     integer pass, fail;
+    integer start_pulse_count;
+
+    always @(posedge clk) begin
+        if (rst)
+            start_pulse_count <= 0;
+        else if (start_pulse)
+            start_pulse_count <= start_pulse_count + 1;
+    end
 
     task write_reg;
         input [5:0] addr;
@@ -70,6 +81,7 @@ module tb_layer_config_regs;
         layer_done = 0;
         pass = 0;
         fail = 0;
+        start_pulse_count = 0;
 
         repeat (3) @(negedge clk);
         rst = 0;
@@ -151,6 +163,31 @@ module tb_layer_config_regs;
             $display("[FAIL] done clear got=%b", cfg_rdata[1]);
             fail = fail + 1;
         end else pass = pass + 1;
+
+        write_reg(6'h01, {7'd0, 9'd99, 7'd0, 9'd88});
+        write_reg(6'h04, 32'd99);
+        write_reg(6'h07, 32'd1);
+        write_reg(6'h08, {7'd0, 9'd8, 7'd0, 9'd7});
+        write_reg(6'h09, 32'd99);
+        check_value(fm_h, 7, "busy freeze fm_h");
+        check_value(fm_w, 5, "busy freeze fm_w");
+        check_value(k_total, 45, "busy freeze k_total");
+        check_value(activation_mode, 2, "busy freeze activation");
+        check_value(tile_oy_base, 2, "busy freeze tile_oy_base");
+        check_value(tile_ofm_h, 3, "busy freeze tile_ofm_h");
+        check_value(tile_pixel_base, 6, "busy freeze pixel base");
+
+        write_reg(6'h00, 32'd1);
+        repeat (2) @(negedge clk);
+        check_value(start_pulse_count, 1, "busy ignores start");
+
+        layer_busy = 1'b0;
+        write_reg(6'h01, {7'd0, 9'd9, 7'd0, 9'd8});
+        write_reg(6'h00, 32'd1);
+        repeat (2) @(negedge clk);
+        check_value(fm_h, 8, "idle accepts fm_h");
+        check_value(fm_w, 9, "idle accepts fm_w");
+        check_value(start_pulse_count, 2, "idle accepts start");
 
         $display("=== tb_layer_config_regs: %0d pass, %0d fail ===", pass, fail);
         if (fail != 0) $fatal(1);

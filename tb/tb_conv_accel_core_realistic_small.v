@@ -1041,6 +1041,30 @@ module `TB_CONV_ACCEL_CORE_MODULE;
                 axis_ofm_tlast_count, TILE_COUNT);
             fail = fail + 1;
         end else pass = pass + 1;
+        cfg_read(6'h0b, cfg_read_data);
+        if (cfg_read_data != EXPECTED_OFM_WRITES) begin
+            $display("[FAIL] AXIS debug core write count got=%0d exp=%0d",
+                cfg_read_data, EXPECTED_OFM_WRITES);
+            fail = fail + 1;
+        end else pass = pass + 1;
+        cfg_read(6'h0c, cfg_read_data);
+        if (cfg_read_data != EXPECTED_OFM_WRITES) begin
+            $display("[FAIL] AXIS debug sink write count got=%0d exp=%0d",
+                cfg_read_data, EXPECTED_OFM_WRITES);
+            fail = fail + 1;
+        end else pass = pass + 1;
+        cfg_read(6'h0d, cfg_read_data);
+        if (cfg_read_data != TILE_COUNT) begin
+            $display("[FAIL] AXIS debug TLAST count got=%0d exp=%0d",
+                cfg_read_data, TILE_COUNT);
+            fail = fail + 1;
+        end else pass = pass + 1;
+        cfg_read(6'h0e, cfg_read_data);
+        if (cfg_read_data != EXPECTED_OFM_WRITES) begin
+            $display("[FAIL] AXIS debug last TLAST index got=%0d exp=%0d",
+                cfg_read_data, EXPECTED_OFM_WRITES);
+            fail = fail + 1;
+        end else pass = pass + 1;
         if (bias_axis_error || weight_axis_error || ifm_axis_error) begin
             $display("[FAIL] AXIS protocol errors bias=%0d weight=%0d ifm=%0d",
                 bias_axis_error, weight_axis_error, ifm_axis_error);

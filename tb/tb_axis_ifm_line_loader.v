@@ -127,6 +127,25 @@ module tb_axis_ifm_line_loader;
         check(!s_axis_tready, "AXIS ready low before request");
 
         @(negedge clk);
+        fm_w = {AW{1'b0}};
+        fill_req = 1'b1;
+        s_axis_tvalid = 1'b1;
+        s_axis_tdata = pack_line_word(0);
+        s_axis_tkeep = 8'h1f;
+        s_axis_tlast = 1'b1;
+        @(negedge clk);
+        fill_req = 1'b0;
+        repeat (2) @(negedge clk);
+        check(!s_axis_tready, "AXIS ready stays low for zero-width row");
+        check(beat_seen == 0, "zero-width row writes no beats");
+        check(advance_seen == 0, "zero-width row has no advance pulse");
+        s_axis_tvalid = 1'b0;
+        s_axis_tdata = 64'd0;
+        s_axis_tkeep = 8'd0;
+        s_axis_tlast = 1'b0;
+        fm_w = FM_W[AW-1:0];
+
+        @(negedge clk);
         fill_req = 1'b1;
         @(negedge clk);
         fill_req = 1'b0;

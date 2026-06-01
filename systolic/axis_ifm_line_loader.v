@@ -77,7 +77,7 @@ module axis_ifm_line_loader #(
             tkeep_error <= 1'b0;
             tlast_error <= 1'b0;
         end else begin
-            if (!active && fill_req) begin
+            if (!active && fill_req && (fm_w != {AW{1'b0}})) begin
                 active <= 1'b1;
                 beat_count <= {AW{1'b0}};
             end

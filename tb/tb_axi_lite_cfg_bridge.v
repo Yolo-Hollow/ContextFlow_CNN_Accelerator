@@ -51,7 +51,10 @@ module tb_axi_lite_cfg_bridge;
         .clk(clk), .rst(rst),
         .cfg_wr_en(cfg_wr_en), .cfg_addr(cfg_addr), .cfg_wdata(cfg_wdata),
         .cfg_rd_en(cfg_rd_en), .cfg_rdata(cfg_rdata),
-        .layer_busy(layer_busy), .layer_done(layer_done), .start_pulse(start_pulse),
+        .layer_busy(layer_busy), .layer_done(layer_done),
+        .dbg_expected_bytes(32'd0), .dbg_core_wr_count(32'd0),
+        .dbg_axis_wr_count(32'd0), .dbg_tlast_count(32'd0),
+        .dbg_last_tlast_index(32'd0), .start_pulse(start_pulse),
         .fm_h(fm_h), .fm_w(fm_w), .ofm_h(ofm_h), .ofm_w(ofm_w),
         .conv_stride(conv_stride), .conv_pad(conv_pad),
         .activation_mode(activation_mode),
@@ -64,6 +67,7 @@ module tb_axi_lite_cfg_bridge;
 
     integer pass, fail;
     integer start_pulse_count;
+    integer count_before;
     reg [31:0] rd;
 
     always @(posedge clk) begin
@@ -259,6 +263,37 @@ module tb_axi_lite_cfg_bridge;
         axi_write(8'h00, 32'd2, 4'hf);
         axi_read(8'h00, rd);
         check_eq(rd[1], 1'b0, "done clear");
+
+        count_before = start_pulse_count;
+        layer_busy = 1'b1;
+        axi_write(8'h00, 32'h0000_0100, 4'h2);
+        repeat (2) @(negedge clk);
+        if (start_pulse_count != count_before) begin
+            $display("[FAIL] ctrl upper-byte partial write caused start count=%0d exp=%0d",
+                     start_pulse_count, count_before);
+            fail = fail + 1;
+        end else pass = pass + 1;
+
+        axi_write(8'h04, {7'd0, 9'd99, 7'd0, 9'd88}, 4'hf);
+        axi_read(8'h04, rd);
+        check_eq(rd, {7'd0, 9'd5, 7'd0, 9'd8}, "busy freezes fm_size");
+
+        axi_write(8'h00, 32'd1, 4'h1);
+        repeat (2) @(negedge clk);
+        if (start_pulse_count != count_before) begin
+            $display("[FAIL] busy ctrl start count=%0d exp=%0d",
+                     start_pulse_count, count_before);
+            fail = fail + 1;
+        end else pass = pass + 1;
+
+        layer_busy = 1'b0;
+        axi_write(8'h00, 32'd1, 4'h1);
+        repeat (2) @(negedge clk);
+        if (start_pulse_count != count_before + 1) begin
+            $display("[FAIL] idle ctrl start count=%0d exp=%0d",
+                     start_pulse_count, count_before + 1);
+            fail = fail + 1;
+        end else pass = pass + 1;
 
         $display("=== tb_axi_lite_cfg_bridge: %0d pass, %0d fail ===", pass, fail);
         if (fail != 0) $fatal(1);

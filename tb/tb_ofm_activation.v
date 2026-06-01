@@ -105,6 +105,149 @@ module tb_ofm_activation;
         end
     endtask
 
+    task make_packet;
+        input integer pkt;
+        input [1:0] mode_i;
+        output [ADDR_W-1:0] addr_o;
+        output [10:0] cout_o;
+        output [COUT_TILE-1:0] mask_o;
+        output [COUT_TILE*8-1:0] data_o;
+        integer lane;
+        begin
+            addr_o = pkt[ADDR_W-1:0] + 4'd4;
+            cout_o = 11'd16 + pkt[10:0];
+            mask_o = 8'hf0 ^ pkt[7:0];
+            data_o = {COUT_TILE*8{1'b0}};
+            for (lane = 0; lane < COUT_TILE; lane = lane + 1) begin
+                if (mode_i == 2'd1 && lane[0])
+                    data_o[lane*8 +: 8] = 8'h80 + pkt[7:0] + lane[7:0];
+                else
+                    data_o[lane*8 +: 8] = 8'd20 + (pkt[7:0] * 8'd7) + lane[7:0];
+            end
+        end
+    endtask
+
+    task expect_packet;
+        input integer pkt;
+        input [1:0] mode_i;
+        reg [ADDR_W-1:0] exp_addr;
+        reg [10:0] exp_cout;
+        reg [COUT_TILE-1:0] exp_mask;
+        reg [COUT_TILE*8-1:0] exp_data;
+        reg [7:0] exp_lane;
+        integer lane;
+        begin
+            make_packet(pkt, mode_i, exp_addr, exp_cout, exp_mask, exp_data);
+            if (out_valid !== 1'b1) begin
+                $display("[FAIL] burst pkt%0d valid", pkt);
+                fail = fail + 1;
+            end else pass = pass + 1;
+            if (out_addr !== exp_addr || out_cout_base !== exp_cout || out_channel_valid !== exp_mask) begin
+                $display("[FAIL] burst pkt%0d metadata addr=%0d/%0d cout=%0d/%0d mask=%b/%b",
+                         pkt, out_addr, exp_addr, out_cout_base, exp_cout,
+                         out_channel_valid, exp_mask);
+                fail = fail + 1;
+            end else pass = pass + 1;
+            for (lane = 0; lane < COUT_TILE; lane = lane + 1) begin
+                if (mode_i == 2'd0)
+                    exp_lane = exp_data[lane*8 +: 8];
+                else if (mode_i == 2'd1)
+                    exp_lane = ($signed(exp_data[lane*8 +: 8]) < 0) ? 8'd0 : exp_data[lane*8 +: 8];
+                else
+                    exp_lane = exp_data[lane*8 +: 8] + 8'd1;
+                if (out_data[lane*8 +: 8] !== exp_lane) begin
+                    $display("[FAIL] burst mode%0d pkt%0d lane%0d got=%0d exp=%0d",
+                             mode_i, pkt, lane, out_data[lane*8 +: 8], exp_lane);
+                    fail = fail + 1;
+                end else pass = pass + 1;
+            end
+        end
+    endtask
+
+    task check_back_to_back;
+        input [1:0] mode_i;
+        reg [ADDR_W-1:0] pkt_addr;
+        reg [10:0] pkt_cout;
+        reg [COUT_TILE-1:0] pkt_mask;
+        reg [COUT_TILE*8-1:0] pkt_data;
+        integer pkt;
+        begin
+            @(negedge clk);
+            mode = mode_i;
+            out_ready = 1'b1;
+            make_packet(0, mode_i, pkt_addr, pkt_cout, pkt_mask, pkt_data);
+            in_valid = 1'b1;
+            in_addr = pkt_addr;
+            in_cout_base = pkt_cout;
+            in_channel_valid = pkt_mask;
+            in_data = pkt_data;
+            for (pkt = 0; pkt < 3; pkt = pkt + 1) begin
+                @(negedge clk);
+                #1;
+                expect_packet(pkt, mode_i);
+                if (pkt < 2) begin
+                    make_packet(pkt + 1, mode_i, pkt_addr, pkt_cout, pkt_mask, pkt_data);
+                    in_valid = 1'b1;
+                    in_addr = pkt_addr;
+                    in_cout_base = pkt_cout;
+                    in_channel_valid = pkt_mask;
+                    in_data = pkt_data;
+                end else begin
+                    in_valid = 1'b0;
+                end
+            end
+            @(negedge clk);
+        end
+    endtask
+
+    task check_backpressure;
+        input [1:0] mode_i;
+        reg [ADDR_W-1:0] pkt_addr;
+        reg [10:0] pkt_cout;
+        reg [COUT_TILE-1:0] pkt_mask;
+        reg [COUT_TILE*8-1:0] pkt_data;
+        begin
+            @(negedge clk);
+            mode = mode_i;
+            out_ready = 1'b1;
+            make_packet(0, mode_i, pkt_addr, pkt_cout, pkt_mask, pkt_data);
+            in_valid = 1'b1;
+            in_addr = pkt_addr;
+            in_cout_base = pkt_cout;
+            in_channel_valid = pkt_mask;
+            in_data = pkt_data;
+
+            @(negedge clk);
+            #1;
+            expect_packet(0, mode_i);
+
+            out_ready = 1'b0;
+            make_packet(1, mode_i, pkt_addr, pkt_cout, pkt_mask, pkt_data);
+            in_valid = 1'b1;
+            in_addr = pkt_addr;
+            in_cout_base = pkt_cout;
+            in_channel_valid = pkt_mask;
+            in_data = pkt_data;
+
+            repeat (2) begin
+                @(negedge clk);
+                #1;
+                expect_packet(0, mode_i);
+                if (in_ready !== 1'b0) begin
+                    $display("[FAIL] backpressure in_ready high while stalled");
+                    fail = fail + 1;
+                end else pass = pass + 1;
+            end
+
+            out_ready = 1'b1;
+            @(negedge clk);
+            #1;
+            expect_packet(1, mode_i);
+            in_valid = 1'b0;
+            @(negedge clk);
+        end
+    endtask
+
     initial begin
         clk = 0;
         rst = 1;
@@ -127,6 +270,11 @@ module tb_ofm_activation;
         check_mode(2'd0);
         check_mode(2'd1);
         check_mode(2'd2);
+        check_back_to_back(2'd0);
+        check_back_to_back(2'd1);
+        check_back_to_back(2'd2);
+        check_backpressure(2'd0);
+        check_backpressure(2'd2);
 
         $display("=== tb_ofm_activation: %0d pass, %0d fail ===", pass, fail);
         if (fail != 0) $fatal(1);

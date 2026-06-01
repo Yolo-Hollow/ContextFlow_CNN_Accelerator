@@ -133,6 +133,8 @@ module conv_accel_core_axi_lite_axis_stream #(
     wire [7:0] ofm_stream_data;
     wire ofm_stream_full;
     wire ofm_stream_almost_full;
+    wire [10:0] configured_cout_total;
+    wire [15:0] configured_num_pixels;
 
     wire bias_tkeep_error;
     wire bias_tlast_error;
@@ -140,11 +142,13 @@ module conv_accel_core_axi_lite_axis_stream #(
     wire weight_tlast_error;
     wire ifm_tkeep_error;
     wire ifm_tlast_error;
-    wire axi_cfg_fire;
-    reg [10:0] cfg_cout_total;
-    reg [15:0] cfg_num_pixels;
-    reg [31:0] ofm_expected_bytes;
     reg [31:0] ofm_byte_count;
+    reg [31:0] core_ofm_wr_count;
+    reg [31:0] axis_ofm_wr_count;
+    reg [31:0] axis_tlast_count;
+    reg [31:0] last_tlast_index;
+    wire [31:0] ofm_expected_bytes = configured_num_pixels * configured_cout_total;
+    wire core_ofm_wr_fire = core_ofm_wr_en && core_ofm_wr_ready;
     wire ofm_stream_fire = ofm_stream_valid && ofm_stream_ready;
     wire ofm_stream_last = ofm_stream_valid && (ofm_expected_bytes != 32'd0) &&
                            (ofm_byte_count == ofm_expected_bytes - 1'b1);
@@ -155,34 +159,27 @@ module conv_accel_core_axi_lite_axis_stream #(
     assign bias_axis_error = bias_tkeep_error || bias_tlast_error;
     assign weight_axis_error = weight_tkeep_error || weight_tlast_error;
     assign ifm_axis_error = ifm_tkeep_error || ifm_tlast_error;
-    assign axi_cfg_fire = s_axi_awvalid && s_axi_awready && s_axi_wvalid && s_axi_wready;
-
     always @(posedge clk) begin
         if (rst) begin
-            cfg_cout_total <= 11'd0;
-            cfg_num_pixels <= 16'd0;
-            ofm_expected_bytes <= 32'd0;
             ofm_byte_count <= 32'd0;
+            core_ofm_wr_count <= 32'd0;
+            axis_ofm_wr_count <= 32'd0;
+            axis_tlast_count <= 32'd0;
+            last_tlast_index <= 32'd0;
         end else begin
-            if (axi_cfg_fire) begin
-                case (s_axi_awaddr[7:2])
-                    6'h00: begin
-                        if (s_axi_wdata[0]) begin
-                            ofm_expected_bytes <= cfg_num_pixels * cfg_cout_total;
-                            ofm_byte_count <= 32'd0;
-                        end
-                    end
-                    6'h05: cfg_cout_total <= s_axi_wdata[10:0];
-                    6'h06: cfg_num_pixels <= s_axi_wdata[15:0];
-                    default: begin end
-                endcase
-            end
+            if (core_ofm_wr_fire)
+                core_ofm_wr_count <= core_ofm_wr_count + 1'b1;
 
             if (ofm_stream_fire) begin
+                axis_ofm_wr_count <= axis_ofm_wr_count + 1'b1;
                 if (ofm_stream_last)
                     ofm_byte_count <= 32'd0;
                 else
                     ofm_byte_count <= ofm_byte_count + 1'b1;
+                if (ofm_stream_last) begin
+                    axis_tlast_count <= axis_tlast_count + 1'b1;
+                    last_tlast_index <= axis_ofm_wr_count + 1'b1;
+                end
             end
         end
     end
@@ -284,6 +281,13 @@ module conv_accel_core_axi_lite_axis_stream #(
         .bias_load_done(bias_load_done),
         .current_cout_base(current_cout_base),
         .current_pass_base_k(current_pass_base_k),
+        .configured_cout_total(configured_cout_total),
+        .configured_num_pixels(configured_num_pixels),
+        .debug_expected_bytes(ofm_expected_bytes),
+        .debug_core_wr_count(core_ofm_wr_count),
+        .debug_axis_wr_count(axis_ofm_wr_count),
+        .debug_tlast_count(axis_tlast_count),
+        .debug_last_tlast_index(last_tlast_index),
         .bias_wr_addr(bias_wr_addr),
         .bias_wr_data(bias_wr_data),
         .bias_wr_en(bias_wr_en),

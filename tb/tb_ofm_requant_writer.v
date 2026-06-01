@@ -77,6 +77,114 @@ module tb_ofm_requant_writer;
         end
     endtask
 
+    task make_packet;
+        input integer pkt;
+        output [ADDR_W-1:0] addr_o;
+        output [10:0] cout_o;
+        output [COLS*2-1:0] mask_o;
+        output [COLS*2*PSUM_W-1:0] data_o;
+        integer lane;
+        begin
+            addr_o = 4'd3 + pkt[ADDR_W-1:0];
+            cout_o = 11'd16 + pkt[10:0];
+            mask_o = 8'ha5 ^ pkt[7:0];
+            data_o = {COLS*2*PSUM_W{1'b0}};
+            for (lane = 0; lane < COLS*2; lane = lane + 1)
+                data_o[lane*PSUM_W +: PSUM_W] =
+                    (lane[0] ? -32'sd300 : 32'sd120) + pkt*32'sd31 + lane*32'sd19;
+        end
+    endtask
+
+    task expect_packet;
+        input integer pkt;
+        reg [ADDR_W-1:0] exp_addr;
+        reg [10:0] exp_cout;
+        reg [COLS*2-1:0] exp_mask;
+        reg [COLS*2*PSUM_W-1:0] exp_data;
+        reg [7:0] exp;
+        integer lane;
+        begin
+            make_packet(pkt, exp_addr, exp_cout, exp_mask, exp_data);
+            if (ofm_valid !== 1'b1) begin
+                $display("[FAIL] burst pkt%0d valid", pkt);
+                fail = fail + 1;
+            end else pass = pass + 1;
+            if (ofm_addr !== exp_addr || ofm_cout_base !== exp_cout || ofm_channel_valid !== exp_mask) begin
+                $display("[FAIL] burst pkt%0d metadata addr=%0d/%0d cout=%0d/%0d mask=%b/%b",
+                         pkt, ofm_addr, exp_addr, ofm_cout_base, exp_cout,
+                         ofm_channel_valid, exp_mask);
+                fail = fail + 1;
+            end else pass = pass + 1;
+            for (lane = 0; lane < COLS*2; lane = lane + 1) begin
+                exp = golden(exp_data[lane*PSUM_W +: PSUM_W],
+                             mult_flat[lane*MULT_W +: MULT_W],
+                             shift_flat[lane*SHIFT_W +: SHIFT_W],
+                             zp_flat[lane*ZP_W +: ZP_W]);
+                if (ofm_data[lane*8 +: 8] !== exp) begin
+                    $display("[FAIL] burst pkt%0d lane%0d got=%0d exp=%0d",
+                             pkt, lane, ofm_data[lane*8 +: 8], exp);
+                    fail = fail + 1;
+                end else pass = pass + 1;
+            end
+        end
+    endtask
+
+    task check_back_to_back;
+        reg [ADDR_W-1:0] pkt_addr;
+        reg [10:0] pkt_cout;
+        reg [COLS*2-1:0] pkt_mask;
+        reg [COLS*2*PSUM_W-1:0] pkt_data;
+        integer pkt;
+        integer exp_pkt;
+        integer wait_count;
+        begin
+            repeat (2) @(negedge clk);
+            pkt = 0;
+            exp_pkt = 0;
+            wait_count = 0;
+            make_packet(0, pkt_addr, pkt_cout, pkt_mask, pkt_data);
+            packet_valid = 1'b1;
+            packet_addr = pkt_addr;
+            packet_cout_base = pkt_cout;
+            packet_channel_valid = pkt_mask;
+            packet_data = pkt_data;
+            pkt = 1;
+
+            while (exp_pkt < 3 && wait_count < 16) begin
+                @(negedge clk);
+                #1;
+                if (ofm_valid) begin
+                    expect_packet(exp_pkt);
+                    exp_pkt = exp_pkt + 1;
+                end
+                if (pkt < 3) begin
+                    make_packet(pkt, pkt_addr, pkt_cout, pkt_mask, pkt_data);
+                    packet_valid = 1'b1;
+                    packet_addr = pkt_addr;
+                    packet_cout_base = pkt_cout;
+                    packet_channel_valid = pkt_mask;
+                    packet_data = pkt_data;
+                    pkt = pkt + 1;
+                end else begin
+                    packet_valid = 1'b0;
+                end
+                wait_count = wait_count + 1;
+            end
+            if (exp_pkt != 3) begin
+                $display("[FAIL] burst output count got=%0d exp=3", exp_pkt);
+                fail = fail + 1;
+            end else pass = pass + 1;
+
+            @(posedge clk);
+            @(posedge clk);
+            #1;
+            if (ofm_valid !== 1'b0) begin
+                $display("[FAIL] burst valid did not clear");
+                fail = fail + 1;
+            end else pass = pass + 1;
+        end
+    endtask
+
     initial begin
         clk = 0;
         rst = 1;
@@ -131,6 +239,8 @@ module tb_ofm_requant_writer;
             $display("[FAIL] valid did not clear");
             fail = fail + 1;
         end else pass = pass + 1;
+
+        check_back_to_back();
 
         $display("=== tb_ofm_requant_writer: %0d pass, %0d fail ===", pass, fail);
         if (fail != 0) $fatal(1);

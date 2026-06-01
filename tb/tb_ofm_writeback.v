@@ -39,6 +39,7 @@ module tb_ofm_writeback;
     integer pass, fail;
     integer i;
     integer wr_count;
+    integer count_before;
     reg [7:0] mem [0:63];
 
     task send_packet;
@@ -64,6 +65,39 @@ module tb_ofm_writeback;
         begin
             if (mem[addr] !== exp[7:0]) begin
                 $display("[FAIL] mem[%0d] got=%0d exp=%0d", addr, mem[addr], exp[7:0]);
+                fail = fail + 1;
+            end else pass = pass + 1;
+        end
+    endtask
+
+    task check_busy_holds_on_same_cycle_push;
+        begin
+            wait(!busy);
+            repeat (2) @(negedge clk);
+
+            send_packet(2, 0, 8'b1111_1111);
+            wait(dut.active && dut.lane_idx == COUT_TILE - 1);
+
+            @(negedge clk);
+            packet_pixel = 4'd3;
+            packet_cout_base = 11'd0;
+            packet_channel_valid = 8'b0000_0001;
+            packet_data = {COUT_TILE*8{1'b0}};
+            packet_data[7:0] = 8'hc3;
+            packet_valid = 1'b1;
+
+            @(negedge clk);
+            packet_valid = 1'b0;
+            #1;
+            if (busy !== 1'b1) begin
+                $display("[FAIL] busy dropped when new packet pushed on final lane");
+                fail = fail + 1;
+            end else pass = pass + 1;
+
+            wait(wr_count == count_before + 9);
+            repeat (COUT_TILE + 2) @(negedge clk);
+            if (busy !== 1'b0) begin
+                $display("[FAIL] busy did not clear after same-cycle push packets drained");
                 fail = fail + 1;
             end else pass = pass + 1;
         end
@@ -116,6 +150,9 @@ module tb_ofm_writeback;
             expect_mem(i, i);
             expect_mem(COUT_TOTAL + i, 32 + i);
         end
+
+        count_before = wr_count;
+        check_busy_holds_on_same_cycle_push();
 
         $display("=== tb_ofm_writeback: %0d pass, %0d fail ===", pass, fail);
         if (fail != 0) $fatal(1);

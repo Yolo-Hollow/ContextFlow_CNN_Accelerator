@@ -105,12 +105,12 @@ module ofm_writeback #(
 
                 if (lane_done && at_last_lane) begin
                     active <= 1'b0;
-                    busy <= !fifo_empty;
+                    busy <= !fifo_empty || push;
                 end else if (lane_done) begin
                     lane_idx <= lane_idx + 11'd1;
                 end
             end else begin
-                busy <= !fifo_empty;
+                busy <= !fifo_empty || push;
             end
         end
     end

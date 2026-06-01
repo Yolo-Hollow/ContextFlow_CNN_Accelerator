@@ -43,6 +43,13 @@ module conv_accel_core #(
     input  bias_load_done,
     output [10:0] current_cout_base,
     output [10:0] current_pass_base_k,
+    output [10:0] configured_cout_total,
+    output [15:0] configured_num_pixels,
+    input  [31:0] debug_expected_bytes,
+    input  [31:0] debug_core_wr_count,
+    input  [31:0] debug_axis_wr_count,
+    input  [31:0] debug_tlast_count,
+    input  [31:0] debug_last_tlast_index,
 
     input  [5:0]        bias_wr_addr,
     input  [PSUM_W-1:0] bias_wr_data,
@@ -98,11 +105,20 @@ module conv_accel_core #(
     wire [COLS*2*SHIFT_W-1:0] quant_shift_flat;
     wire [COLS*2*ZP_W-1:0] quant_zp_flat;
 
+    assign configured_cout_total = cout_total;
+    assign configured_num_pixels = num_pixels;
+
     layer_config_regs u_cfg (
         .clk(clk), .rst(rst),
         .cfg_wr_en(cfg_wr_en), .cfg_addr(cfg_addr), .cfg_wdata(cfg_wdata),
         .cfg_rd_en(cfg_rd_en), .cfg_rdata(cfg_rdata),
-        .layer_busy(layer_busy), .layer_done(layer_done), .start_pulse(start_pulse),
+        .layer_busy(layer_busy), .layer_done(layer_done),
+        .dbg_expected_bytes(debug_expected_bytes),
+        .dbg_core_wr_count(debug_core_wr_count),
+        .dbg_axis_wr_count(debug_axis_wr_count),
+        .dbg_tlast_count(debug_tlast_count),
+        .dbg_last_tlast_index(debug_last_tlast_index),
+        .start_pulse(start_pulse),
         .fm_h(fm_h), .fm_w(fm_w), .ofm_h(ofm_h), .ofm_w(ofm_w),
         .conv_stride(conv_stride), .conv_pad(conv_pad),
         .activation_mode(activation_mode),
