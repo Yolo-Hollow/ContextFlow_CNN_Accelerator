@@ -77,8 +77,13 @@ set tests {
     {tb_conv_accel_core_axi_lite_axis_stream_r18_c16_smoke tb/tb_conv_accel_core_axi_lite_axis_stream_r18_c16_smoke.v}
     {tb_conv_accel_core_axi_lite_axis_stream_r32_c16_smoke tb/tb_conv_accel_core_axi_lite_axis_stream_r32_c16_smoke.v}
     {tb_conv_accel_core_axi_lite_axis_stream_ps_driver tb/tb_conv_accel_core_axi_lite_axis_stream_ps_driver.v}
+    {tb_conv_accel_core_axi_lite_axis_stream_backpressure tb/tb_conv_accel_core_axi_lite_axis_stream_backpressure.v}
     {tb_conv_accel_core_axi_lite_full_stream_backpressure tb/tb_conv_accel_core_axi_lite_full_stream_backpressure.v}
+    {tb_layer_config_regs tb/tb_layer_config_regs.v}
     {tb_axi_lite_cfg_bridge tb/tb_axi_lite_cfg_bridge.v}
+    {tb_ofm_requant_writer tb/tb_ofm_requant_writer.v}
+    {tb_ofm_activation tb/tb_ofm_activation.v}
+    {tb_ofm_writeback tb/tb_ofm_writeback.v}
     {tb_bias_weight_stream_loader tb/tb_bias_weight_stream_loader.v}
     {tb_ifm_line_stream_loader tb/tb_ifm_line_stream_loader.v}
     {tb_axis_ifm_line_loader tb/tb_axis_ifm_line_loader.v}

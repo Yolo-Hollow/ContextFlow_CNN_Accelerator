@@ -109,6 +109,7 @@ $longTests = @(
     @{ Top = "tb_conv_accel_core_axi_lite_axis_stream_r18_c16_smoke"; Files = @("tb/tb_conv_accel_core_axi_lite_axis_stream_r18_c16_smoke.v") },
     @{ Top = "tb_conv_accel_core_axi_lite_axis_stream_r32_c16_smoke"; Files = @("tb/tb_conv_accel_core_axi_lite_axis_stream_r32_c16_smoke.v") },
     @{ Top = "tb_conv_accel_core_axi_lite_axis_stream_ps_driver"; Files = @("tb/tb_conv_accel_core_axi_lite_axis_stream_ps_driver.v") },
+    @{ Top = "tb_conv_accel_core_axi_lite_axis_stream_backpressure"; Files = @("tb/tb_conv_accel_core_axi_lite_axis_stream_backpressure.v") },
     @{ Top = "tb_conv_accel_core_axi_lite_full_stream_backpressure"; Files = @("tb/tb_conv_accel_core_axi_lite_full_stream_backpressure.v") }
 )
 

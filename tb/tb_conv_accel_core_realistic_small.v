@@ -245,11 +245,11 @@ module `TB_CONV_ACCEL_CORE_MODULE;
     wire [15:0] ofm_m_addr;
     wire [7:0] ofm_m_data;
     reg ofm_m_ready;
+`endif
 `ifdef TB_CONV_ACCEL_CORE_OFM_READY_STALL
     integer ofm_ready_cycle;
     integer ofm_stall_count;
     reg ofm_stall_seen;
-`endif
 `endif
 
 `ifdef TB_CONV_ACCEL_CORE_USE_AXIS_STREAM
@@ -837,18 +837,38 @@ module `TB_CONV_ACCEL_CORE_MODULE;
             ofm_ready_cycle <= 0;
             ofm_stall_count <= 0;
             ofm_stall_seen <= 1'b0;
+`ifdef TB_CONV_ACCEL_CORE_USE_FULL_STREAM
             ofm_m_ready <= 1'b1;
+`endif
+`ifdef TB_CONV_ACCEL_CORE_USE_AXIS_STREAM
+            ofm_m_axis_tready <= 1'b1;
+`endif
         end else begin
             ofm_ready_cycle <= ofm_ready_cycle + 1;
             if (!ofm_stall_seen && ofm_mem_wr_count >= 64) begin
                 ofm_stall_seen <= 1'b1;
                 ofm_stall_count <= 12;
+`ifdef TB_CONV_ACCEL_CORE_USE_FULL_STREAM
                 ofm_m_ready <= 1'b0;
+`endif
+`ifdef TB_CONV_ACCEL_CORE_USE_AXIS_STREAM
+                ofm_m_axis_tready <= 1'b0;
+`endif
             end else if (ofm_stall_count != 0) begin
                 ofm_stall_count <= ofm_stall_count - 1;
+`ifdef TB_CONV_ACCEL_CORE_USE_FULL_STREAM
                 ofm_m_ready <= 1'b0;
+`endif
+`ifdef TB_CONV_ACCEL_CORE_USE_AXIS_STREAM
+                ofm_m_axis_tready <= 1'b0;
+`endif
             end else begin
+`ifdef TB_CONV_ACCEL_CORE_USE_FULL_STREAM
                 ofm_m_ready <= 1'b1;
+`endif
+`ifdef TB_CONV_ACCEL_CORE_USE_AXIS_STREAM
+                ofm_m_axis_tready <= 1'b1;
+`endif
             end
         end
     end
@@ -1024,6 +1044,12 @@ module `TB_CONV_ACCEL_CORE_MODULE;
             $display("[FAIL] PS line fill service count should be non-zero");
             fail = fail + 1;
         end else pass = pass + 1;
+`ifdef TB_CONV_ACCEL_CORE_OFM_READY_STALL
+        if (!ofm_stall_seen) begin
+            $display("[FAIL] OFM ready stall was not exercised");
+            fail = fail + 1;
+        end else pass = pass + 1;
+`endif
 `ifdef TB_CONV_ACCEL_CORE_USE_FULL_STREAM
         if (ifm_loader_fail_count != 0) begin
             $display("[FAIL] IFM stream loader write mismatches=%0d", ifm_loader_fail_count);
