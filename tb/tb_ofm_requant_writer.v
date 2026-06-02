@@ -17,7 +17,9 @@ module tb_ofm_requant_writer;
     reg [COLS*2*MULT_W-1:0] mult_flat;
     reg [COLS*2*SHIFT_W-1:0] shift_flat;
     reg [COLS*2*ZP_W-1:0] zp_flat;
+    wire packet_ready;
     wire ofm_valid;
+    reg ofm_ready;
     wire [ADDR_W-1:0] ofm_addr;
     wire [10:0] ofm_cout_base;
     wire [COLS*2-1:0] ofm_channel_valid;
@@ -28,10 +30,11 @@ module tb_ofm_requant_writer;
         .ZP_W(ZP_W), .ADDR_W(ADDR_W)
     ) dut (
         .clk(clk), .rst(rst),
-        .packet_valid(packet_valid), .packet_addr(packet_addr),
+        .packet_valid(packet_valid), .packet_ready(packet_ready), .packet_addr(packet_addr),
         .packet_cout_base(packet_cout_base), .packet_channel_valid(packet_channel_valid),
         .packet_data(packet_data),
         .mult_flat(mult_flat), .shift_flat(shift_flat), .zp_flat(zp_flat),
+        .ofm_ready(ofm_ready),
         .ofm_valid(ofm_valid), .ofm_addr(ofm_addr),
         .ofm_cout_base(ofm_cout_base), .ofm_channel_valid(ofm_channel_valid),
         .ofm_data(ofm_data)
@@ -185,6 +188,70 @@ module tb_ofm_requant_writer;
         end
     endtask
 
+    task check_output_backpressure;
+        reg [ADDR_W-1:0] pkt_addr;
+        reg [10:0] pkt_cout;
+        reg [COLS*2-1:0] pkt_mask;
+        reg [COLS*2*PSUM_W-1:0] pkt_data;
+        reg [ADDR_W-1:0] hold_addr;
+        reg [10:0] hold_cout;
+        reg [COLS*2-1:0] hold_mask;
+        reg [COLS*2*8-1:0] hold_data;
+        begin
+            repeat (3) @(negedge clk);
+            ofm_ready = 1'b1;
+            make_packet(4, pkt_addr, pkt_cout, pkt_mask, pkt_data);
+            packet_valid = 1'b1;
+            packet_addr = pkt_addr;
+            packet_cout_base = pkt_cout;
+            packet_channel_valid = pkt_mask;
+            packet_data = pkt_data;
+            @(negedge clk);
+            packet_valid = 1'b0;
+
+            wait(ofm_valid);
+            #1;
+            hold_addr = ofm_addr;
+            hold_cout = ofm_cout_base;
+            hold_mask = ofm_channel_valid;
+            hold_data = ofm_data;
+            ofm_ready = 1'b0;
+
+            make_packet(5, pkt_addr, pkt_cout, pkt_mask, pkt_data);
+            packet_valid = 1'b1;
+            packet_addr = pkt_addr;
+            packet_cout_base = pkt_cout;
+            packet_channel_valid = pkt_mask;
+            packet_data = pkt_data;
+            repeat (3) begin
+                @(negedge clk);
+                #1;
+                if (packet_ready !== 1'b0 || ofm_valid !== 1'b1 ||
+                    ofm_addr !== hold_addr || ofm_cout_base !== hold_cout ||
+                    ofm_channel_valid !== hold_mask || ofm_data !== hold_data) begin
+                    $display("[FAIL] output changed or input ready during backpressure ready=%0d valid=%0d",
+                        packet_ready, ofm_valid);
+                    fail = fail + 1;
+                end else pass = pass + 1;
+            end
+
+            ofm_ready = 1'b1;
+            @(negedge clk);
+            packet_valid = 1'b0;
+
+            wait(ofm_valid && ofm_addr == pkt_addr);
+            #1;
+            expect_packet(5);
+            @(posedge clk);
+            @(posedge clk);
+            #1;
+            if (ofm_valid !== 1'b0) begin
+                $display("[FAIL] backpressure valid did not clear");
+                fail = fail + 1;
+            end else pass = pass + 1;
+        end
+    endtask
+
     initial begin
         clk = 0;
         rst = 1;
@@ -193,6 +260,7 @@ module tb_ofm_requant_writer;
         packet_cout_base = 0;
         packet_channel_valid = 8'b0000_0011;
         packet_data = 0;
+        ofm_ready = 1'b1;
         mult_flat = 0;
         shift_flat = 0;
         zp_flat = 0;
@@ -241,6 +309,7 @@ module tb_ofm_requant_writer;
         end else pass = pass + 1;
 
         check_back_to_back();
+        check_output_backpressure();
 
         $display("=== tb_ofm_requant_writer: %0d pass, %0d fail ===", pass, fail);
         if (fail != 0) $fatal(1);

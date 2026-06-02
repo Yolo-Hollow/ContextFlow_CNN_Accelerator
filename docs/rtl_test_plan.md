@@ -187,10 +187,11 @@ AXI-Lite config
 - signed multiply、round、shift、zero-point、saturation 与 testbench golden 一致。
 - back-to-back packet 输出顺序正确。
 - packet 地址、`cout_base`、channel mask 不错位。
+- Output backpressure holds requant pipeline state stable when `ofm_ready=0`, and `packet_ready` deasserts until the held output is accepted.
 
 当前结果：
 
-- `44 pass, 0 fail`
+- `58 pass, 0 fail`
 
 ### `tb_ofm_writeback`
 
@@ -205,10 +206,11 @@ AXI-Lite config
 - channel mask 屏蔽无效 lane。
 - `wr_ready=0` 时保持 lane，恢复后继续写。
 - final-lane same-cycle push 后 `busy` 保持，后续 packet 不丢。
+- Burst stress sends 12 full-mask packets while `wr_ready` periodically stalls, checking every byte address/data.
 
 当前结果：
 
-- `24 pass, 0 fail`
+- `121 pass, 0 fail`
 
 ### `tb_axi_lite_cfg_bridge`
 
@@ -261,6 +263,101 @@ AXI-Lite config
 
 - `58 pass, 0 fail`
 
+## Layer06 real-image external golden tests
+
+These tests verify a real intermediate layer shape:
+
+- Layer: `52x52x64 -> 52x52x128`
+- Array: `ROWS=18, COLS=16, IFM_BANKS=2`
+- K scheduling: `64*3*3=576`, `K_PASSES=32`
+- COUT scheduling: `COUT_TILE=COLS*2=32`, `COUT_BLOCKS=4`
+- Total schedule blocks per full spatial tile: `32*4=128`
+
+Data source:
+
+- Binary golden export: `D:/MPSoC/python_prj/rtl_golden/facemask_layer06_rtl`
+- xsim `$readmemh` files: `D:/MPSoC/python_prj/rtl_golden/facemask_layer06_rtl/xsim_mem`
+- Conversion script: `tb/make_layer06_xsim_mem.py`
+- Quant config: `mult=18055`, `shift=7`, `zp=75`
+- Activation: LUT mode, loaded from `activation_lut_u8.mem`
+
+The golden follows the current RTL signed IFM datapath. It does not apply input zero-point compensation before the MAC, because the current RTL datapath directly multiplies signed IFM bytes by signed weights.
+
+### `tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_ext_tile4`
+
+Purpose:
+
+- Verify external IFM/weight/bias/LUT/golden import on the top 4 output rows.
+- Quickly check real 64-channel input blocking, 32 K passes, 4 COUT blocks, requant, activation, and HWC OFM writeback.
+
+Checks:
+
+- OFM byte-by-byte matches `golden_ofm_u8_hwc.mem`.
+- Output count is `52*4*128`.
+- `bias/weight/ifm_axis_error=0`.
+- AXIS TLAST and debug counters match expected counts.
+- First mismatch prints tile, pixel, global pixel, channel, address, RTL byte, and golden byte.
+
+Current result:
+
+- `26641 pass, 0 fail`
+
+### `tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_tile4_fifo16_backpressure`
+
+Purpose:
+
+- Verify top-level OFM backpressure correctness with a deliberately shallow OFM AXIS byte FIFO.
+- Combines `OFM_FIFO_DEPTH=16` with periodic downstream `m_axis_tready` stalls.
+- Covers the same top 4 output rows, 64 input channels, 32 K passes, and 4 COUT blocks as tile4.
+
+Checks:
+
+- Output byte count is unchanged by backpressure.
+- AXIS TLAST and debug counters match the expected tile output.
+- The ready/valid path from final PSUM packet FIFO through requant into the OFM packet FIFO does not drop or duplicate packets when the downstream byte FIFO is full.
+
+Current result:
+
+- `26642 pass, 0 fail`
+
+### `tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_ext_tiles`
+
+Purpose:
+
+- Verify three spatial boundary tiles with real external data.
+- Covers top tile `tile_oy_base=0`, middle tile `tile_oy_base=24`, and bottom tile `tile_oy_base=48`.
+
+Checks:
+
+- Same checks as external tile4.
+- Confirms non-zero `tile_pixel_base` addressing and bottom padding behavior.
+
+Current result:
+
+- `79889 pass, 0 fail`
+
+### `tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_ext_full`
+
+Purpose:
+
+- Verify the complete `52x52x64 -> 52x52x128` layer as one full spatial tile with real external data.
+- Covers all `346112` OFM bytes.
+
+Checks:
+
+- Same checks as external tile4 over the full spatial tile.
+- Uses `OFM_FIFO_DEPTH=1024`; depth 256 was insufficient for the full continuous output burst in this RTL configuration.
+
+Current result:
+
+- `346129 pass, 0 fail`
+
+### OFM backpressure implementation note
+
+`ofm_requant_writer` now has an explicit `packet_ready/ofm_ready` handshake. The requant pipeline advances only when the downstream OFM packet FIFO can accept data, or when the pipeline output is empty. This replaces the older fixed-slack dependency on `almost_full`, so correctness no longer depends on reserving a particular number of FIFO entries for the requant pipeline.
+
+The full-layer shallow-FIFO diagnostic wrapper `tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_full_fifo256` is intentionally not listed in the default xsim regression because it timed out in targeted runs. Use the tile4 shallow-FIFO backpressure test for regular correctness coverage, and keep full-layer tests at normal FIFO depth for targeted/nightly external-golden verification.
+
 ## 回归命令
 
 单个 xsim 顶层：
@@ -287,6 +384,6 @@ foreach ($top in $tops) {
 
 - 顶层数据仍是 deterministic directed pattern，不是大规模随机 workload。
 - OFM 背压目前是固定长度 stall，不是长时间随机 `tready` 抖动。
-- Quant 顶层仍使用 identity 参数，尚未在完整顶层覆盖复杂 `mult/shift/zp` 组合。
+- Real layer06 已覆盖一组非 identity `mult/shift/zp` 和 LUT activation；仍未覆盖多层、多组量化参数的随机/扫参组合。
 - 当前没有综合后门级仿真，也没有形式验证。
 - FIFO 深度与实际 DMA/DDR 最大 stall 的关系仍需要结合系统时序和带宽评估。

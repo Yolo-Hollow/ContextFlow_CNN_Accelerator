@@ -12,6 +12,7 @@ module ofm_requant_writer #(
     input  rst,
 
     input  packet_valid,
+    output packet_ready,
     input  [ADDR_W-1:0] packet_addr,
     input  [10:0] packet_cout_base,
     input  [COLS*2-1:0] packet_channel_valid,
@@ -22,11 +23,15 @@ module ofm_requant_writer #(
     input  [COLS*2*ZP_W-1:0]    zp_flat,
 
     output                      ofm_valid,
+    input                       ofm_ready,
     output reg [ADDR_W-1:0]     ofm_addr,
     output reg [10:0]           ofm_cout_base,
     output reg [COLS*2-1:0]     ofm_channel_valid,
     output [COLS*2*8-1:0]       ofm_data
 );
+    wire ce = !ofm_valid || ofm_ready;
+    assign packet_ready = ce;
+
     reg [ADDR_W-1:0] addr_r1;
     reg [10:0] cout_r1;
     reg [COLS*2-1:0] mask_r1;
@@ -38,7 +43,7 @@ module ofm_requant_writer #(
             ofm_addr <= {ADDR_W{1'b0}};
             ofm_cout_base <= 11'd0;
             ofm_channel_valid <= {COLS*2{1'b0}};
-        end else begin
+        end else if (ce) begin
             if (packet_valid) begin
                 addr_r1 <= packet_addr;
                 cout_r1 <= packet_cout_base;
@@ -68,6 +73,7 @@ module ofm_requant_writer #(
                 .psuma_in(packet_data[(2*c)*PSUM_W +: PSUM_W]),
                 .psumb_in(packet_data[(2*c+1)*PSUM_W +: PSUM_W]),
                 .valid_in(packet_valid),
+                .ce(ce),
                 .ofm_a(qa),
                 .ofm_b(qb),
                 .valid_out(valid_vec[c])

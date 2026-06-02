@@ -136,7 +136,7 @@ module conv_layer_top_stream #(
     wire [COLS*2-1:0] rq_fifo_channel_valid;
     wire [COLS*2*8-1:0] rq_fifo_data;
     wire rq_fifo_full;
-    wire rq_fifo_almost_full;
+    wire rq_in_ready;
     wire act_in_ready;
 
     assign current_cout_base = sched_cout_base;
@@ -335,7 +335,7 @@ module conv_layer_top_stream #(
         .in_valid(final_valid), .in_ready(final_fifo_ready),
         .in_addr(final_addr), .in_cout_base(final_cout_base),
         .in_channel_valid(final_channel_valid), .in_data(final_data),
-        .out_valid(final_fifo_valid), .out_ready(rq_fifo_ready && !rq_fifo_almost_full),
+        .out_valid(final_fifo_valid), .out_ready(rq_in_ready),
         .out_addr(final_fifo_addr), .out_cout_base(final_fifo_cout_base),
         .out_channel_valid(final_fifo_channel_valid), .out_data(final_fifo_data),
         .full(final_fifo_full)
@@ -346,11 +346,13 @@ module conv_layer_top_stream #(
         .ZP_W(ZP_W), .ADDR_W(PSUM_BUF_AW)
     ) u_ofm_requant (
         .clk(clk), .rst(rst),
-        .packet_valid(final_fifo_valid && rq_fifo_ready && !rq_fifo_almost_full),
+        .packet_valid(final_fifo_valid),
+        .packet_ready(rq_in_ready),
         .packet_addr(final_fifo_addr),
         .packet_cout_base(final_fifo_cout_base), .packet_channel_valid(final_fifo_channel_valid),
         .packet_data(final_fifo_data),
         .mult_flat(quant_mult_flat), .shift_flat(quant_shift_flat), .zp_flat(quant_zp_flat),
+        .ofm_ready(rq_fifo_ready),
         .ofm_valid(ofm_valid), .ofm_addr(ofm_addr),
         .ofm_cout_base(ofm_cout_base), .ofm_channel_valid(ofm_channel_valid),
         .ofm_data(ofm_data)
@@ -383,7 +385,7 @@ module conv_layer_top_stream #(
         .out_valid(rq_fifo_valid), .out_ready(act_in_ready),
         .out_addr(rq_fifo_addr), .out_cout_base(rq_fifo_cout_base),
         .out_channel_valid(rq_fifo_channel_valid), .out_data(rq_fifo_data),
-        .full(rq_fifo_full), .almost_full(rq_fifo_almost_full)
+        .full(rq_fifo_full), .almost_full()
     );
 
     ofm_activation #(.COUT_TILE(COLS*2), .ADDR_W(PSUM_BUF_AW)) u_activation (

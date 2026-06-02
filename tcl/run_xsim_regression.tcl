@@ -9,7 +9,15 @@ for {set i 0} {$i < [llength $argv]} {incr i} {
     set arg [lindex $argv $i]
     if {$arg eq "-top"} {
         incr i
-        set top_filter [split [lindex $argv $i] ","]
+        set top_filter [concat $top_filter [split [lindex $argv $i] ","]]
+        while {$i + 1 < [llength $argv]} {
+            set next_arg [lindex $argv [expr {$i + 1}]]
+            if {[string match "-*" $next_arg]} {
+                break
+            }
+            incr i
+            set top_filter [concat $top_filter [split $next_arg ","]]
+        }
     } elseif {$arg eq "-waves"} {
         set waves 1
     } else {
@@ -76,11 +84,21 @@ set tests {
     {tb_conv_accel_core_axi_lite_axis_stream_r16_c16_smoke tb/tb_conv_accel_core_axi_lite_axis_stream_r16_c16_smoke.v}
     {tb_conv_accel_core_axi_lite_axis_stream_r18_c16_smoke tb/tb_conv_accel_core_axi_lite_axis_stream_r18_c16_smoke.v}
     {tb_conv_accel_core_axi_lite_axis_stream_r32_c16_smoke tb/tb_conv_accel_core_axi_lite_axis_stream_r32_c16_smoke.v}
+    {tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_tile4 tb/tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_tile4.v}
+    {tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_tile4_fifo16 tb/tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_tile4_fifo16.v}
+    {tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_tile4_fifo16_backpressure tb/tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_tile4_fifo16_backpressure.v}
+    {tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_ext_tile4 tb/tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_ext_tile4.v}
+    {tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_tiles tb/tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_tiles.v}
+    {tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_ext_tiles tb/tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_ext_tiles.v}
+    {tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_backpressure tb/tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_backpressure.v}
+    {tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_full tb/tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_full.v}
+    {tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_ext_full tb/tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_ext_full.v}
     {tb_conv_accel_core_axi_lite_axis_stream_ps_driver tb/tb_conv_accel_core_axi_lite_axis_stream_ps_driver.v}
     {tb_conv_accel_core_axi_lite_axis_stream_backpressure tb/tb_conv_accel_core_axi_lite_axis_stream_backpressure.v}
     {tb_conv_accel_core_axi_lite_full_stream_backpressure tb/tb_conv_accel_core_axi_lite_full_stream_backpressure.v}
     {tb_layer_config_regs tb/tb_layer_config_regs.v}
     {tb_axi_lite_cfg_bridge tb/tb_axi_lite_cfg_bridge.v}
+    {tb_requant tb/tb_requant.v}
     {tb_ofm_requant_writer tb/tb_ofm_requant_writer.v}
     {tb_ofm_activation tb/tb_ofm_activation.v}
     {tb_ofm_writeback tb/tb_ofm_writeback.v}
@@ -120,12 +138,14 @@ if {$xvlog eq "" || $xelab eq "" || $xsim eq ""} {
     error "xvlog/xelab/xsim not found in PATH"
 }
 
+set ran_count 0
 foreach test $tests {
     set top [lindex $test 0]
     set tb_file [lindex $test 1]
     if {![selected $top $top_filter]} {
         continue
     }
+    incr ran_count
 
     puts "=== xsim compile $top ==="
     set run_dir [file join $build_dir $top]
@@ -155,6 +175,10 @@ foreach test $tests {
     if {[regexp {\[FAIL\]|Fatal|Error:} $log_text]} {
         error "xsim reported a failure for $top; see $xsim_log"
     }
+}
+
+if {$ran_count == 0} {
+    error "no xsim test matched -top filter"
 }
 
 puts "=== selected xsim regressions passed ==="

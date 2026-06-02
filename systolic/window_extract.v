@@ -47,8 +47,9 @@ module window_extract #(
     genvar r;
     generate
         for (r = 0; r < ROWS; r = r + 1) begin : row_logic
-            wire [3:0]  ch   = (pass_base_k + r) / 9;
-            wire [3:0]  ker  = (pass_base_k + r) % 9;
+            wire [10:0] global_k = pass_base_k + r;
+            wire [10:0] ch   = global_k / 11'd9;
+            wire [3:0]  ker  = global_k % 11'd9;
             wire [1:0]  ky   = ker / 3;
             wire [1:0]  kx   = ker % 3;
             wire [2:0]  bank = ch % BANKS;

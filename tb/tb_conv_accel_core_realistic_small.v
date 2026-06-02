@@ -12,6 +12,48 @@
 `ifndef TB_CONV_ACCEL_CORE_IFM_BANKS
 `define TB_CONV_ACCEL_CORE_IFM_BANKS 5
 `endif
+`ifndef TB_CONV_ACCEL_CORE_CIN
+`define TB_CONV_ACCEL_CORE_CIN 16
+`endif
+`ifndef TB_CONV_ACCEL_CORE_IFM_D
+`define TB_CONV_ACCEL_CORE_IFM_D 128
+`endif
+`ifndef TB_CONV_ACCEL_CORE_IFM_AW
+`define TB_CONV_ACCEL_CORE_IFM_AW 7
+`endif
+`ifndef TB_CONV_ACCEL_CORE_PSUM_D
+`define TB_CONV_ACCEL_CORE_PSUM_D 128
+`endif
+`ifndef TB_CONV_ACCEL_CORE_PSUM_AW
+`define TB_CONV_ACCEL_CORE_PSUM_AW 7
+`endif
+`ifndef TB_CONV_ACCEL_CORE_PSUM_BUF_AW
+`define TB_CONV_ACCEL_CORE_PSUM_BUF_AW 6
+`endif
+`ifndef TB_CONV_ACCEL_CORE_PSUM_BUF_DEPTH
+`define TB_CONV_ACCEL_CORE_PSUM_BUF_DEPTH 64
+`endif
+`ifndef TB_CONV_ACCEL_CORE_OFM_ADDR_W
+`define TB_CONV_ACCEL_CORE_OFM_ADDR_W 16
+`endif
+`ifndef TB_CONV_ACCEL_CORE_OFM_FIFO_DEPTH
+`define TB_CONV_ACCEL_CORE_OFM_FIFO_DEPTH 64
+`endif
+`ifndef TB_CONV_ACCEL_CORE_OFM_FIFO_AW
+`define TB_CONV_ACCEL_CORE_OFM_FIFO_AW 6
+`endif
+`ifndef TB_CONV_ACCEL_CORE_QUANT_MULT
+`define TB_CONV_ACCEL_CORE_QUANT_MULT 16'd1
+`endif
+`ifndef TB_CONV_ACCEL_CORE_QUANT_SHIFT
+`define TB_CONV_ACCEL_CORE_QUANT_SHIFT 4'd0
+`endif
+`ifndef TB_CONV_ACCEL_CORE_QUANT_ZP
+`define TB_CONV_ACCEL_CORE_QUANT_ZP 8'd0
+`endif
+`ifndef TB_CONV_ACCEL_CORE_ACT_MODE
+`define TB_CONV_ACCEL_CORE_ACT_MODE 0
+`endif
 `ifndef TB_CONV_ACCEL_CORE_FM_W
 `define TB_CONV_ACCEL_CORE_FM_W 8
 `endif
@@ -106,12 +148,12 @@ module `TB_CONV_ACCEL_CORE_MODULE;
     localparam IFM_W = 8;
     localparam WGT_W = 8;
     localparam PSUM_W = 32;
-    localparam IFM_D = 128;
-    localparam IFM_AW = 7;
+    localparam IFM_D = `TB_CONV_ACCEL_CORE_IFM_D;
+    localparam IFM_AW = `TB_CONV_ACCEL_CORE_IFM_AW;
     localparam WGT_D = 64;
     localparam WGT_AW = 6;
-    localparam PSUM_D = 128;
-    localparam PSUM_AW = 7;
+    localparam PSUM_D = `TB_CONV_ACCEL_CORE_PSUM_D;
+    localparam PSUM_AW = `TB_CONV_ACCEL_CORE_PSUM_AW;
     localparam FM_W = `TB_CONV_ACCEL_CORE_FM_W;
     localparam FM_H = `TB_CONV_ACCEL_CORE_FM_H;
     localparam OFM_W = `TB_CONV_ACCEL_CORE_OFM_W;
@@ -137,7 +179,7 @@ module `TB_CONV_ACCEL_CORE_MODULE;
     localparam RUN_PIXELS = (TILE_COUNT == 1) ? PIXELS :
                             (TILE_COUNT == 2) ? (PIXELS + TILE1_PIXELS) :
                             (PIXELS + TILE1_PIXELS + TILE2_PIXELS);
-    localparam CIN = 16;
+    localparam CIN = `TB_CONV_ACCEL_CORE_CIN;
     localparam K_TOTAL = CIN * 3 * 3;
     localparam K_PASSES = (K_TOTAL + ROWS - 1) / ROWS;
     localparam COUT_TILE = COLS * 2;
@@ -145,7 +187,9 @@ module `TB_CONV_ACCEL_CORE_MODULE;
     localparam COUT_BLOCKS = (COUT_TOTAL + COUT_TILE - 1) / COUT_TILE;
     localparam [7:0] IFM_TKEEP_MASK = 8'hff >> (8 - IFM_BANKS);
     localparam WGT_TILE_AW = 11;
-    localparam PSUM_A = 6;
+    localparam PSUM_A = `TB_CONV_ACCEL_CORE_PSUM_BUF_AW;
+    localparam PSUM_BUF_D = `TB_CONV_ACCEL_CORE_PSUM_BUF_DEPTH;
+    localparam OFM_ADDR_W = `TB_CONV_ACCEL_CORE_OFM_ADDR_W;
     localparam FULL_PIXELS = OFM_W * OFM_H;
     localparam OFM_WORDS = OFM_W * OFM_H * COUT_TOTAL;
     localparam EXPECTED_OFM_WRITES = RUN_PIXELS * COUT_TOTAL;
@@ -237,7 +281,7 @@ module `TB_CONV_ACCEL_CORE_MODULE;
     reg act_lut_wr_en;
     reg [7:0] act_lut_wr_addr, act_lut_wr_data;
     wire ofm_mem_wr_en;
-    wire [15:0] ofm_mem_wr_addr;
+    wire [OFM_ADDR_W-1:0] ofm_mem_wr_addr;
     wire [7:0] ofm_mem_wr_data;
     wire ofm_packet_full;
 `ifdef TB_CONV_ACCEL_CORE_USE_FULL_STREAM
@@ -269,8 +313,10 @@ module `TB_CONV_ACCEL_CORE_MODULE;
         .PSUM_FIFO_DEPTH(PSUM_D), .PSUM_FIFO_AW(PSUM_AW),
         .FM_W_MAX(FM_W), .FM_H_MAX(FM_H),
         .K_TILE(ROWS), .COUT_TILE(COUT_TILE), .IFM_BANKS(IFM_BANKS),
-        .WGT_TILE_AW(WGT_TILE_AW), .PSUM_BUF_AW(PSUM_A), .PSUM_BUF_DEPTH(PIXELS),
-        .OFM_ADDR_W(16), .OFM_FIFO_DEPTH(64), .OFM_FIFO_AW(6)
+        .WGT_TILE_AW(WGT_TILE_AW), .PSUM_BUF_AW(PSUM_A), .PSUM_BUF_DEPTH(PSUM_BUF_D),
+        .OFM_ADDR_W(OFM_ADDR_W),
+        .OFM_FIFO_DEPTH(`TB_CONV_ACCEL_CORE_OFM_FIFO_DEPTH),
+        .OFM_FIFO_AW(`TB_CONV_ACCEL_CORE_OFM_FIFO_AW)
     ) dut (
         .clk(clk), .rst(rst),
 `ifdef TB_CONV_ACCEL_CORE_USE_AXI_LITE
@@ -347,6 +393,9 @@ module `TB_CONV_ACCEL_CORE_MODULE;
     integer b, y, x, kk, cc, co, k, ch, ker, ky, kx, idx;
     integer fy, fx, bank_ch;
     integer ofm_mem_wr_count;
+    integer first_extra_ofm_wr_addr;
+    integer first_extra_ofm_wr_data;
+    integer first_extra_ofm_wr_index;
     integer ifm_write_count, compute_fire_count, psum_wr_count, drain_capture_count;
     integer run_idx, run_pixels, run_oy_base, run_ofm_h, run_pixel_base;
     integer ps_tile_start_count, ps_done_seen_count, ps_done_clear_count;
@@ -364,6 +413,14 @@ module `TB_CONV_ACCEL_CORE_MODULE;
     reg signed [PSUM_W-1:0] bias [0:COUT_TOTAL-1];
     reg signed [PSUM_W-1:0] golden [0:FULL_PIXELS-1][0:COUT_TOTAL-1];
     reg [7:0] ofm_mem [0:OFM_WORDS-1];
+`ifdef TB_CONV_ACCEL_CORE_USE_EXTERNAL_GOLDEN
+    reg [7:0] ext_ifm [0:FM_W*FM_H*CIN-1];
+    reg [7:0] ext_weight [0:K_TOTAL*COUT_TOTAL-1];
+    reg [31:0] ext_bias [0:COUT_TOTAL-1];
+    reg [7:0] ext_act_lut [0:255];
+    reg [7:0] ext_golden [0:OFM_WORDS-1];
+    reg [7:0] expected_ofm_byte;
+`endif
 
     function [7:0] clamp8;
         input signed [PSUM_W-1:0] v;
@@ -473,6 +530,19 @@ module `TB_CONV_ACCEL_CORE_MODULE;
             quant_wr_en = 1'b1;
             @(negedge clk);
             quant_wr_en = 1'b0;
+        end
+    endtask
+
+    task act_lut_write;
+        input [7:0] addr;
+        input [7:0] data;
+        begin
+            @(negedge clk);
+            act_lut_wr_addr = addr;
+            act_lut_wr_data = data;
+            act_lut_wr_en = 1'b1;
+            @(negedge clk);
+            act_lut_wr_en = 1'b0;
         end
     endtask
 
@@ -819,7 +889,13 @@ module `TB_CONV_ACCEL_CORE_MODULE;
 
     always @(negedge clk) begin
         if (!rst && ofm_mem_wr_en) begin
-            ofm_mem[ofm_mem_wr_addr] <= ofm_mem_wr_data;
+            if (ofm_mem_wr_addr < OFM_WORDS)
+                ofm_mem[ofm_mem_wr_addr] <= ofm_mem_wr_data;
+            if (ofm_mem_wr_count >= EXPECTED_OFM_WRITES && first_extra_ofm_wr_index < 0) begin
+                first_extra_ofm_wr_index <= ofm_mem_wr_count;
+                first_extra_ofm_wr_addr <= ofm_mem_wr_addr;
+                first_extra_ofm_wr_data <= ofm_mem_wr_data;
+            end
             ofm_mem_wr_count <= ofm_mem_wr_count + 1;
         end
     end
@@ -925,6 +1001,9 @@ module `TB_CONV_ACCEL_CORE_MODULE;
         pass = 0;
         fail = 0;
         ofm_mem_wr_count = 0;
+        first_extra_ofm_wr_addr = -1;
+        first_extra_ofm_wr_data = -1;
+        first_extra_ofm_wr_index = -1;
         ifm_write_count = 0;
         compute_fire_count = 0;
         psum_wr_count = 0;
@@ -953,6 +1032,25 @@ module `TB_CONV_ACCEL_CORE_MODULE;
         for (idx = 0; idx < OFM_WORDS; idx = idx + 1)
             ofm_mem[idx] = 8'hxx;
 
+`ifdef TB_CONV_ACCEL_CORE_USE_EXTERNAL_GOLDEN
+        $readmemh(`TB_CONV_ACCEL_CORE_IFM_MEM, ext_ifm);
+        $readmemh(`TB_CONV_ACCEL_CORE_WEIGHT_MEM, ext_weight);
+        $readmemh(`TB_CONV_ACCEL_CORE_BIAS_MEM, ext_bias);
+        $readmemh(`TB_CONV_ACCEL_CORE_ACT_LUT_MEM, ext_act_lut);
+        $readmemh(`TB_CONV_ACCEL_CORE_GOLDEN_MEM, ext_golden);
+
+        for (ch = 0; ch < CIN; ch = ch + 1)
+            for (y = 0; y < FM_H; y = y + 1)
+                for (x = 0; x < FM_W; x = x + 1)
+                    feat[ch][y][x] = ext_ifm[(y*FM_W + x)*CIN + ch];
+
+        for (k = 0; k < K_TOTAL; k = k + 1)
+            for (co = 0; co < COUT_TOTAL; co = co + 1)
+                weight[k][co] = ext_weight[k*COUT_TOTAL + co];
+
+        for (co = 0; co < COUT_TOTAL; co = co + 1)
+            bias[co] = ext_bias[co];
+`else
         for (ch = 0; ch < CIN; ch = ch + 1)
             for (y = 0; y < FM_H; y = y + 1)
                 for (x = 0; x < FM_W; x = x + 1)
@@ -980,19 +1078,26 @@ module `TB_CONV_ACCEL_CORE_MODULE;
                 end
             end
         end
+`endif
 
         repeat (3) @(negedge clk);
         rst = 0;
         repeat (2) @(negedge clk);
         for (cc = 0; cc < COUT_TILE; cc = cc + 1)
-            quant_write(cc, 16'd1, 4'd0, 8'd0);
+            quant_write(cc, `TB_CONV_ACCEL_CORE_QUANT_MULT,
+                            `TB_CONV_ACCEL_CORE_QUANT_SHIFT,
+                            `TB_CONV_ACCEL_CORE_QUANT_ZP);
+`ifdef TB_CONV_ACCEL_CORE_USE_EXTERNAL_GOLDEN
+        for (idx = 0; idx < 256; idx = idx + 1)
+            act_lut_write(idx[7:0], ext_act_lut[idx]);
+`endif
 
         cfg_write(6'h01, {7'd0, FM_W[8:0], 7'd0, FM_H[8:0]});
         cfg_write(6'h02, {7'd0, OFM_W[8:0], 7'd0, OFM_H[8:0]});
         cfg_write(6'h03, {22'd0, CONV_PAD, 6'd0, CONV_STRIDE});
         cfg_write(6'h04, K_TOTAL);
         cfg_write(6'h05, COUT_TOTAL);
-        cfg_write(6'h07, 32'd0);
+        cfg_write(6'h07, `TB_CONV_ACCEL_CORE_ACT_MODE);
         for (run_idx = 0; run_idx < TILE_COUNT; run_idx = run_idx + 1)
             run_tile(run_idx);
 `ifdef TB_CONV_ACCEL_CORE_USE_FULL_STREAM
@@ -1002,6 +1107,9 @@ module `TB_CONV_ACCEL_CORE_MODULE;
 
         if (ofm_mem_wr_count != EXPECTED_OFM_WRITES) begin
             $display("[FAIL] ofm writes got=%0d exp=%0d", ofm_mem_wr_count, EXPECTED_OFM_WRITES);
+            if (first_extra_ofm_wr_index >= 0)
+                $display("[INFO] first extra OFM write index=%0d addr=%0d data=%0d",
+                    first_extra_ofm_wr_index, first_extra_ofm_wr_addr, first_extra_ofm_wr_data);
             fail = fail + 1;
         end else pass = pass + 1;
         if (ifm_write_count != RUN_PIXELS * K_PASSES * COUT_BLOCKS) begin
@@ -1103,6 +1211,17 @@ module `TB_CONV_ACCEL_CORE_MODULE;
             run_pixels = OFM_W * run_ofm_h;
             for (idx = 0; idx < run_pixels; idx = idx + 1) begin
                 for (co = 0; co < COUT_TOTAL; co = co + 1) begin
+`ifdef TB_CONV_ACCEL_CORE_USE_EXTERNAL_GOLDEN
+                    expected_ofm_byte = ext_golden[(run_pixel_base + idx)*COUT_TOTAL + co];
+                    if (ofm_mem[(run_pixel_base + idx)*COUT_TOTAL + co] !== expected_ofm_byte) begin
+                        $display("[FAIL] tile%0d pixel%0d global%0d cout%0d addr%0d got=%0d exp=%0d",
+                            run_idx, idx, run_pixel_base + idx, co,
+                            (run_pixel_base + idx)*COUT_TOTAL + co,
+                            ofm_mem[(run_pixel_base + idx)*COUT_TOTAL + co],
+                            expected_ofm_byte);
+                        fail = fail + 1;
+                    end else pass = pass + 1;
+`else
                     if (ofm_mem[(run_pixel_base + idx)*COUT_TOTAL + co] !==
                         clamp8(golden[run_pixel_base + idx][co])) begin
                         $display("[FAIL] tile%0d pixel%0d global%0d cout%0d got=%0d exp=%0d raw=%0d",
@@ -1112,6 +1231,7 @@ module `TB_CONV_ACCEL_CORE_MODULE;
                             golden[run_pixel_base + idx][co]);
                         fail = fail + 1;
                     end else pass = pass + 1;
+`endif
                 end
             end
         end

@@ -9,6 +9,7 @@ module requant #(
     input  [ZP_W-1:0]    zp_out0, zp_out1,
     input  signed [PSUM_W-1:0] psuma_in, psumb_in,
     input                      valid_in,
+    input                      ce,
     output signed [7:0]        ofm_a, ofm_b,
     output                     valid_out
 );
@@ -27,7 +28,7 @@ module requant #(
     always @(posedge clk) begin
         if (rst) begin
             prod0_r <= 0; prod1_r <= 0; valid_r1 <= 0;
-        end else begin
+        end else if (ce) begin
             prod0_r <= se_a * ms0;
             prod1_r <= se_b * ms1;
             valid_r1 <= valid_in;
@@ -44,7 +45,7 @@ module requant #(
     always @(posedge clk) begin
         if (rst) begin
             ofm_a_r <= 0; ofm_b_r <= 0; valid_r2 <= 0;
-        end else begin
+        end else if (ce) begin
             if (valid_r1) begin
                 ofm_a_r <= clamp8(((prod0_r + round0) >>> shift0) + $signed({1'b0, zp_out0}));
                 ofm_b_r <= clamp8(((prod1_r + round1) >>> shift1) + $signed({1'b0, zp_out1}));

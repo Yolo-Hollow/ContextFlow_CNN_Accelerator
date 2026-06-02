@@ -59,6 +59,18 @@ module tb_ofm_packet_fifo;
         end
     endtask
 
+    task drive_packet;
+        input integer id;
+        begin
+            in_valid = 1'b1;
+            in_addr = id[ADDR_W-1:0];
+            in_cout_base = 11'd16 + id[10:0];
+            in_channel_valid = 8'hf0 | id[7:0];
+            for (lane = 0; lane < COUT_TILE; lane = lane + 1)
+                in_data[lane*8 +: 8] = id*16 + lane;
+        end
+    endtask
+
     always @(posedge clk) begin
         if (!rst && out_valid && out_ready) begin
             if (out_addr !== pop_count[ADDR_W-1:0] ||
@@ -119,6 +131,33 @@ module tb_ofm_packet_fifo;
         @(negedge clk);
         if (out_valid !== 1'b0 || full !== 1'b0) begin
             $display("[FAIL] FIFO should drain valid=%0d full=%0d", out_valid, full);
+            fail = fail + 1;
+        end else pass = pass + 1;
+
+        pop_count = 0;
+        repeat (2) @(negedge clk);
+
+        for (i = 0; i < DEPTH; i = i + 1)
+            push_packet(i);
+
+        out_ready = 1'b1;
+        for (i = DEPTH; i < DEPTH + 12; i = i + 1) begin
+            @(negedge clk);
+            if (!in_ready) begin
+                $display("[FAIL] in_ready should allow same-cycle push/pop at i=%0d", i);
+                fail = fail + 1;
+            end else begin
+                pass = pass + 1;
+            end
+            drive_packet(i);
+        end
+        @(negedge clk);
+        in_valid = 1'b0;
+        wait(pop_count == DEPTH + 12);
+        @(negedge clk);
+        out_ready = 1'b0;
+        if (out_valid !== 1'b0 || full !== 1'b0) begin
+            $display("[FAIL] FIFO should drain after same-cycle stream valid=%0d full=%0d", out_valid, full);
             fail = fail + 1;
         end else pass = pass + 1;
 

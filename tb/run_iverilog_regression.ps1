@@ -108,6 +108,10 @@ $longTests = @(
     @{ Top = "tb_conv_accel_core_axi_lite_axis_stream_r16_c16_smoke"; Files = @("tb/tb_conv_accel_core_axi_lite_axis_stream_r16_c16_smoke.v") },
     @{ Top = "tb_conv_accel_core_axi_lite_axis_stream_r18_c16_smoke"; Files = @("tb/tb_conv_accel_core_axi_lite_axis_stream_r18_c16_smoke.v") },
     @{ Top = "tb_conv_accel_core_axi_lite_axis_stream_r32_c16_smoke"; Files = @("tb/tb_conv_accel_core_axi_lite_axis_stream_r32_c16_smoke.v") },
+    @{ Top = "tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_tile4"; Files = @("tb/tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_tile4.v") },
+    @{ Top = "tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_tiles"; Files = @("tb/tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_tiles.v") },
+    @{ Top = "tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_backpressure"; Files = @("tb/tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_backpressure.v") },
+    @{ Top = "tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_full"; Files = @("tb/tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_full.v") },
     @{ Top = "tb_conv_accel_core_axi_lite_axis_stream_ps_driver"; Files = @("tb/tb_conv_accel_core_axi_lite_axis_stream_ps_driver.v") },
     @{ Top = "tb_conv_accel_core_axi_lite_axis_stream_backpressure"; Files = @("tb/tb_conv_accel_core_axi_lite_axis_stream_backpressure.v") },
     @{ Top = "tb_conv_accel_core_axi_lite_full_stream_backpressure"; Files = @("tb/tb_conv_accel_core_axi_lite_full_stream_backpressure.v") }
