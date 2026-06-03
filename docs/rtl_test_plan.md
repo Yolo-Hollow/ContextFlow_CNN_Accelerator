@@ -334,10 +334,18 @@ Data source:
 
 - Binary golden export: `D:/MPSoC/python_prj/rtl_golden/facemask_layer06_rtl`
 - xsim `$readmemh` files: `D:/MPSoC/python_prj/rtl_golden/facemask_layer06_rtl/xsim_mem`
+- Export scripts are versioned in this repo under `tools/golden/`.
 - Conversion script: `tb/make_layer06_xsim_mem.py`
 - Quant config: `mult=18055`, raw `shift=7`, effective shift `22`, `zp=75`
 - IFM input zero point: `input_zero_point=36`, programmed through config register `0x0f`
 - Activation: LUT mode, loaded from `activation_lut_u8.mem`
+
+Golden data policy:
+
+- RTL pass/fail compares against RTL semantic golden, not direct PyTorch layer output.
+- Large full-layer golden dumps and model weights stay under external `D:/MPSoC/python_prj`.
+- Only small curated regression fixtures should be copied into repository `golden/`.
+- The external data root can be changed with the `PYTHON_PRJ` environment variable or the generator script `--project` argument.
 
 The external IFM stream is uint8 activation data. The RTL line loader converts each byte to internal signed int8 as `saturate_s8(ifm_u8 - input_zero_point)` before writing the line buffer. Padding outside the feature map is still internal signed zero. Layer06 has `ifm_u8` range `22..86`, centered range `-14..50`, and `sat_count=0`.
 

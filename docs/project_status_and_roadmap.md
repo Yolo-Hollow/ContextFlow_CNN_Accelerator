@@ -128,7 +128,29 @@ requant 与输入零点修正后，以下 xsim 回归已经通过：
 - RTL semantic golden 是硬件 bit-exact 仿真的标准；PyTorch reference 只能作为模型级参考。
 - `ifm_u8 - input_zero_point` 饱和到 signed int8 是当前正式硬件近似。Layer06 当前 `sat_count=0`，但后续每层 golden export 都应统计 saturation count。
 
-## 6. 后续计划
+## 6. 仓库结构与外部数据
+
+当前仓库继续作为 RTL 主工程，核心目录为：
+
+```text
+systolic/        RTL 源码
+tb/              testbench
+tcl/             xsim/Vivado 脚本
+docs/            项目文档和测试计划
+sw/vitis_2022_2/ 最小 Vitis smoke/runtime 工程
+tools/golden/    RTL golden 生成脚本
+golden/          小型、稳定、人工筛选后的回归 golden
+```
+
+完整 `python_prj` 不直接并入当前仓库。它包含训练/检测工程、数据集、模型权重和大型 golden dump，当前仍作为外部数据根使用：
+
+```text
+D:/MPSoC/python_prj
+```
+
+`tools/golden/` 中的脚本默认从该外部路径读取模型、权重、数据和已导出的中间层文件，也可以通过 `PYTHON_PRJ` 环境变量或 `--project` 参数覆盖。完整 layer golden 默认继续输出到外部 `python_prj/rtl_golden/`，避免把大文件误提交到 RTL 仓库。
+
+## 7. 后续计划
 
 ### RTL 主线
 
@@ -153,11 +175,11 @@ requant 与输入零点修正后，以下 xsim 回归已经通过：
 3. 再扩展到多层单尺度 pipeline。
 4. 等寄存器和 buffer ABI 稳定后，再加入 SD 卡或 host-side 参数加载。
 
-## 7. 当前默认策略
+## 8. 当前默认策略
 
 - RTL 仿真器使用 xsim。
 - pass/fail 使用 RTL semantic golden。
 - PyTorch reference 用作模型级对照。
 - 完整 Layer06 回归作为 targeted/nightly test。
 - 小规模确定性测试和小 tile 真实数据测试作为日常回归。
-- 不提交论文、workspace 和实验性 Vitis 改动，除非任务明确要求。
+- 论文、Vitis、workspace 和 RTL 改动分开提交，避免互相混杂。

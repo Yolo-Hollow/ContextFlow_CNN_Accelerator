@@ -21,3 +21,26 @@ build_vitis_2022_2*/
 clockInfo.txt
 .Xil/
 .ip_user_files/
+accelerator_systolic.code-workspace
+
+# Python caches and local environments
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.venv/
+venv/
+
+# Large model/checkpoint artifacts should stay outside this RTL repo.
+*.pt
+*.pth
+*.onnx
+*.weights
+
+# Generated golden dumps are curated manually. Keep bulk outputs outside the repo
+# or under these ignored scratch directories.
+rtl_golden/
+golden/generated/
+golden/tmp/
+golden/external/
+tools/golden/output/
