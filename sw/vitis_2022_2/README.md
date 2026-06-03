@@ -83,7 +83,7 @@ build_vitis_2022_2/conv_accel_r18_c16_smoke/manual_build/conv_accel_conv0_crop_p
 This script uses the carrier-based hardware export:
 
 ```text
-build_system_kv260_carrier/conv_accel_ps_dma_minimal.xsa
+build_system_xck26_kv260/conv_accel_ps_dma_minimal.xsa
 ```
 
 That XSA is expected to include the KV260 carrier board preset and the GPIO2

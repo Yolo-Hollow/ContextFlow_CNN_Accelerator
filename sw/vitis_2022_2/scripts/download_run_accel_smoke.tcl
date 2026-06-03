@@ -7,6 +7,8 @@ set hw_dir [file join $workspace conv_accel_kv260_platform hw]
 set bit_file [file join $hw_dir conv_accel_ps_dma_minimal.bit]
 set psu_init_tcl [file join $hw_dir psu_init.tcl]
 set elf [file join $workspace conv_accel_r18_c16_smoke manual_build conv_accel_r18_c16_smoke.elf]
+set fast_run 0
+set skip_bit 0
 
 for {set i 0} {$i < [llength $argv]} {incr i} {
     set arg [lindex $argv $i]
@@ -22,6 +24,10 @@ for {set i 0} {$i < [llength $argv]} {incr i} {
             error "Missing value for -elf"
         }
         set elf [file normalize [lindex $argv $i]]
+    } elseif {$arg eq "-fast"} {
+        set fast_run 1
+    } elseif {$arg eq "-skip_bit"} {
+        set skip_bit 1
     } else {
         error "Unknown argument: $arg"
     }
@@ -30,10 +36,10 @@ for {set i 0} {$i < [llength $argv]} {incr i} {
 if {![file exists $elf]} {
     error "ELF not found: $elf. Run sw/vitis_2022_2/scripts/manual_build_accel_smoke.ps1 first."
 }
-if {![file exists $bit_file]} {
+if {!$fast_run && !$skip_bit && ![file exists $bit_file]} {
     error "Bitstream not found: $bit_file. Build or select a valid hardware image first."
 }
-if {![file exists $psu_init_tcl]} {
+if {!$fast_run && ![file exists $psu_init_tcl]} {
     error "psu_init.tcl not found: $psu_init_tcl. Create the Vitis platform first."
 }
 
@@ -47,25 +53,33 @@ if {[llength [targets -filter {name =~ "Cortex-A53 #0"}]] == 0} {
     error "Cortex-A53 #0 target not found. hw_server sees no usable KV260 JTAG target."
 }
 
-targets -set -nocase -filter {name =~ "*PSU*"}
-puts "System reset"
-catch {stop}
-rst -system
-after 3000
+if {!$fast_run} {
+    targets -set -nocase -filter {name =~ "*PSU*"}
+    puts "System reset"
+    catch {stop}
+    rst -system
+    after 3000
 
-source $psu_init_tcl
-targets -set -nocase -filter {name =~ "*PSU*"}
-puts "Running psu_init"
-psu_init
+    source $psu_init_tcl
+    targets -set -nocase -filter {name =~ "*PSU*"}
+    puts "Running psu_init"
+    psu_init
 
-puts "Programming PL: $bit_file"
-fpga -file $bit_file
+    if {$skip_bit} {
+        puts "Skipping PL programming; keeping current bitstream"
+    } else {
+        puts "Programming PL: $bit_file"
+        fpga -file $bit_file
+    }
 
-puts "Removing PS-PL isolation"
-psu_ps_pl_isolation_removal
-puts "Applying PS-PL reset config"
-psu_ps_pl_reset_config
-psu_post_config
+    puts "Removing PS-PL isolation"
+    psu_ps_pl_isolation_removal
+    puts "Applying PS-PL reset config"
+    psu_ps_pl_reset_config
+    psu_post_config
+} else {
+    puts "Fast run: keeping current PS/PL init and programmed bitstream"
+}
 
 targets -set -nocase -filter {name =~ "Cortex-A53 #0"}
 puts "Resetting Cortex-A53 #0"

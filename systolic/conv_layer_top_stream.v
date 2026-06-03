@@ -143,7 +143,8 @@ module conv_layer_top_stream #(
 
     assign current_cout_base = sched_cout_base;
     assign current_pass_base_k = sched_pass_base_k;
-    assign bias_load_req = sched_bias_start;
+    reg bias_req_r;
+    assign bias_load_req = bias_req_r;
     wire ofm_wb_busy;
     wire ofm_post_busy;
     reg done_pending;
@@ -197,12 +198,17 @@ module conv_layer_top_stream #(
 
     always @(posedge clk) begin
         if (rst) begin
+            bias_req_r <= 1'b0;
             weight_req_r <= 1'b0;
             wgt_loader_start <= 1'b0;
             sched_weight_done <= 1'b0;
         end else begin
             wgt_loader_start <= 1'b0;
             sched_weight_done <= 1'b0;
+            if (sched_bias_start)
+                bias_req_r <= 1'b1;
+            if (bias_req_r && bias_load_done)
+                bias_req_r <= 1'b0;
             if (sched_weight_start)
                 weight_req_r <= 1'b1;
             if (weight_req_r && weight_tile_ready) begin

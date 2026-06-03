@@ -2,11 +2,16 @@ connect -url tcp:127.0.0.1:3121
 targets -set -nocase -filter {name =~ "Cortex-A53 #0"}
 catch {stop}
 after 500
+if {[catch {memmap -addr 0xA0000000 -size 0x01000000 -flags 3} msg]} {
+    puts "WARNING: could not add PL MMIO memmap: $msg"
+}
 
 foreach addr {0xA0000000 0xA0010000 0xA0020000 0xA0030000 0xA0040000 0xA0050000} {
     puts "mrd $addr"
     if {[catch {mrd $addr 4} msg]} {
         puts "ERROR $addr: $msg"
+    } else {
+        puts $msg
     }
 }
 
@@ -35,5 +40,5 @@ foreach {name addr} {
     lut_data    0xA000008C
 } {
     puts "$name ($addr)"
-    mrd $addr 1
+    puts [mrd $addr 1]
 }
