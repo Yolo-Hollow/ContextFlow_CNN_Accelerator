@@ -49,10 +49,35 @@ generated BSP directly:
 powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/manual_build_accel_smoke.ps1
 ```
 
-The known-good manual output path is:
+The default manual output path is:
 
 ```text
 build_vitis_2022_2/conv_accel_r18_c16_smoke/manual_build/conv_accel_r18_c16_smoke.elf
+```
+
+The same source can build a small real-data Conv0 crop + pool smoke:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/manual_build_accel_smoke.ps1 -Mode conv0_crop_pool
+```
+
+The Conv0 mode embeds the fixture from:
+
+```text
+D:/MPSoC/python_prj/rtl_golden/facemask_conv0_crop16x8_pool/xsim_mem
+```
+
+and writes real quant/LUT parameters through the accelerator AXI-Lite window.
+It is scheduled for the current BD default accelerator configuration:
+
+```text
+ROWS=18, COLS=16, IFM_BANKS=2, COUT_TILE=32
+```
+
+Its output path is:
+
+```text
+build_vitis_2022_2/conv_accel_r18_c16_smoke/manual_build/conv_accel_conv0_crop_pool_smoke.elf
 ```
 
 This script uses the carrier-based hardware export:

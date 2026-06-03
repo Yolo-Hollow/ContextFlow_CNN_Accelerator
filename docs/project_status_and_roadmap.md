@@ -82,6 +82,17 @@ IFM stream
 - pooling 位于 activation 之后、OFM writer 之前；第一版支持 bypass 和 `2x2` uint8 maxpool stride-2。
 - OFM 写回使用 HWC layout。
 
+当前 AXI-Lite 系统顶层已经把真实层运行所需的量化参数和 activation LUT 配置并入 accelerator 自身的 AXI-Lite 地址空间，不再在 BD 中暴露零散的 `quant_wr_*` / `act_lut_wr_*` 顶层端口：
+
+```text
+0x80 QUANT_ADDR  [5:0] = quant lane address
+0x84 QUANT_DATA  [15:0] mult, [19:16] raw shift, [31:24] output zp
+0x88 LUT_ADDR    [7:0] = activation LUT address
+0x8c LUT_DATA    [7:0] = activation LUT byte
+```
+
+`conv_accel_core` 仍保留 legacy 直接 quant/LUT 编程端口，供非系统 wrapper 和单元测试使用；面向 BD/Vitis 的 `conv_accel_core_axi_lite_axis_stream` 只通过 AXI-Lite 写入这些配置。
+
 ## 3. Layer06 真实数据验证
 
 当前最强的真实数据流验证是 YOLOv3-tiny 中间层规模：
@@ -135,23 +146,73 @@ requant 与输入零点修正后，以下 xsim 回归已经通过：
 - `tb_conv_accel_core_pooling`：core 内部 `Conv -> Requant -> Activation -> Pool -> OFM` directed test。
 - `tb_conv_accel_core_axi_lite_axis_stream_pooling`：pool-enabled AXIS 顶层 TLAST/debug byte counter directed test。
 - `tb_conv_accel_core_axi_lite_axis_stream_conv0_crop_pool_ext`：真实 Conv0 crop 的 `Conv -> LUT -> Pool -> OFM AXIS` external golden test。
+- `tb_conv_accel_core_axi_lite_axis_stream_conv0_crop_pool_r18_c16_b2_ext`：同一份真实 Conv0 crop + pool golden，在当前 BD 默认阵列配置 `ROWS=18, COLS=16, IFM_BANKS=2` 下通过。
+- `tb_conv_accel_core_axi_lite_quant_lut`：AXI-Lite 间接写读 `QUANT_ADDR/DATA` 和 `LUT_ADDR/DATA`，并检查 legacy quant/LUT 端口兼容性。
 - `tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_ext_tile4`：Layer06 小 tile 真实 golden。
 - `tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_ext_tiles`：Layer06 多 spatial tile。
 - `tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_ext_full`：完整 `52x52x64 -> 52x52x128` 层。
 
 `full_fifo256` 保留为 diagnostic/stress test，不进入默认快速回归。它适合观察长时间运行进度、FIFO 行为和 backpressure 风险。
 
-## 5. 已知限制和风险
+## 5. BD 与 Vitis 当前状态
+
+当前 BD 仍采用 KV260 最小 PS/DMA 结构：
+
+```text
+PS M_AXI_HPM0_FPD
+  -> SmartConnect control path
+  -> accelerator AXI-Lite / GPIO / 4x AXI DMA control
+
+4x AXI DMA
+  bias   DDR -> AXIS
+  weight DDR -> AXIS
+  IFM    DDR -> AXIS
+  OFM    AXIS -> DDR
+```
+
+已完成的 BD 侧更新：
+
+- accelerator IP 重新封装后，BD 中不再需要给 quant/LUT 裸端口绑常量 0。
+- `tcl/create_ps_dma_bd_xck26.tcl -generate_targets` 已通过 BD validate 和 wrapper generation。
+- 当前 validate 是结构检查；真正上板仍需要带 KV260 SOM/carrier preset 重新生成 bitstream 和 XSA。
+
+Vitis 侧当前有两个可构建 smoke ELF：
+
+```text
+build_vitis_2022_2/conv_accel_r18_c16_smoke/manual_build/conv_accel_r18_c16_smoke.elf
+build_vitis_2022_2/conv_accel_r18_c16_smoke/manual_build/conv_accel_conv0_crop_pool_smoke.elf
+```
+
+`conv_accel_r18_c16_smoke.elf` 是旧 deterministic smoke 的更新版，会显式通过 AXI-Lite 写入 identity quant 和 identity LUT。`conv_accel_conv0_crop_pool_smoke.elf` 使用真实 Conv0 crop + pool fixture，按当前 BD 默认配置调度：
+
+```text
+ROWS=18
+COLS=16
+IFM_BANKS=2
+COUT_TILE=32
+```
+
+该 Conv0 fixture 来自外部 golden：
+
+```text
+D:/MPSoC/python_prj/rtl_golden/facemask_conv0_crop16x8_pool/xsim_mem
+```
+
+小型 fixture 已转为 `sw/vitis_2022_2/src/conv0_crop_pool_data.h`，因此 Vitis smoke 构建不再依赖运行时访问外部 `.mem` 文件。
+
+## 6. 已知限制和风险
 
 - 当前 RTL 还不是完整 YOLOv3-tiny 推理系统。
 - pooling 第一版已经作为 activation 后、OFM writer 前的可选输出侧后处理模块接入，当前支持 bypass 和 `2x2` uint8 maxpool stride-2。
 - pool 打开时，`OFM_SIZE/NUM_PIXELS/TILE_OFM_H` 描述 pool 前 conv output tile，`TILE_PIXEL_BASE` 按最终 pool 后 OFM 地址空间配置。
 - 当前验证重点是卷积数据流、量化语义和写回正确性，不覆盖 YOLO decode/NMS。
-- 旧 Vitis 最小系统验证已经不代表当前 RTL 状态，后续需要重新建立软件运行时。
+- Vitis 最小系统 runtime 目前只覆盖旧 deterministic smoke 和一个真实 Conv0 crop + pool smoke，不代表完整网络 runtime。
+- 当前 OFM AXIS 仍输出 `{addr[23:0], data[7:0]}` debug packet。它适合验证和软件重排，但不是长期高效的连续 HWC DMA 写回格式。
+- 当前 IFM 行填充仍由 PS 轮询 GPIO request 后启动 IFM DMA 服务，尚未实现硬件 DDR reader。
 - RTL semantic golden 是硬件 bit-exact 仿真的标准；PyTorch reference 只能作为模型级参考。
 - `ifm_u8 - input_zero_point` 饱和到 signed int8 是当前正式硬件近似。Layer06 当前 `sat_count=0`，但后续每层 golden export 都应统计 saturation count。
 
-## 6. 仓库结构与外部数据
+## 7. 仓库结构与外部数据
 
 当前仓库继续作为 RTL 主工程，核心目录为：
 
@@ -173,12 +234,13 @@ D:/MPSoC/python_prj
 
 `tools/golden/` 中的脚本默认从该外部路径读取模型、权重、数据和已导出的中间层文件，也可以通过 `PYTHON_PRJ` 环境变量或 `--project` 参数覆盖。完整 layer golden 默认继续输出到外部 `python_prj/rtl_golden/`，避免把大文件误提交到 RTL 仓库。
 
-## 7. 后续计划
+## 8. 后续计划
 
 ### RTL 主线
 
 1. 按单尺度网络调度确认是否需要 stride-1 或特殊 pooling。
 2. 继续保持无 pooling 路径的默认 ABI 兼容。
+3. 评估是否把 OFM debug stream 迁移为连续 HWC OFM AXIS burst，以降低软件重排和 DDR 带宽开销。
 
 ### 网络验证主线
 
@@ -190,12 +252,15 @@ D:/MPSoC/python_prj
 
 ### 系统集成主线
 
-1. 等 RTL 层语义稳定后再恢复 Vitis 工程。
-2. 先实现一个只运行单层的最小 PS runtime。
-3. 再扩展到多层单尺度 pipeline。
-4. 等寄存器和 buffer ABI 稳定后，再加入 SD 卡或 host-side 参数加载。
+1. 用 KV260 board preset 重新生成包含当前 RTL 的 bitstream/XSA。
+2. 先用 `probe_pl_regs.tcl` 验证 accelerator、DMA、GPIO 和 `0xA0000080..0xA000008c` quant/LUT MMIO 地址可访问。
+3. 上板运行 `conv_accel_r18_c16_smoke.elf`，确认旧 deterministic PS/DMA/GPIO 通路仍可用。
+4. 上板运行 `conv_accel_conv0_crop_pool_smoke.elf`，确认真实 Conv0 crop + pool 的 quant/LUT、pool、OFM debug stream 和软件 golden 对比。
+5. 可选增加 AXI VIP BD smoke，目标只验证 BD 地址映射和控制面，不重复 RTL 大规模 golden 验证。
+6. 再扩展到多层单尺度 pipeline。
+7. 等寄存器和 buffer ABI 稳定后，再加入 SD 卡或 host-side 参数加载。
 
-## 8. 当前默认策略
+## 9. 当前默认策略
 
 - RTL 仿真器使用 xsim。
 - pass/fail 使用 RTL semantic golden。

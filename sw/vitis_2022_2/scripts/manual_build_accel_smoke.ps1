@@ -1,3 +1,8 @@
+param(
+    [ValidateSet("r18_c16", "conv0_crop_pool")]
+    [string]$Mode = "r18_c16"
+)
+
 $ErrorActionPreference = "Stop"
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -24,13 +29,17 @@ if (!(Test-Path $BspInclude) -or !(Test-Path $BspLib)) {
 }
 
 New-Item -ItemType Directory -Force $ManualBuildDir | Out-Null
-Copy-Item -Path (Join-Path $SwDir "src\main.c"), (Join-Path $SwDir "src\accel_smoke.h") -Destination $AppSrcDir -Force
+Copy-Item -Path (Join-Path $SwDir "src\main.c"), (Join-Path $SwDir "src\accel_smoke.h"), (Join-Path $SwDir "src\conv0_crop_pool_data.h") -Destination $AppSrcDir -Force
 
-$Obj = Join-Path $ManualBuildDir "main.o"
-$Elf = Join-Path $ManualBuildDir "conv_accel_r18_c16_smoke.elf"
+$Obj = Join-Path $ManualBuildDir "main_$Mode.o"
+$Elf = Join-Path $ManualBuildDir "conv_accel_${Mode}_smoke.elf"
 $LinkerScript = Join-Path $AppSrcDir "lscript.ld"
+$Defines = @()
+if ($Mode -eq "conv0_crop_pool") {
+    $Defines += "-DACCEL_SMOKE_REAL_CONV0_CROP_POOL=1"
+}
 
-& $Gcc -Wall -O0 -g3 -c -DARMA53_64 -I $BspInclude -I $AppSrcDir (Join-Path $AppSrcDir "main.c") -o $Obj
+& $Gcc -Wall -O0 -g3 -c -DARMA53_64 @Defines -I $BspInclude -I $AppSrcDir (Join-Path $AppSrcDir "main.c") -o $Obj
 & $Gcc -o $Elf $Obj "-Wl,--start-group,-lxil,-lgcc,-lc,--end-group" -n "-Wl,--gc-sections" -L $BspLib -T $LinkerScript
 
 Write-Host "Built $Elf"

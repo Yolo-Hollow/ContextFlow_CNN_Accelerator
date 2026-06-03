@@ -8,6 +8,10 @@
 #include "xil_types.h"
 #include "xil_printf.h"
 
+#if ACCEL_SMOKE_REAL_CONV0_CROP_POOL
+#include "conv0_crop_pool_data.h"
+#endif
+
 /* Zynq UltraScale+ PS UARTs. Write both so either KV260 FTDI channel can show logs. */
 #define UART0_BASE            0xFF000000U
 #define UART1_BASE            0xFF010000U
@@ -18,7 +22,9 @@
 static int8_t feat[CIN][FM_H][FM_W];
 static int8_t weight[K_TOTAL][COUT_TOTAL];
 static int32_t bias[COUT_TOTAL];
+#if !ACCEL_SMOKE_REAL_CONV0_CROP_POOL
 static int32_t golden[FULL_PIXELS][COUT_TOTAL];
+#endif
 static uint8_t ofm_mem[FULL_PIXELS * COUT_TOTAL];
 
 static uint64_t bias_buf[COUT_TILE / 2] __attribute__((aligned(64)));
@@ -78,6 +84,52 @@ static inline uint32_t rd32(uint32_t base, uint32_t off)
     return Xil_In32(base + off);
 }
 
+static void accel_write_reg(uint32_t off, uint32_t v)
+{
+    wr32(ACCEL_BASE_ADDR, off, v);
+}
+
+static uint32_t accel_read_reg(uint32_t off)
+{
+    return rd32(ACCEL_BASE_ADDR, off);
+}
+
+static int program_quant_tile(uint16_t mult, uint8_t shift, uint8_t zp)
+{
+    uint32_t packed = ACCEL_QUANT_PACK(mult, shift, zp);
+
+    for (uint32_t lane = 0; lane < COUT_TILE; ++lane) {
+        accel_write_reg(ACCEL_QUANT_ADDR, lane);
+        accel_write_reg(ACCEL_QUANT_DATA, packed);
+        if (accel_read_reg(ACCEL_QUANT_DATA) != packed) {
+            xil_printf("quant readback mismatch lane=%lu got=0x%08lx exp=0x%08lx\r\n",
+                       (unsigned long)lane,
+                       (unsigned long)accel_read_reg(ACCEL_QUANT_DATA),
+                       (unsigned long)packed);
+            return -1;
+        }
+    }
+    return 0;
+}
+
+static int program_activation_lut(const uint8_t *lut)
+{
+    for (uint32_t idx = 0; idx < 256U; ++idx) {
+        uint32_t data = (lut != NULL) ? lut[idx] : idx;
+        accel_write_reg(ACCEL_LUT_ADDR, idx);
+        accel_write_reg(ACCEL_LUT_DATA, data);
+        if ((accel_read_reg(ACCEL_LUT_DATA) & 0xffU) != data) {
+            xil_printf("lut readback mismatch idx=%lu got=0x%08lx exp=0x%02lx\r\n",
+                       (unsigned long)idx,
+                       (unsigned long)accel_read_reg(ACCEL_LUT_DATA),
+                       (unsigned long)data);
+            return -1;
+        }
+    }
+    return 0;
+}
+
+#if !ACCEL_SMOKE_REAL_CONV0_CROP_POOL
 static uint8_t clamp8(int32_t v)
 {
     if (v > 127) {
@@ -88,6 +140,7 @@ static uint8_t clamp8(int32_t v)
     }
     return (uint8_t)v;
 }
+#endif
 
 static int pass_needs_ch(int k_base, int c)
 {
@@ -106,6 +159,26 @@ static int channel_for_bank(int k_base, int bank)
 
 static void make_vectors(void)
 {
+#if ACCEL_SMOKE_REAL_CONV0_CROP_POOL
+    for (int ch = 0; ch < CIN; ++ch) {
+        for (int y = 0; y < FM_H; ++y) {
+            for (int x = 0; x < FM_W; ++x) {
+                int idx = (y * FM_W + x) * CIN + ch;
+                feat[ch][y][x] = (int8_t)conv0_crop_ifm_u8[idx];
+            }
+        }
+    }
+
+    for (int k = 0; k < K_TOTAL; ++k) {
+        for (int co = 0; co < COUT_TOTAL; ++co) {
+            weight[k][co] = conv0_crop_weight_s8[k * COUT_TOTAL + co];
+        }
+    }
+
+    for (int co = 0; co < COUT_TOTAL; ++co) {
+        bias[co] = conv0_crop_bias_i32[co];
+    }
+#else
     for (int ch = 0; ch < CIN; ++ch) {
         for (int y = 0; y < FM_H; ++y) {
             for (int x = 0; x < FM_W; ++x) {
@@ -140,6 +213,7 @@ static void make_vectors(void)
             golden[idx][co] = acc;
         }
     }
+#endif
 }
 
 static void pack_bias(void)
@@ -342,15 +416,23 @@ static int parse_ofm(void)
     }
     xil_printf("ofm parsed=%d expected=%d\r\n", parsed, EXPECTED_OFM_BYTES);
 
-    for (int idx = 0; idx < TILE_PIXELS; ++idx) {
+    for (int idx = 0; idx < EXPECTED_OUTPUT_PIXELS; ++idx) {
         int global_pixel = TILE_PIXEL_BASE + idx;
         for (int co = 0; co < COUT_TOTAL; ++co) {
             uint8_t got = ofm_mem[global_pixel * COUT_TOTAL + co];
+#if ACCEL_SMOKE_REAL_CONV0_CROP_POOL
+            uint8_t exp = conv0_crop_golden_pool_u8[idx * COUT_TOTAL + co];
+#else
             uint8_t exp = clamp8(golden[global_pixel][co]);
+#endif
             if (got != exp) {
                 xil_printf("Mismatch pixel=%d cout=%d got=%u exp=%u raw=%ld\r\n",
                            global_pixel, co, got, exp,
+#if ACCEL_SMOKE_REAL_CONV0_CROP_POOL
+                           (long)exp);
+#else
                            (long)golden[global_pixel][co]);
+#endif
                 return -1;
             }
         }
@@ -387,10 +469,24 @@ static int run_smoke(void)
     wr32(ACCEL_BASE_ADDR, ACCEL_CONV, ((uint32_t)CONV_PAD << 8) | CONV_STRIDE);
     wr32(ACCEL_BASE_ADDR, ACCEL_K_TOTAL, K_TOTAL);
     wr32(ACCEL_BASE_ADDR, ACCEL_COUT_TOTAL, COUT_TOTAL);
-    wr32(ACCEL_BASE_ADDR, ACCEL_ACT_CFG, 0U);
+    wr32(ACCEL_BASE_ADDR, ACCEL_ACT_CFG, ACT_MODE);
+    wr32(ACCEL_BASE_ADDR, ACCEL_IFM_ZP, INPUT_ZERO_POINT);
+    wr32(ACCEL_BASE_ADDR, ACCEL_POOL_CFG, ((uint32_t)POOL_STRIDE << 2) | (uint32_t)POOL_ENABLE);
     wr32(ACCEL_BASE_ADDR, ACCEL_NUM_PIXELS, TILE_PIXELS);
     wr32(ACCEL_BASE_ADDR, ACCEL_TILE_ROWS, ((uint32_t)TILE_OFM_H << 16) | TILE_OY_BASE);
     wr32(ACCEL_BASE_ADDR, ACCEL_PIXEL_BASE, TILE_PIXEL_BASE);
+    if (program_quant_tile(QUANT_MULT, QUANT_SHIFT, QUANT_ZP) != 0) {
+        return -1;
+    }
+    if (program_activation_lut(
+#if ACCEL_SMOKE_REAL_CONV0_CROP_POOL
+            conv0_crop_activation_lut_u8
+#else
+            NULL
+#endif
+        ) != 0) {
+        return -1;
+    }
     xil_printf("cfg readback: cout=%lu pixels=%lu tile_rows=0x%08lx pixel_base=%lu\r\n",
                (unsigned long)rd32(ACCEL_BASE_ADDR, ACCEL_COUT_TOTAL),
                (unsigned long)rd32(ACCEL_BASE_ADDR, ACCEL_NUM_PIXELS),
@@ -402,32 +498,6 @@ static int run_smoke(void)
     xil_printf("stage: start accel\r\n");
     wr32(ACCEL_BASE_ADDR, ACCEL_CTRL, 1U);
 
-    debug_stage = 0x41000000U;
-    xil_printf("service: bias %d\r\n", bias_services);
-    if (service_bias() != 0) {
-        return -1;
-    }
-    ++bias_services;
-
-    for (int pass_idx = 0; pass_idx < K_PASSES; ++pass_idx) {
-        debug_stage = 0x42000000U | (uint32_t)weight_services;
-        xil_printf("service: weight %d k_base=%d\r\n", weight_services, k_pass * ROWS);
-        if (service_weight(&k_pass, &active_k_base) != 0) {
-            return -1;
-        }
-        ++weight_services;
-
-        for (int row = 0; row < 3; ++row) {
-            uint32_t st = rd32(GPIO_BASE_ADDR, GPIO2_DATA);
-            debug_stage = 0x43000000U | (uint32_t)ifm_services;
-            xil_printf("service: ifm %d k_base=%d\r\n", ifm_services, active_k_base);
-            if (service_ifm(st, active_k_base, &ifm_row_phase) != 0) {
-                return -1;
-            }
-            ++ifm_services;
-        }
-    }
-
     for (uint32_t loops = 0; loops < 50000000U; ++loops) {
         uint32_t ctrl = rd32(ACCEL_BASE_ADDR, ACCEL_CTRL);
         uint32_t st = rd32(GPIO_BASE_ADDR, GPIO2_DATA);
@@ -437,6 +507,39 @@ static int run_smoke(void)
             debug_stage = 0xe2000000U;
             xil_printf("AXIS protocol error, gpio2=0x%08lx\r\n", (unsigned long)st);
             return -1;
+        }
+
+        if ((st & ST_BIAS_REQ) != 0U) {
+            debug_stage = 0x41000000U | (uint32_t)bias_services;
+            xil_printf("service: bias %d\r\n", bias_services);
+            if (service_bias() != 0) {
+                return -1;
+            }
+            ++bias_services;
+            continue;
+        }
+
+        if ((st & ST_WEIGHT_REQ) != 0U) {
+            debug_stage = 0x42000000U | (uint32_t)weight_services;
+            xil_printf("service: weight %d k_base=%d\r\n", weight_services, k_pass * ROWS);
+            if (service_weight(&k_pass, &active_k_base) != 0) {
+                return -1;
+            }
+            ++weight_services;
+            continue;
+        }
+
+        if ((st & ST_IFM_REQ) != 0U) {
+            debug_stage = 0x43000000U | (uint32_t)ifm_services;
+            xil_printf("service: ifm %d k_base=%d\r\n", ifm_services, active_k_base);
+            if (service_ifm(st, active_k_base, &ifm_row_phase) != 0) {
+                return -1;
+            }
+            if (wait_gpio_deassert(ST_IFM_REQ) != 0) {
+                return -1;
+            }
+            ++ifm_services;
+            continue;
         }
 
         if (((ctrl & 0x2U) != 0U) && ((ctrl & 0x1U) == 0U)) {
@@ -485,7 +588,7 @@ static int run_smoke(void)
 int main(void)
 {
     debug_stage = 0x01000000U;
-    xil_printf("\r\nr18_c16 AXI DMA smoke test\r\n");
+    xil_printf("\r\n%s AXI DMA smoke test\r\n", SMOKE_NAME);
     xil_printf("FM=%dx%d Cin=%d Cout=%d tile_h=%d expected_ofm=%d bytes\r\n",
                FM_W, FM_H, CIN, COUT_TOTAL, TILE_OFM_H, EXPECTED_OFM_BYTES);
 

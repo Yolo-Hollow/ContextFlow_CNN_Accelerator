@@ -25,6 +25,15 @@
 #define ACCEL_DBG_AXIS_WR     0x30U
 #define ACCEL_DBG_TLASTS      0x34U
 #define ACCEL_DBG_LAST_END    0x38U
+#define ACCEL_IFM_ZP          0x3cU
+#define ACCEL_POOL_CFG        0x40U
+#define ACCEL_QUANT_ADDR      0x80U
+#define ACCEL_QUANT_DATA      0x84U
+#define ACCEL_LUT_ADDR        0x88U
+#define ACCEL_LUT_DATA        0x8cU
+
+#define ACCEL_QUANT_PACK(mult, shift, zp) \
+    ((((uint32_t)(zp)) << 24) | (((uint32_t)(shift)) << 16) | ((uint32_t)(mult)))
 
 #define GPIO_DATA             0x00U
 #define GPIO_TRI              0x04U
@@ -61,6 +70,48 @@
 #define ST_ERROR_MASK         (ST_BIAS_ERR | ST_WEIGHT_ERR | ST_IFM_ERR)
 
 /* Mirrors tb_conv_accel_core_axi_lite_axis_stream_r18_c16_smoke.v. */
+#ifndef ACCEL_SMOKE_REAL_CONV0_CROP_POOL
+#define ACCEL_SMOKE_REAL_CONV0_CROP_POOL 0
+#endif
+
+#if ACCEL_SMOKE_REAL_CONV0_CROP_POOL
+
+#define ROWS                  18
+#define COLS                  16
+#define IFM_BANKS             2
+#define FM_W                  16
+#define FM_H                  8
+#define OFM_W                 16
+#define OFM_H                 8
+#define CIN                   3
+#define KH                    3
+#define KW                    3
+#define K_TOTAL               (CIN * KH * KW)
+#define COUT_TILE             (COLS * 2)
+#define COUT_TOTAL            16
+#define CONV_PAD              1
+#define CONV_STRIDE           1
+#define TILE_OY_BASE          0
+#define TILE_OFM_H            8
+#define TILE_PIXEL_BASE       0
+#define TILE_PIXELS           (OFM_W * TILE_OFM_H)
+#define FULL_PIXELS           (OFM_W * OFM_H)
+#define K_PASSES              ((K_TOTAL + ROWS - 1) / ROWS)
+#define COUT_BLOCKS           ((COUT_TOTAL + COUT_TILE - 1) / COUT_TILE)
+#define INPUT_ZERO_POINT      0
+#define ACT_MODE              2
+#define POOL_ENABLE           1
+#define POOL_STRIDE           2
+#define QUANT_MULT            18898U
+#define QUANT_SHIFT           9U
+#define QUANT_ZP              69U
+#define EXPECTED_OUTPUT_PIXELS ((OFM_W / 2) * (TILE_OFM_H / 2))
+#define EXPECTED_OFM_BYTES    (EXPECTED_OUTPUT_PIXELS * COUT_TOTAL)
+#define OFM_AXIS_BYTES        (EXPECTED_OFM_BYTES * 4)
+#define SMOKE_NAME            "conv0 crop pool"
+
+#else
+
 #define ROWS                  18
 #define COLS                  16
 #define IFM_BANKS             2
@@ -83,8 +134,19 @@
 #define FULL_PIXELS           (OFM_W * OFM_H)
 #define K_PASSES              ((K_TOTAL + ROWS - 1) / ROWS)
 #define COUT_BLOCKS           ((COUT_TOTAL + COUT_TILE - 1) / COUT_TILE)
+#define INPUT_ZERO_POINT      0
+#define ACT_MODE              0
+#define POOL_ENABLE           0
+#define POOL_STRIDE           0
+#define QUANT_MULT            32767U
+#define QUANT_SHIFT           0U
+#define QUANT_ZP              0U
+#define EXPECTED_OUTPUT_PIXELS TILE_PIXELS
 #define EXPECTED_OFM_BYTES    (TILE_PIXELS * COUT_TOTAL)
 #define OFM_AXIS_BYTES        (EXPECTED_OFM_BYTES * 4)
+#define SMOKE_NAME            "r18_c16"
+
+#endif
 
 /* The carrier-based XSA exposes feeder_fill_fy on GPIO2[15:7]. */
 #ifndef USE_GPIO_FILL_FY

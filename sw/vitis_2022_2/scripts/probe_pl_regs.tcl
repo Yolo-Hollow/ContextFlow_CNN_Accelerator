@@ -22,6 +22,17 @@ foreach {name addr} {
     act_cfg    0xA000001C
     tile_rows  0xA0000020
     pixel_base 0xA0000024
+    dbg_expect  0xA0000028
+    dbg_core    0xA000002C
+    dbg_axis    0xA0000030
+    dbg_tlast   0xA0000034
+    dbg_last    0xA0000038
+    ifm_zp      0xA000003C
+    pool_cfg    0xA0000040
+    quant_addr  0xA0000080
+    quant_data  0xA0000084
+    lut_addr    0xA0000088
+    lut_data    0xA000008C
 } {
     puts "$name ($addr)"
     mrd $addr 1
