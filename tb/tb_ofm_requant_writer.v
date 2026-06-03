@@ -52,10 +52,12 @@ module tb_ofm_requant_writer;
         input [ZP_W-1:0] zp;
         reg signed [63:0] v;
         reg signed [63:0] rnd;
+        integer effective_shift;
         begin
+            effective_shift = sh + 15;
             v = p * $signed({1'b0, m});
-            rnd = (sh > 0) ? (1 <<< (sh - 1)) : 0;
-            v = (v + rnd) >>> sh;
+            rnd = 64'sd1 <<< (effective_shift - 1);
+            v = (v + rnd) >>> effective_shift;
             v = v + $signed({1'b0, zp});
             if (v > 127) golden = 8'd127;
             else if (v < -128) golden = 8'd128;

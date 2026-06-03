@@ -14,6 +14,7 @@ module requant #(
     output                     valid_out
 );
     localparam PROD_W = PSUM_W + MULT_W + 1;
+    localparam [SHIFT_W:0] MULT_FRAC_BITS = 5'd15;
 
     // Sign-extend to full width BEFORE multiply. Using a signed wire
     // assignment naturally sign-extends (no $signed hack needed).
@@ -36,9 +37,13 @@ module requant #(
     end
 
     // ---- Stage 2: round + shift + zp + clamp ----
-    // round = 1 << (shift-1), applied when shift > 0
-    wire signed [PROD_W:0] round0 = (shift0 > 0) ? (1 <<< (shift0 - 1)) : 0;
-    wire signed [PROD_W:0] round1 = (shift1 > 0) ? (1 <<< (shift1 - 1)) : 0;
+    // Software stores mult = round(base * 2^15), so the actual right shift
+    // is the configured frexp shift plus 15 fractional multiplier bits.
+    wire [SHIFT_W:0] effective_shift0 = {1'b0, shift0} + MULT_FRAC_BITS;
+    wire [SHIFT_W:0] effective_shift1 = {1'b0, shift1} + MULT_FRAC_BITS;
+    wire signed [PROD_W:0] round_one = {{PROD_W{1'b0}}, 1'b1};
+    wire signed [PROD_W:0] round0 = round_one <<< (effective_shift0 - 1'b1);
+    wire signed [PROD_W:0] round1 = round_one <<< (effective_shift1 - 1'b1);
 
     reg signed [7:0] ofm_a_r, ofm_b_r;
     reg valid_r2;
@@ -47,8 +52,8 @@ module requant #(
             ofm_a_r <= 0; ofm_b_r <= 0; valid_r2 <= 0;
         end else if (ce) begin
             if (valid_r1) begin
-                ofm_a_r <= clamp8(((prod0_r + round0) >>> shift0) + $signed({1'b0, zp_out0}));
-                ofm_b_r <= clamp8(((prod1_r + round1) >>> shift1) + $signed({1'b0, zp_out1}));
+                ofm_a_r <= clamp8(((prod0_r + round0) >>> effective_shift0) + $signed({1'b0, zp_out0}));
+                ofm_b_r <= clamp8(((prod1_r + round1) >>> effective_shift1) + $signed({1'b0, zp_out1}));
             end
             valid_r2 <= valid_r1;
         end

@@ -442,6 +442,25 @@ module `TB_CONV_ACCEL_CORE_MODULE;
         end
     endfunction
 
+    function [7:0] requant_byte_tb;
+        input signed [PSUM_W-1:0] psum;
+        reg signed [63:0] prod;
+        reg signed [63:0] rounded;
+        integer effective_shift;
+        begin
+            effective_shift = `TB_CONV_ACCEL_CORE_QUANT_SHIFT + 15;
+            prod = psum * $signed({1'b0, `TB_CONV_ACCEL_CORE_QUANT_MULT});
+            rounded = (prod + (64'sd1 <<< (effective_shift - 1))) >>> effective_shift;
+            rounded = rounded + $signed({1'b0, `TB_CONV_ACCEL_CORE_QUANT_ZP});
+            if (rounded > 127)
+                requant_byte_tb = 8'd127;
+            else if (rounded < -128)
+                requant_byte_tb = 8'd128;
+            else
+                requant_byte_tb = rounded[7:0];
+        end
+    endfunction
+
     function [7:0] center_ifm_byte_tb;
         input [7:0] raw_u8;
         input [7:0] zero_point;
@@ -1349,11 +1368,11 @@ module `TB_CONV_ACCEL_CORE_MODULE;
                     end else pass = pass + 1;
 `else
                     if (ofm_mem[(run_pixel_base + idx)*COUT_TOTAL + co] !==
-                        clamp8(golden[run_pixel_base + idx][co])) begin
+                        requant_byte_tb(golden[run_pixel_base + idx][co])) begin
                         $display("[FAIL] tile%0d pixel%0d global%0d cout%0d got=%0d exp=%0d raw=%0d",
                             run_idx, idx, run_pixel_base + idx, co,
                             ofm_mem[(run_pixel_base + idx)*COUT_TOTAL + co],
-                            clamp8(golden[run_pixel_base + idx][co]),
+                            requant_byte_tb(golden[run_pixel_base + idx][co]),
                             golden[run_pixel_base + idx][co]);
                         fail = fail + 1;
                     end else pass = pass + 1;

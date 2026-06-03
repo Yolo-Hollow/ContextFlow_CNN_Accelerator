@@ -35,6 +35,12 @@ p = oy * ofm_w + ox
 4. `Cout > COUT_TILE` 时按输出通道 block 分多次计算，每个 block 更换权重，复用 IFM。
 5. 大尺寸 OFM 可按输出行分多个 spatial tile 执行，每个 tile 写回全局 OFM 的不同地址范围。
 
+Requant 语义：
+
+- 软件配置中的 `shift` 是由 `frexp` 生成的 raw shift。
+- 软件配置中的 `mult = round(base * 2^15)`，因此 RTL 实际使用 `effective_shift = shift + 15`。
+- RTL golden 采用整数 bias：`psum = conv_accumulator + int32_bias`。这与 PyTorch quantized conv 的 float-bias 语义可能存在少量 1 LSB 级差异，但更适合硬件整数推理。
+
 `PSUM_W` 当前保持 32 bit。原因是 YOLO 风格的大通道层可能出现 `Cin=512/1024, Kh=3, Kw=3` 的长累加链，在逐层量化范围分析完成前，32 bit 是更稳妥的默认值。
 
 ---

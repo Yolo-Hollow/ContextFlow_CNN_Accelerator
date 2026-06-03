@@ -25,8 +25,8 @@ AXI-Lite config
 - IFM: `feat[ch][y][x] = ((ch * 3 + y * 5 + x * 2) % 9) - 4`
 - Weight: `weight[k][co] = ((k * 2 + co * 3) % 7) - 3`
 - Bias: `bias[co] = co - 9`
-- Golden: 遍历 `K_TOTAL`，按 `stride/pad` 计算 3x3 convolution，再做 `clamp8`
-- Quant: 当前顶层配置为 identity，`mult=1, shift=0, zp=0`
+- Golden: 遍历 `K_TOTAL`，按 `stride/pad` 计算 3x3 convolution，再按 RTL requant 公式量化输出
+- Quant: 配置 `shift` 保持软件导出的 raw shift；RTL 内部实际右移为 `shift + 15`
 
 ## 顶层测试
 
@@ -219,7 +219,7 @@ Current result:
 
 检查项：
 
-- signed multiply、round、shift、zero-point、saturation 与 testbench golden 一致。
+- signed multiply、round、`effective_shift = raw_shift + 15`、zero-point、saturation 与 testbench golden 一致。
 - back-to-back packet 输出顺序正确。
 - packet 地址、`cout_base`、channel mask 不错位。
 - Output backpressure holds requant pipeline state stable when `ofm_ready=0`, and `packet_ready` deasserts until the held output is accepted.
@@ -335,13 +335,13 @@ Data source:
 - Binary golden export: `D:/MPSoC/python_prj/rtl_golden/facemask_layer06_rtl`
 - xsim `$readmemh` files: `D:/MPSoC/python_prj/rtl_golden/facemask_layer06_rtl/xsim_mem`
 - Conversion script: `tb/make_layer06_xsim_mem.py`
-- Quant config: `mult=18055`, `shift=7`, `zp=75`
+- Quant config: `mult=18055`, raw `shift=7`, effective shift `22`, `zp=75`
 - IFM input zero point: `input_zero_point=36`, programmed through config register `0x0f`
 - Activation: LUT mode, loaded from `activation_lut_u8.mem`
 
 The external IFM stream is uint8 activation data. The RTL line loader converts each byte to internal signed int8 as `saturate_s8(ifm_u8 - input_zero_point)` before writing the line buffer. Padding outside the feature map is still internal signed zero. Layer06 has `ifm_u8` range `22..86`, centered range `-14..50`, and `sat_count=0`.
 
-The regenerated Layer06 golden follows this RTL semantic. The requant output itself still has only 4 unique signed values (`-128`, `127`, `75`, `-66`), and the activation LUT maps them to final OFM byte values (`130`, `127`, `16`, `255`). This layer is therefore useful for scheduling and bit-exact dataflow verification, but not ideal for observing a rich OFM distribution.
+The regenerated Layer06 golden follows this RTL semantic: `psum = conv_accumulator + int32_bias`, then `requant = round(psum * mult / 2^(raw_shift + 15)) + zp`. The `+15` comes from the software parameter generator storing `mult = round(base * 2^15)`. This produces a rich OFM distribution again. Compared with the PyTorch quantized layer output, a small number of bytes may differ because PyTorch uses float-bias semantics while the RTL golden uses integer bias.
 
 ### `tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_ext_tile4`
 
