@@ -20,6 +20,11 @@
 #define ACCEL_ACT_CFG         0x1cU
 #define ACCEL_TILE_ROWS       0x20U
 #define ACCEL_PIXEL_BASE      0x24U
+#define ACCEL_DBG_EXPECTED    0x28U
+#define ACCEL_DBG_CORE_WR     0x2cU
+#define ACCEL_DBG_AXIS_WR     0x30U
+#define ACCEL_DBG_TLASTS      0x34U
+#define ACCEL_DBG_LAST_END    0x38U
 
 #define GPIO_DATA             0x00U
 #define GPIO_TRI              0x04U
@@ -79,15 +84,11 @@
 #define K_PASSES              ((K_TOTAL + ROWS - 1) / ROWS)
 #define COUT_BLOCKS           ((COUT_TOTAL + COUT_TILE - 1) / COUT_TILE)
 #define EXPECTED_OFM_BYTES    (TILE_PIXELS * COUT_TOTAL)
-#define OFM_AXIS_BYTES        (EXPECTED_OFM_BYTES * 8)
+#define OFM_AXIS_BYTES        (EXPECTED_OFM_BYTES * 4)
 
-/*
- * Set to 1 after rebuilding the hardware with feeder_fill_fy exposed on
- * GPIO2[15:7]. Keep 0 for the already-generated XSA, whose GPIO2 is only
- * 7 bits wide and exposes request/error flags.
- */
+/* The carrier-based XSA exposes feeder_fill_fy on GPIO2[15:7]. */
 #ifndef USE_GPIO_FILL_FY
-#define USE_GPIO_FILL_FY      0
+#define USE_GPIO_FILL_FY      1
 #endif
 
 #endif

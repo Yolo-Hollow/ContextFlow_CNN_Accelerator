@@ -24,7 +24,7 @@ static uint8_t ofm_mem[FULL_PIXELS * COUT_TOTAL];
 static uint64_t bias_buf[COUT_TILE / 2] __attribute__((aligned(64)));
 static uint64_t weight_buf[(ROWS * COUT_TILE) / 8] __attribute__((aligned(64)));
 static uint64_t ifm_buf[FM_W] __attribute__((aligned(64)));
-static uint64_t ofm_axis_buf[EXPECTED_OFM_BYTES] __attribute__((aligned(64)));
+static uint32_t ofm_axis_buf[EXPECTED_OFM_BYTES] __attribute__((aligned(64)));
 volatile uint32_t debug_stage = 0;
 volatile uint32_t debug_value = 0;
 
@@ -189,15 +189,19 @@ static void pack_ifm_line(int fy, int k_base)
     }
 }
 
-static void dma_reset(uint32_t base, uint32_t cr_off, uint32_t sr_off)
+static void dma_reset_named(const char *name, uint32_t base, uint32_t cr_off, uint32_t sr_off)
 {
+    xil_printf("dma reset: %s base=0x%08lx write reset\r\n", name, (unsigned long)base);
     wr32(base, cr_off, DMA_DMACR_RESET);
+    xil_printf("dma reset: %s poll reset bit\r\n", name);
     for (uint32_t i = 0; i < 1000000U; ++i) {
         if ((rd32(base, cr_off) & DMA_DMACR_RESET) == 0U) {
             break;
         }
     }
+    xil_printf("dma reset: %s clear irq\r\n", name);
     wr32(base, sr_off, 0x00007000U);
+    xil_printf("dma reset: %s done\r\n", name);
 }
 
 static int dma_wait(uint32_t base, uint32_t sr_off, const char *name)
@@ -315,17 +319,28 @@ static int parse_ofm(void)
     }
 
     Xil_DCacheInvalidateRange((UINTPTR)ofm_axis_buf, OFM_AXIS_BYTES);
+    for (int i = 0; i < 8; ++i) {
+        uint32_t raw = ofm_axis_buf[i];
+        xil_printf("ofm raw[%d]=0x%08lx addr=%lu data=%u\r\n",
+                   i,
+                   (unsigned long)raw,
+                   (unsigned long)(raw & 0x00ffffffU),
+                   (unsigned)((raw >> 24) & 0xffU));
+    }
+    int parsed = 0;
     for (int i = 0; i < EXPECTED_OFM_BYTES; ++i) {
-        uint32_t packet = (uint32_t)ofm_axis_buf[i];
-        uint32_t addr = packet & 0x00ffffffU;
-        uint8_t data = (uint8_t)((packet >> 24) & 0xffU);
+        uint32_t raw = ofm_axis_buf[i];
+        uint32_t addr = raw & 0x00ffffffU;
+        uint8_t data = (uint8_t)((raw >> 24) & 0xffU);
         if (addr >= (FULL_PIXELS * COUT_TOTAL)) {
             xil_printf("Bad OFM packet %d addr=%lu data=%u\r\n",
                        i, (unsigned long)addr, data);
             return -1;
         }
         ofm_mem[addr] = data;
+        ++parsed;
     }
+    xil_printf("ofm parsed=%d expected=%d\r\n", parsed, EXPECTED_OFM_BYTES);
 
     for (int idx = 0; idx < TILE_PIXELS; ++idx) {
         int global_pixel = TILE_PIXEL_BASE + idx;
@@ -355,10 +370,10 @@ static int run_smoke(void)
 
     debug_stage = 0x10000000U;
     xil_printf("stage: dma reset\r\n");
-    dma_reset(DMA_BIAS_BASE_ADDR, DMA_MM2S_DMACR, DMA_MM2S_DMASR);
-    dma_reset(DMA_WEIGHT_BASE_ADDR, DMA_MM2S_DMACR, DMA_MM2S_DMASR);
-    dma_reset(DMA_IFM_BASE_ADDR, DMA_MM2S_DMACR, DMA_MM2S_DMASR);
-    dma_reset(DMA_OFM_BASE_ADDR, DMA_S2MM_DMACR, DMA_S2MM_DMASR);
+    dma_reset_named("bias", DMA_BIAS_BASE_ADDR, DMA_MM2S_DMACR, DMA_MM2S_DMASR);
+    dma_reset_named("weight", DMA_WEIGHT_BASE_ADDR, DMA_MM2S_DMACR, DMA_MM2S_DMASR);
+    dma_reset_named("ifm", DMA_IFM_BASE_ADDR, DMA_MM2S_DMACR, DMA_MM2S_DMASR);
+    dma_reset_named("ofm", DMA_OFM_BASE_ADDR, DMA_S2MM_DMACR, DMA_S2MM_DMASR);
     xil_printf("stage: dma reset done\r\n");
 
     wr32(GPIO_BASE_ADDR, GPIO_TRI, 0x00000000U);
@@ -376,6 +391,11 @@ static int run_smoke(void)
     wr32(ACCEL_BASE_ADDR, ACCEL_NUM_PIXELS, TILE_PIXELS);
     wr32(ACCEL_BASE_ADDR, ACCEL_TILE_ROWS, ((uint32_t)TILE_OFM_H << 16) | TILE_OY_BASE);
     wr32(ACCEL_BASE_ADDR, ACCEL_PIXEL_BASE, TILE_PIXEL_BASE);
+    xil_printf("cfg readback: cout=%lu pixels=%lu tile_rows=0x%08lx pixel_base=%lu\r\n",
+               (unsigned long)rd32(ACCEL_BASE_ADDR, ACCEL_COUT_TOTAL),
+               (unsigned long)rd32(ACCEL_BASE_ADDR, ACCEL_NUM_PIXELS),
+               (unsigned long)rd32(ACCEL_BASE_ADDR, ACCEL_TILE_ROWS),
+               (unsigned long)rd32(ACCEL_BASE_ADDR, ACCEL_PIXEL_BASE));
 
     dma_start_s2mm(DMA_OFM_BASE_ADDR, ofm_axis_buf, OFM_AXIS_BYTES);
     debug_stage = 0x30000000U;
@@ -398,9 +418,10 @@ static int run_smoke(void)
         ++weight_services;
 
         for (int row = 0; row < 3; ++row) {
+            uint32_t st = rd32(GPIO_BASE_ADDR, GPIO2_DATA);
             debug_stage = 0x43000000U | (uint32_t)ifm_services;
             xil_printf("service: ifm %d k_base=%d\r\n", ifm_services, active_k_base);
-            if (service_ifm(0U, active_k_base, &ifm_row_phase) != 0) {
+            if (service_ifm(st, active_k_base, &ifm_row_phase) != 0) {
                 return -1;
             }
             ++ifm_services;
@@ -435,6 +456,12 @@ static int run_smoke(void)
     if (dma_wait(DMA_OFM_BASE_ADDR, DMA_S2MM_DMASR, "ofm S2MM") != 0) {
         return -1;
     }
+    xil_printf("ofm debug: expected=%lu core_wr=%lu axis_wr=%lu tlast=%lu last_end=%lu\r\n",
+               (unsigned long)rd32(ACCEL_BASE_ADDR, ACCEL_DBG_EXPECTED),
+               (unsigned long)rd32(ACCEL_BASE_ADDR, ACCEL_DBG_CORE_WR),
+               (unsigned long)rd32(ACCEL_BASE_ADDR, ACCEL_DBG_AXIS_WR),
+               (unsigned long)rd32(ACCEL_BASE_ADDR, ACCEL_DBG_TLASTS),
+               (unsigned long)rd32(ACCEL_BASE_ADDR, ACCEL_DBG_LAST_END));
     debug_stage = 0x50000000U;
     wr32(ACCEL_BASE_ADDR, ACCEL_CTRL, 2U);
 

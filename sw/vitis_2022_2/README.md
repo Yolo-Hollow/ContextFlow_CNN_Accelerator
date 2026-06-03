@@ -14,13 +14,9 @@ The software generates the same feature, weight, bias, and golden tensors as the
 testbench, services the accelerator requests through four AXI DMA channels, parses
 the debug OFM stream `{addr[23:0], data[7:0]}`, and compares 200 output bytes.
 
-By default the software uses the already-generated XSA-compatible path:
-`USE_GPIO_FILL_FY=0`. In this mode it hardcodes the r18_c16 smoke line request
-sequence as `0, 1, 2` for each K pass, so no new XSA is required.
-
-The repository Tcl has also been updated to expose `feeder_fill_fy` in GPIO2
-bits `[15:7]`. After rebuilding the XSA, set `USE_GPIO_FILL_FY=1` in
-`src/accel_smoke.h` or add it as a compiler define to use the more general path.
+The carrier-based hardware export exposes `feeder_fill_fy` in GPIO2 bits
+`[15:7]`; the software defaults to `USE_GPIO_FILL_FY=1` and uses that value
+when serving IFM line requests.
 
 From a Vitis 2022.2 command shell:
 
@@ -29,6 +25,21 @@ xsct sw/vitis_2022_2/scripts/create_accel_smoke_project.tcl
 ```
 
 The generated workspace is `build_vitis_2022_2`.
+
+If the Vitis 2022.2 Eclipse backend stalls while importing or building the app,
+the workspace can still be recovered by copying `src/main.c` and
+`src/accel_smoke.h` into the generated app `src` directory and using the
+generated BSP directly:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/manual_build_accel_smoke.ps1
+```
+
+The known-good manual output path is:
+
+```text
+build_vitis_2022_2/conv_accel_r18_c16_smoke/manual_build/conv_accel_r18_c16_smoke.elf
+```
 
 This script uses the carrier-based hardware export:
 

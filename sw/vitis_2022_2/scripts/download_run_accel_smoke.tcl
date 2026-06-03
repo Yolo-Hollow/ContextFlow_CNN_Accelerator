@@ -1,0 +1,79 @@
+set script_dir [file dirname [file normalize [info script]]]
+set sw_dir [file dirname $script_dir]
+set root [file dirname [file dirname $sw_dir]]
+
+set workspace [file normalize [file join $root build_vitis_2022_2]]
+set hw_dir [file join $workspace conv_accel_kv260_platform hw]
+set bit_file [file join $hw_dir conv_accel_ps_dma_minimal.bit]
+set psu_init_tcl [file join $hw_dir psu_init.tcl]
+set elf [file join $workspace conv_accel_r18_c16_smoke manual_build conv_accel_r18_c16_smoke.elf]
+
+for {set i 0} {$i < [llength $argv]} {incr i} {
+    set arg [lindex $argv $i]
+    if {$arg eq "-bit_file"} {
+        incr i
+        if {$i >= [llength $argv]} {
+            error "Missing value for -bit_file"
+        }
+        set bit_file [file normalize [lindex $argv $i]]
+    } elseif {$arg eq "-elf"} {
+        incr i
+        if {$i >= [llength $argv]} {
+            error "Missing value for -elf"
+        }
+        set elf [file normalize [lindex $argv $i]]
+    } else {
+        error "Unknown argument: $arg"
+    }
+}
+
+if {![file exists $elf]} {
+    error "ELF not found: $elf. Run sw/vitis_2022_2/scripts/manual_build_accel_smoke.ps1 first."
+}
+if {![file exists $bit_file]} {
+    error "Bitstream not found: $bit_file. Build or select a valid hardware image first."
+}
+if {![file exists $psu_init_tcl]} {
+    error "psu_init.tcl not found: $psu_init_tcl. Create the Vitis platform first."
+}
+
+connect -url tcp:127.0.0.1:3121
+puts "=== JTAG targets ==="
+targets
+puts "=== Raw JTAG chain ==="
+jtag targets
+
+if {[llength [targets -filter {name =~ "Cortex-A53 #0"}]] == 0} {
+    error "Cortex-A53 #0 target not found. hw_server sees no usable KV260 JTAG target."
+}
+
+targets -set -nocase -filter {name =~ "*PSU*"}
+puts "System reset"
+catch {stop}
+rst -system
+after 3000
+
+source $psu_init_tcl
+targets -set -nocase -filter {name =~ "*PSU*"}
+puts "Running psu_init"
+psu_init
+
+puts "Programming PL: $bit_file"
+fpga -file $bit_file
+
+puts "Removing PS-PL isolation"
+psu_ps_pl_isolation_removal
+puts "Applying PS-PL reset config"
+psu_ps_pl_reset_config
+psu_post_config
+
+targets -set -nocase -filter {name =~ "Cortex-A53 #0"}
+puts "Resetting Cortex-A53 #0"
+catch {stop}
+rst -processor -clear-registers
+after 1000
+
+puts "Downloading ELF: $elf"
+dow $elf
+puts "Starting program"
+con
