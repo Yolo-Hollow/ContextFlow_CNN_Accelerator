@@ -35,6 +35,7 @@ $common = @(
     "systolic/psum_packet_fifo.v",
     "systolic/ofm_requant_writer.v",
     "systolic/ofm_activation.v",
+    "systolic/ofm_pooling.v",
     "systolic/ofm_writeback.v",
     "systolic/ofm_packet_fifo.v",
     "systolic/ofm_byte_stream_fifo.v",
@@ -80,6 +81,7 @@ $tests = @(
     @{ Top = "tb_psum_drain_writer"; Files = @("tb/tb_psum_drain_writer.v") },
     @{ Top = "tb_ofm_requant_writer"; Files = @("tb/tb_ofm_requant_writer.v") },
     @{ Top = "tb_ofm_activation"; Files = @("tb/tb_ofm_activation.v") },
+    @{ Top = "tb_ofm_pooling"; Files = @("tb/tb_ofm_pooling.v") },
     @{ Top = "tb_ofm_writeback"; Files = @("tb/tb_ofm_writeback.v") },
     @{ Top = "tb_ofm_packet_fifo"; Files = @("tb/tb_ofm_packet_fifo.v") },
     @{ Top = "tb_ofm_byte_stream_fifo"; Files = @("tb/tb_ofm_byte_stream_fifo.v") },
@@ -97,6 +99,7 @@ $tests = @(
 
 $longTests = @(
     @{ Top = "tb_conv_accel_core_realistic_small"; Files = @("tb/tb_conv_accel_core_realistic_small.v") },
+    @{ Top = "tb_conv_accel_core_pooling"; Files = @("tb/tb_conv_accel_core_pooling.v") },
     @{ Top = "tb_layer_scheduler_cout64_fulltile"; Files = @("tb/tb_layer_scheduler_cout64_fulltile.v") },
     @{ Top = "tb_conv_accel_core_spatial_tile"; Files = @("tb/tb_conv_accel_core_spatial_tile.v") },
     @{ Top = "tb_conv_accel_core_spatial_multitile"; Files = @("tb/tb_conv_accel_core_spatial_multitile.v") },

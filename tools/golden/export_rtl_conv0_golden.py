@@ -73,6 +73,18 @@ def conv2d_3x3_same_i32(ifm_s8_hwc, weight_s8_oihw, bias_i32):
     return psum.astype(np.int32)
 
 
+def maxpool2d_u8_2x2_stride2(hwc_u8):
+    h, w, c = hwc_u8.shape
+    out_h = h // 2
+    out_w = w // 2
+    pooled = np.empty((out_h, out_w, c), dtype=np.uint8)
+    for y in range(out_h):
+        for x in range(out_w):
+            window = hwc_u8[y * 2 : y * 2 + 2, x * 2 : x * 2 + 2, :]
+            pooled[y, x, :] = window.max(axis=(0, 1))
+    return pooled
+
+
 def write_bin(path, array):
     path.parent.mkdir(parents=True, exist_ok=True)
     np.ascontiguousarray(array).tofile(path)
@@ -85,6 +97,7 @@ def main():
     parser.add_argument("--prefix", default="F")
     parser.add_argument("--size", type=int, default=416)
     parser.add_argument("--out", default=None)
+    parser.add_argument("--pool-stride2", action="store_true", help="Also export activation-after-pool 2x2 stride2 golden.")
     args = parser.parse_args()
 
     project = Path(args.project).resolve()
@@ -150,6 +163,7 @@ def main():
     psum_i32 = conv2d_3x3_same_i32(ifm_s8, conv0_w, bias_i32)
     requant_s8 = requantize_psum(psum_i32, cfg_fields["mult"][0], cfg_fields["shift"][0], cfg_fields["ozp"][0])
     activation_u8 = fr0[requant_s8.view(np.uint8)]
+    pooled_u8 = maxpool2d_u8_2x2_stride2(activation_u8) if args.pool_stride2 else None
 
     write_bin(out_dir / "ifm_u8_hwc.bin", ifm_u8)
     write_bin(out_dir / "ifm_s8_hwc.bin", ifm_s8)
@@ -164,6 +178,8 @@ def main():
     write_bin(out_dir / "activation_lut_u8.bin", fr0)
     write_bin(out_dir / "activation_u8_hwc.bin", activation_u8)
     write_bin(out_dir / "golden_ofm_u8_hwc.bin", activation_u8)
+    if pooled_u8 is not None:
+        write_bin(out_dir / "golden_pool2x2s2_u8_hwc.bin", pooled_u8)
 
     manifest = {
         "description": "Conv0 real-image golden data for RTL bring-up.",
@@ -181,7 +197,13 @@ def main():
             "ifm_axis5_shape_hwc": list(ifm_axis5.shape),
             "weight_raw_shape_oihw": list(conv0_w.shape),
             "ofm_shape_hwc": list(activation_u8.shape),
+            "pool_ofm_shape_hwc": list(pooled_u8.shape) if pooled_u8 is not None else None,
             "fw0_packed_count_int8": int(fw0.size),
+        },
+        "pool": {
+            "enabled": bool(args.pool_stride2),
+            "mode": "maxpool2d_u8_2x2_stride2" if args.pool_stride2 else "bypass",
+            "position": "after activation",
         },
         "quant": {
             "input_scale": input_scale,
@@ -234,6 +256,8 @@ def main():
             "Non-convolution YOLO operations such as MaxPool, Upsample, Concat, Detect decode and NMS are not exported here.",
         ],
     }
+    if pooled_u8 is not None:
+        manifest["files"]["golden_pool2x2s2_u8_hwc"] = "golden_pool2x2s2_u8_hwc.bin"
     (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
     summary = {
@@ -256,6 +280,10 @@ def main():
         "requant_max_signed": int(requant_s8.max()),
         "activation_min_u8": int(activation_u8.min()),
         "activation_max_u8": int(activation_u8.max()),
+        "pool_enabled": bool(args.pool_stride2),
+        "pool_shape_hwc": list(pooled_u8.shape) if pooled_u8 is not None else None,
+        "pool_min_u8": int(pooled_u8.min()) if pooled_u8 is not None else None,
+        "pool_max_u8": int(pooled_u8.max()) if pooled_u8 is not None else None,
     }
     print(json.dumps(summary, indent=2))
 

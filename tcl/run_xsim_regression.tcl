@@ -51,6 +51,7 @@ set common_files {
     systolic/psum_packet_fifo.v
     systolic/ofm_requant_writer.v
     systolic/ofm_activation.v
+    systolic/ofm_pooling.v
     systolic/ofm_writeback.v
     systolic/ofm_packet_fifo.v
     systolic/ofm_byte_stream_fifo.v
@@ -71,6 +72,7 @@ set common_files {
 
 set tests {
     {tb_conv_accel_core_realistic_small tb/tb_conv_accel_core_realistic_small.v}
+    {tb_conv_accel_core_pooling tb/tb_conv_accel_core_pooling.v}
     {tb_layer_scheduler_cout64_fulltile tb/tb_layer_scheduler_cout64_fulltile.v}
     {tb_conv_accel_core_cout64_fulltile tb/tb_conv_accel_core_cout64_fulltile.v}
     {tb_conv_accel_core_cout128_blocks tb/tb_conv_accel_core_cout128_blocks.v}
@@ -104,6 +106,7 @@ set tests {
     {tb_requant tb/tb_requant.v}
     {tb_ofm_requant_writer tb/tb_ofm_requant_writer.v}
     {tb_ofm_activation tb/tb_ofm_activation.v}
+    {tb_ofm_pooling tb/tb_ofm_pooling.v}
     {tb_ofm_writeback tb/tb_ofm_writeback.v}
     {tb_bias_weight_stream_loader tb/tb_bias_weight_stream_loader.v}
     {tb_ifm_line_stream_loader tb/tb_ifm_line_stream_loader.v}

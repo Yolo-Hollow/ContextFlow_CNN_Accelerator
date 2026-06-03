@@ -18,6 +18,7 @@
 //   0x0d DBG_TLASTS:   OFM AXIS TLAST handshake count
 //   0x0e DBG_LAST_END: packet count at the most recent TLAST handshake
 //   0x0f IFM_ZP:       [7:0]=input_zero_point for uint8-to-sint8 IFM centering
+//   0x10 POOL_CFG:     bit0=pool_enable, [3:2]=pool_stride, 0/bypass by default
 module layer_config_regs (
     input  clk,
     input  rst,
@@ -50,7 +51,9 @@ module layer_config_regs (
     output reg [8:0]  tile_oy_base,
     output reg [8:0]  tile_ofm_h,
     output reg [23:0] tile_pixel_base,
-    output reg [7:0]  input_zero_point
+    output reg [7:0]  input_zero_point,
+    output reg        pool_enable,
+    output reg [1:0]  pool_stride
 );
     reg done_sticky;
     wire cfg_idle = !layer_busy;
@@ -73,6 +76,8 @@ module layer_config_regs (
             tile_ofm_h <= 9'd0;
             tile_pixel_base <= 24'd0;
             input_zero_point <= 8'd0;
+            pool_enable <= 1'b0;
+            pool_stride <= 2'd0;
         end else begin
             start_pulse <= 1'b0;
             if (layer_done)
@@ -118,6 +123,12 @@ module layer_config_regs (
                     end
                     6'h09: if (cfg_idle) tile_pixel_base <= cfg_wdata[23:0];
                     6'h0f: if (cfg_idle) input_zero_point <= cfg_wdata[7:0];
+                    6'h10: begin
+                        if (cfg_idle) begin
+                            pool_enable <= cfg_wdata[0];
+                            pool_stride <= cfg_wdata[3:2];
+                        end
+                    end
                     default: begin end
                 endcase
             end
@@ -142,6 +153,7 @@ module layer_config_regs (
             6'h0d: cfg_rdata = dbg_tlast_count;
             6'h0e: cfg_rdata = dbg_last_tlast_index;
             6'h0f: cfg_rdata = {24'd0, input_zero_point};
+            6'h10: cfg_rdata = {28'd0, pool_stride, 1'b0, pool_enable};
             default: cfg_rdata = 32'd0;
         endcase
     end

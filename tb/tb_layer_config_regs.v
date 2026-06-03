@@ -17,6 +17,8 @@ module tb_layer_config_regs;
     wire [8:0] tile_oy_base, tile_ofm_h;
     wire [23:0] tile_pixel_base;
     wire [7:0] input_zero_point;
+    wire pool_enable;
+    wire [1:0] pool_stride;
 
     layer_config_regs dut (
         .clk(clk), .rst(rst),
@@ -32,7 +34,8 @@ module tb_layer_config_regs;
         .k_total(k_total), .cout_total(cout_total), .num_pixels(num_pixels),
         .tile_oy_base(tile_oy_base), .tile_ofm_h(tile_ofm_h),
         .tile_pixel_base(tile_pixel_base),
-        .input_zero_point(input_zero_point)
+        .input_zero_point(input_zero_point),
+        .pool_enable(pool_enable), .pool_stride(pool_stride)
     );
 
     always #5 clk = ~clk;
@@ -98,6 +101,7 @@ module tb_layer_config_regs;
         write_reg(6'h08, {7'd0, 9'd3, 7'd0, 9'd2});
         write_reg(6'h09, 32'd6);
         write_reg(6'h0f, 32'd36);
+        write_reg(6'h10, {28'd0, 2'd2, 1'b0, 1'b1});
 
         check_value(fm_h, 7, "fm_h");
         check_value(fm_w, 5, "fm_w");
@@ -113,6 +117,8 @@ module tb_layer_config_regs;
         check_value(tile_ofm_h, 3, "tile_ofm_h");
         check_value(tile_pixel_base, 6, "tile_pixel_base");
         check_value(input_zero_point, 36, "input_zero_point");
+        check_value(pool_enable, 1, "pool_enable");
+        check_value(pool_stride, 2, "pool_stride");
 
         cfg_addr = 6'h07;
         #1;
@@ -139,6 +145,13 @@ module tb_layer_config_regs;
         #1;
         if (cfg_rdata !== 32'd36) begin
             $display("[FAIL] input zero point read got=%h exp=24", cfg_rdata);
+            fail = fail + 1;
+        end else pass = pass + 1;
+
+        cfg_addr = 6'h10;
+        #1;
+        if (cfg_rdata !== {28'd0, 2'd2, 1'b0, 1'b1}) begin
+            $display("[FAIL] pool cfg read got=%h", cfg_rdata);
             fail = fail + 1;
         end else pass = pass + 1;
 
@@ -181,6 +194,7 @@ module tb_layer_config_regs;
         write_reg(6'h08, {7'd0, 9'd8, 7'd0, 9'd7});
         write_reg(6'h09, 32'd99);
         write_reg(6'h0f, 32'd99);
+        write_reg(6'h10, 32'd0);
         check_value(fm_h, 7, "busy freeze fm_h");
         check_value(fm_w, 5, "busy freeze fm_w");
         check_value(k_total, 45, "busy freeze k_total");
@@ -189,6 +203,8 @@ module tb_layer_config_regs;
         check_value(tile_ofm_h, 3, "busy freeze tile_ofm_h");
         check_value(tile_pixel_base, 6, "busy freeze pixel base");
         check_value(input_zero_point, 36, "busy freeze input zero point");
+        check_value(pool_enable, 1, "busy freeze pool enable");
+        check_value(pool_stride, 2, "busy freeze pool stride");
 
         write_reg(6'h00, 32'd1);
         repeat (2) @(negedge clk);

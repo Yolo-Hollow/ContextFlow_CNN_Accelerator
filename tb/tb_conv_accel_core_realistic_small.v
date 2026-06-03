@@ -57,6 +57,12 @@
 `ifndef TB_CONV_ACCEL_CORE_ACT_MODE
 `define TB_CONV_ACCEL_CORE_ACT_MODE 0
 `endif
+`ifndef TB_CONV_ACCEL_CORE_POOL_ENABLE
+`define TB_CONV_ACCEL_CORE_POOL_ENABLE 0
+`endif
+`ifndef TB_CONV_ACCEL_CORE_POOL_STRIDE
+`define TB_CONV_ACCEL_CORE_POOL_STRIDE 0
+`endif
 `ifndef TB_CONV_ACCEL_CORE_FM_W
 `define TB_CONV_ACCEL_CORE_FM_W 8
 `endif
@@ -179,12 +185,26 @@ module `TB_CONV_ACCEL_CORE_MODULE;
     localparam TILE2_ACTIVE_OFM_H = (TILE2_OFM_H == 0) ? OFM_H : TILE2_OFM_H;
     localparam [1:0] CONV_PAD = `TB_CONV_ACCEL_CORE_PAD;
     localparam [1:0] CONV_STRIDE = `TB_CONV_ACCEL_CORE_STRIDE;
+    localparam POOL_ENABLE = `TB_CONV_ACCEL_CORE_POOL_ENABLE;
+    localparam [1:0] POOL_STRIDE = `TB_CONV_ACCEL_CORE_POOL_STRIDE;
+    localparam POOL_ACTIVE = (POOL_ENABLE != 0) && (POOL_STRIDE == 2);
     localparam PIXELS = OFM_W * ACTIVE_OFM_H;
     localparam TILE1_PIXELS = OFM_W * TILE1_ACTIVE_OFM_H;
     localparam TILE2_PIXELS = OFM_W * TILE2_ACTIVE_OFM_H;
     localparam RUN_PIXELS = (TILE_COUNT == 1) ? PIXELS :
                             (TILE_COUNT == 2) ? (PIXELS + TILE1_PIXELS) :
                             (PIXELS + TILE1_PIXELS + TILE2_PIXELS);
+    localparam OUT_W = POOL_ACTIVE ? (OFM_W / 2) : OFM_W;
+    localparam OUT_H = POOL_ACTIVE ? (OFM_H / 2) : OFM_H;
+    localparam ACTIVE_OUT_H = POOL_ACTIVE ? (ACTIVE_OFM_H / 2) : ACTIVE_OFM_H;
+    localparam TILE1_ACTIVE_OUT_H = POOL_ACTIVE ? (TILE1_ACTIVE_OFM_H / 2) : TILE1_ACTIVE_OFM_H;
+    localparam TILE2_ACTIVE_OUT_H = POOL_ACTIVE ? (TILE2_ACTIVE_OFM_H / 2) : TILE2_ACTIVE_OFM_H;
+    localparam OUT_PIXELS = OUT_W * ACTIVE_OUT_H;
+    localparam TILE1_OUT_PIXELS = OUT_W * TILE1_ACTIVE_OUT_H;
+    localparam TILE2_OUT_PIXELS = OUT_W * TILE2_ACTIVE_OUT_H;
+    localparam RUN_OUT_PIXELS = (TILE_COUNT == 1) ? OUT_PIXELS :
+                                (TILE_COUNT == 2) ? (OUT_PIXELS + TILE1_OUT_PIXELS) :
+                                (OUT_PIXELS + TILE1_OUT_PIXELS + TILE2_OUT_PIXELS);
     localparam CIN = `TB_CONV_ACCEL_CORE_CIN;
     localparam K_TOTAL = CIN * 3 * 3;
     localparam K_PASSES = (K_TOTAL + ROWS - 1) / ROWS;
@@ -197,8 +217,9 @@ module `TB_CONV_ACCEL_CORE_MODULE;
     localparam PSUM_BUF_D = `TB_CONV_ACCEL_CORE_PSUM_BUF_DEPTH;
     localparam OFM_ADDR_W = `TB_CONV_ACCEL_CORE_OFM_ADDR_W;
     localparam FULL_PIXELS = OFM_W * OFM_H;
-    localparam OFM_WORDS = OFM_W * OFM_H * COUT_TOTAL;
-    localparam EXPECTED_OFM_WRITES = RUN_PIXELS * COUT_TOTAL;
+    localparam OUT_FULL_PIXELS = OUT_W * OUT_H;
+    localparam OFM_WORDS = OUT_W * OUT_H * COUT_TOTAL;
+    localparam EXPECTED_OFM_WRITES = RUN_OUT_PIXELS * COUT_TOTAL;
     localparam [7:0] INPUT_ZERO_POINT = `TB_CONV_ACCEL_CORE_INPUT_ZP;
 
     reg clk, rst;
@@ -424,6 +445,8 @@ module `TB_CONV_ACCEL_CORE_MODULE;
     reg signed [PSUM_W-1:0] bias [0:COUT_TOTAL-1];
     reg signed [PSUM_W-1:0] golden [0:FULL_PIXELS-1][0:COUT_TOTAL-1];
     reg [7:0] ofm_mem [0:OFM_WORDS-1];
+    reg [7:0] expected_det_byte;
+    reg [7:0] expected_pool_byte;
 `ifdef TB_CONV_ACCEL_CORE_USE_EXTERNAL_GOLDEN
     reg [7:0] ext_ifm [0:FM_W*FM_H*CIN-1];
     reg [7:0] ext_weight [0:K_TOTAL*COUT_TOTAL-1];
@@ -458,6 +481,20 @@ module `TB_CONV_ACCEL_CORE_MODULE;
                 requant_byte_tb = 8'd128;
             else
                 requant_byte_tb = rounded[7:0];
+        end
+    endfunction
+
+    function [7:0] max4_u8;
+        input [7:0] a;
+        input [7:0] b;
+        input [7:0] c;
+        input [7:0] d;
+        reg [7:0] m0;
+        reg [7:0] m1;
+        begin
+            m0 = (a > b) ? a : b;
+            m1 = (c > d) ? c : d;
+            max4_u8 = (m0 > m1) ? m0 : m1;
         end
     endfunction
 
@@ -1243,6 +1280,7 @@ module `TB_CONV_ACCEL_CORE_MODULE;
         cfg_write(6'h05, COUT_TOTAL);
         cfg_write(6'h07, `TB_CONV_ACCEL_CORE_ACT_MODE);
         cfg_write(6'h0f, {24'd0, INPUT_ZERO_POINT});
+        cfg_write(6'h10, {28'd0, POOL_STRIDE, 1'b0, (POOL_ENABLE != 0)});
         for (run_idx = 0; run_idx < TILE_COUNT; run_idx = run_idx + 1)
             run_tile(run_idx);
 `ifdef TB_CONV_ACCEL_CORE_USE_FULL_STREAM
@@ -1353,10 +1391,14 @@ module `TB_CONV_ACCEL_CORE_MODULE;
 
         for (run_idx = 0; run_idx < TILE_COUNT; run_idx = run_idx + 1) begin
             get_tile_cfg(run_idx, run_oy_base, run_ofm_h, run_pixel_base);
-            run_pixels = OFM_W * run_ofm_h;
+            run_pixels = POOL_ACTIVE ? (OUT_W * (run_ofm_h / 2)) : (OFM_W * run_ofm_h);
             for (idx = 0; idx < run_pixels; idx = idx + 1) begin
                 for (co = 0; co < COUT_TOTAL; co = co + 1) begin
 `ifdef TB_CONV_ACCEL_CORE_USE_EXTERNAL_GOLDEN
+                    if (POOL_ACTIVE) begin
+                        $display("[FAIL] external golden compare does not support pooling yet");
+                        fail = fail + 1;
+                    end else begin
                     expected_ofm_byte = ext_golden[(run_pixel_base + idx)*COUT_TOTAL + co];
                     if (ofm_mem[(run_pixel_base + idx)*COUT_TOTAL + co] !== expected_ofm_byte) begin
                         $display("[FAIL] tile%0d pixel%0d global%0d cout%0d addr%0d got=%0d exp=%0d",
@@ -1366,14 +1408,26 @@ module `TB_CONV_ACCEL_CORE_MODULE;
                             expected_ofm_byte);
                         fail = fail + 1;
                     end else pass = pass + 1;
+                    end
 `else
-                    if (ofm_mem[(run_pixel_base + idx)*COUT_TOTAL + co] !==
-                        requant_byte_tb(golden[run_pixel_base + idx][co])) begin
-                        $display("[FAIL] tile%0d pixel%0d global%0d cout%0d got=%0d exp=%0d raw=%0d",
+                    if (POOL_ACTIVE) begin
+                        y = idx / OUT_W;
+                        x = idx % OUT_W;
+                        expected_pool_byte = max4_u8(
+                            requant_byte_tb(golden[(run_oy_base + y*2) * OFM_W + x*2][co]),
+                            requant_byte_tb(golden[(run_oy_base + y*2) * OFM_W + x*2 + 1][co]),
+                            requant_byte_tb(golden[(run_oy_base + y*2 + 1) * OFM_W + x*2][co]),
+                            requant_byte_tb(golden[(run_oy_base + y*2 + 1) * OFM_W + x*2 + 1][co])
+                        );
+                        expected_det_byte = expected_pool_byte;
+                    end else begin
+                        expected_det_byte = requant_byte_tb(golden[run_pixel_base + idx][co]);
+                    end
+                    if (ofm_mem[(run_pixel_base + idx)*COUT_TOTAL + co] !== expected_det_byte) begin
+                        $display("[FAIL] tile%0d pixel%0d global%0d cout%0d got=%0d exp=%0d",
                             run_idx, idx, run_pixel_base + idx, co,
                             ofm_mem[(run_pixel_base + idx)*COUT_TOTAL + co],
-                            requant_byte_tb(golden[run_pixel_base + idx][co]),
-                            golden[run_pixel_base + idx][co]);
+                            expected_det_byte);
                         fail = fail + 1;
                     end else pass = pass + 1;
 `endif

@@ -49,6 +49,8 @@ module conv_layer_top_stream #(
     input  [8:0] tile_oy_base,
     input  [8:0] tile_ofm_h,
     input  [OFM_ADDR_W-1:0] tile_pixel_base,
+    input  pool_enable,
+    input  [1:0] pool_stride,
 
     output bias_load_req,
     input  bias_load_done,
@@ -370,9 +372,15 @@ module conv_layer_top_stream #(
     wire [COLS*2-1:0] act_fifo_channel_valid;
     wire [COLS*2*8-1:0] act_fifo_data;
     wire act_fifo_full;
+    wire pool_valid;
+    wire pool_in_ready;
+    wire [PSUM_BUF_AW-1:0] pool_addr;
+    wire [10:0] pool_cout_base;
+    wire [COLS*2-1:0] pool_channel_valid;
+    wire [COLS*2*8-1:0] pool_data;
     assign ofm_post_busy = ofm_wb_busy || act_fifo_valid || act_fifo_full ||
                            rq_fifo_valid || rq_fifo_full || final_fifo_valid || final_fifo_full ||
-                           ofm_valid || act_valid;
+                           ofm_valid || act_valid || pool_valid;
 
     ofm_packet_fifo #(
         .COUT_TILE(COLS*2), .ADDR_W(PSUM_BUF_AW),
@@ -394,9 +402,23 @@ module conv_layer_top_stream #(
         .in_addr(rq_fifo_addr), .in_cout_base(rq_fifo_cout_base),
         .in_channel_valid(rq_fifo_channel_valid), .in_data(rq_fifo_data),
         .lut_wr_en(act_lut_wr_en), .lut_wr_addr(act_lut_wr_addr), .lut_wr_data(act_lut_wr_data),
-        .out_valid(act_valid), .out_ready(act_fifo_ready),
+        .out_valid(act_valid), .out_ready(pool_in_ready),
         .out_addr(act_addr), .out_cout_base(act_cout_base),
         .out_channel_valid(act_channel_valid), .out_data(act_data)
+    );
+
+    ofm_pooling #(
+        .COUT_TILE(COLS*2), .ADDR_W(PSUM_BUF_AW), .OFM_W_MAX(FM_W_MAX)
+    ) u_pooling (
+        .clk(clk), .rst(rst),
+        .pool_enable(pool_enable), .pool_stride(pool_stride),
+        .conv_ofm_w(ofm_w),
+        .in_valid(act_valid), .in_ready(pool_in_ready),
+        .in_addr(act_addr), .in_cout_base(act_cout_base),
+        .in_channel_valid(act_channel_valid), .in_data(act_data),
+        .out_valid(pool_valid), .out_ready(act_fifo_ready),
+        .out_addr(pool_addr), .out_cout_base(pool_cout_base),
+        .out_channel_valid(pool_channel_valid), .out_data(pool_data)
     );
 
     ofm_packet_fifo #(
@@ -404,9 +426,9 @@ module conv_layer_top_stream #(
         .DEPTH(OFM_FIFO_DEPTH), .AW(OFM_FIFO_AW)
     ) u_ofm_packet_fifo (
         .clk(clk), .rst(rst),
-        .in_valid(act_valid), .in_ready(act_fifo_ready),
-        .in_addr(act_addr), .in_cout_base(act_cout_base),
-        .in_channel_valid(act_channel_valid), .in_data(act_data),
+        .in_valid(pool_valid), .in_ready(act_fifo_ready),
+        .in_addr(pool_addr), .in_cout_base(pool_cout_base),
+        .in_channel_valid(pool_channel_valid), .in_data(pool_data),
         .out_valid(act_fifo_valid), .out_ready(!ofm_packet_full),
         .out_addr(act_fifo_addr), .out_cout_base(act_fifo_cout_base),
         .out_channel_valid(act_fifo_channel_valid), .out_data(act_fifo_data),

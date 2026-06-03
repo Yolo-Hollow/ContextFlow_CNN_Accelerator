@@ -34,6 +34,23 @@ Conv/Pool backbone
 3 * (3 + 5) = 24
 ```
 
+当前单尺度候选调度先按低分辨率检测头展开：
+
+| Task | Operation | IFM C | OFM C | Conv | Pool | Notes |
+|---:|---|---:|---:|---|---|---|
+| 0 | Conv + Pool | 8 | 16 | 3x3/s1/p1 | 2x2/s2 | 输入预处理后补齐到硬件 IFM bank |
+| 1 | Conv + Pool | 16 | 32 | 3x3/s1/p1 | 2x2/s2 | backbone downsample |
+| 2 | Conv + Pool | 32 | 64 | 3x3/s1/p1 | 2x2/s2 | backbone downsample |
+| 3 | Conv + Pool | 64 | 128 | 3x3/s1/p1 | 2x2/s2 | backbone downsample |
+| 4 | Conv + Pool | 128 | 256 | 3x3/s1/p1 | 2x2/s2 | backbone downsample |
+| 5 | Conv + optional Pool | 256 | 512 | 3x3/s1/p1 | TBD | 原 YOLOv3-tiny 末端 pool 语义需按选定模型确认 |
+| 6 | Conv | 512 | 1024 | 3x3/s1/p1 | bypass | low-resolution head |
+| 7 | Conv | 1024 | 256 | 1x1/s1/p0 | bypass | channel reduction |
+| 8 | Conv | 256 | 512 | 3x3/s1/p1 | bypass | detect pre-head |
+| 9 | Conv | 512 | 24 | 1x1/s1/p0 | bypass | 3 anchors * (3 classes + 5) |
+
+YOLO box decode、threshold 和 NMS 先继续放在软件端。
+
 ## 2. 当前 RTL 状态
 
 当前已经验证的主数据流为：
@@ -62,6 +79,7 @@ IFM stream
 - requant 使用软件导出的 raw shift，并在 RTL 内部补上定点乘数的小数位：
   `effective_shift = raw_shift + 15`。
 - activation 支持 bypass/ReLU/LUT。
+- pooling 位于 activation 之后、OFM writer 之前；第一版支持 bypass 和 `2x2` uint8 maxpool stride-2。
 - OFM 写回使用 HWC layout。
 
 ## 3. Layer06 真实数据验证
@@ -122,7 +140,8 @@ requant 与输入零点修正后，以下 xsim 回归已经通过：
 ## 5. 已知限制和风险
 
 - 当前 RTL 还不是完整 YOLOv3-tiny 推理系统。
-- pooling 还没有作为稳定的输出侧后处理模块并入主链路。
+- pooling 第一版已经作为 activation 后、OFM writer 前的可选输出侧后处理模块接入，当前支持 bypass 和 `2x2` uint8 maxpool stride-2。
+- pool-enabled AXIS 顶层的 TLAST/debug byte counter 语义还没有作为本轮验收项，后续需要单独覆盖。
 - 当前验证重点是卷积数据流、量化语义和写回正确性，不覆盖 YOLO decode/NMS。
 - 旧 Vitis 最小系统验证已经不代表当前 RTL 状态，后续需要重新建立软件运行时。
 - RTL semantic golden 是硬件 bit-exact 仿真的标准；PyTorch reference 只能作为模型级参考。
@@ -154,11 +173,10 @@ D:/MPSoC/python_prj
 
 ### RTL 主线
 
-1. 在 activation 之后、OFM writer 之前加入可选 pooling 模块。
-2. 先支持 bypass pooling 和 `2x2` max-pool stride-2。
-3. 只有在单尺度网络调度确实需要时，再加入 stride-1 或特殊 pooling。
-4. 扩展层配置，加入 pooling enable 和 pooling stride。
-5. 增加 `Conv -> Activation -> Pool -> OFM` directed test。
+1. 完成 pool-enabled AXIS 顶层 TLAST/debug byte counter 验证。
+2. 按单尺度网络调度确认是否需要 stride-1 或特殊 pooling。
+3. 增加真实数据 `Conv -> Activation -> Pool -> OFM` 小 tile 测试。
+4. 继续保持无 pooling 路径的默认 ABI 兼容。
 
 ### 网络验证主线
 

@@ -36,6 +36,8 @@ module tb_axi_lite_cfg_bridge;
     wire [8:0] tile_oy_base, tile_ofm_h;
     wire [23:0] tile_pixel_base;
     wire [7:0] input_zero_point;
+    wire pool_enable;
+    wire [1:0] pool_stride;
 
     axi_lite_cfg_bridge dut_bridge (
         .clk(clk), .rst(rst),
@@ -62,7 +64,8 @@ module tb_axi_lite_cfg_bridge;
         .k_total(k_total), .cout_total(cout_total), .num_pixels(num_pixels),
         .tile_oy_base(tile_oy_base), .tile_ofm_h(tile_ofm_h),
         .tile_pixel_base(tile_pixel_base),
-        .input_zero_point(input_zero_point)
+        .input_zero_point(input_zero_point),
+        .pool_enable(pool_enable), .pool_stride(pool_stride)
     );
 
     always #5 clk = ~clk;
@@ -162,7 +165,9 @@ module tb_axi_lite_cfg_bridge;
             @(negedge clk);
             araddr = addr;
             arvalid = 1'b1;
-            wait(arready);
+            @(posedge clk);
+            while (!arready)
+                @(posedge clk);
             @(negedge clk);
             arvalid = 1'b0;
             wait(rvalid);
@@ -234,9 +239,15 @@ module tb_axi_lite_cfg_bridge;
         axi_write(8'h20, {7'd0, 9'd3, 7'd0, 9'd2}, 4'hf);
         axi_write(8'h24, 32'd6, 4'hf);
         axi_write(8'h3c, 32'd36, 4'hf);
+        axi_write(8'h40, {28'd0, 2'd2, 1'b0, 1'b1}, 4'hf);
         axi_read(8'h3c, rd);
         check_eq(rd, 32'd36, "input_zero_point read");
         check_eq({24'd0, input_zero_point}, 32'd36, "input_zero_point output");
+
+        axi_read(8'h40, rd);
+        check_eq(rd, {28'd0, 2'd2, 1'b0, 1'b1}, "pool cfg read");
+        check_eq({31'd0, pool_enable}, 32'd1, "pool_enable output");
+        check_eq({30'd0, pool_stride}, 32'd2, "pool_stride output");
 
         axi_write(8'h3c, 32'h0000_5500, 4'h2);
         axi_read(8'h3c, rd);
@@ -296,6 +307,10 @@ module tb_axi_lite_cfg_bridge;
         axi_read(8'h3c, rd);
         check_eq(rd, 32'd42, "busy freezes input_zero_point");
 
+        axi_write(8'h40, 32'd0, 4'hf);
+        axi_read(8'h40, rd);
+        check_eq(rd, {28'd0, 2'd2, 1'b0, 1'b1}, "busy freezes pool cfg");
+
         axi_write(8'h00, 32'd1, 4'h1);
         repeat (2) @(negedge clk);
         if (start_pulse_count != count_before) begin
@@ -320,7 +335,10 @@ module tb_axi_lite_cfg_bridge;
 
     initial begin
         repeat (1000) @(negedge clk);
-        $display("[FAIL] timeout");
+        $display("[FAIL] timeout awready=%b wready=%b arready=%b bvalid=%b rvalid=%b wr_state=%b rd_state=%b aw_hold=%b w_hold=%b cfg_addr=%h",
+                 awready, wready, arready, bvalid, rvalid,
+                 dut_bridge.wr_state, dut_bridge.rd_state,
+                 dut_bridge.aw_hold_valid, dut_bridge.w_hold_valid, cfg_addr);
         $fatal(1);
     end
 endmodule

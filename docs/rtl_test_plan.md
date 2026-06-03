@@ -320,6 +320,46 @@ Current result:
 
 - `81 pass, 0 fail`
 
+### `tb_ofm_pooling`
+
+目的：
+
+- 验证 activation 后的 packet-level pooling。
+- 覆盖 bypass 和 `2x2` uint8 maxpool stride-2。
+- 验证 output backpressure 下 `in_ready` 能停止上游输入。
+
+检查项：
+
+- bypass 模式 metadata/data 原样透传。
+- `4x4 -> 2x2` pooling 输出地址按 pooled local pixel 重新编号。
+- 每个 lane 的输出等于四个 activated uint8 输入的最大值。
+- 输出被下游 hold 时，不接受新的输入 packet。
+
+当前结果：
+
+- `50 pass, 0 fail`
+
+### `tb_conv_accel_core_pooling`
+
+目的：
+
+- 验证小规模 deterministic 顶层 `Conv -> Requant -> Activation -> Pool -> OFM`。
+- 使用 `POOL_CFG` 打开 `2x2` stride-2 pooling，默认无 pool 测试保持兼容。
+
+检查项：
+
+- 卷积 compute/psum 计数仍按 pool 前 conv output pixel 数统计。
+- OFM byte 写出数量按 pool 后 pixel 数统计。
+- 输出 byte 与 testbench 内部 RTL semantic golden 的 activation 后 maxpool 一致。
+
+当前结果：
+
+- `139 pass, 0 fail`
+
+已知限制：
+
+- 本测试走 `conv_accel_core` 内部 OFM 写回路径，尚未覆盖 pool-enabled AXIS 顶层的 TLAST 和 debug byte counter 语义。
+
 ## Layer06 real-image external golden tests
 
 These tests verify a real intermediate layer shape:

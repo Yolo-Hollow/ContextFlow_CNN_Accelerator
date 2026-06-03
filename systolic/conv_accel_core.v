@@ -102,6 +102,8 @@ module conv_accel_core #(
     wire [8:0] tile_ofm_h;
     wire [23:0] tile_pixel_base;
     wire [7:0] input_zero_point;
+    wire pool_enable;
+    wire [1:0] pool_stride;
     wire [OFM_ADDR_W-1:0] tile_pixel_base_ext = tile_pixel_base[OFM_ADDR_W-1:0];
     wire [COLS*2*MULT_W-1:0] quant_mult_flat;
     wire [COLS*2*SHIFT_W-1:0] quant_shift_flat;
@@ -128,7 +130,8 @@ module conv_accel_core #(
         .k_total(k_total), .cout_total(cout_total), .num_pixels(num_pixels),
         .tile_oy_base(tile_oy_base), .tile_ofm_h(tile_ofm_h),
         .tile_pixel_base(tile_pixel_base),
-        .input_zero_point(input_zero_point)
+        .input_zero_point(input_zero_point),
+        .pool_enable(pool_enable), .pool_stride(pool_stride)
     );
 
     quant_param_regs #(
@@ -157,6 +160,7 @@ module conv_accel_core #(
         .k_total(k_total), .cout_total(cout_total), .num_pixels(num_pixels),
         .tile_oy_base(tile_oy_base), .tile_ofm_h(tile_ofm_h),
         .tile_pixel_base(tile_pixel_base_ext),
+        .pool_enable(pool_enable), .pool_stride(pool_stride),
         .bias_load_req(bias_load_req), .bias_load_done(bias_load_done),
         .current_cout_base(current_cout_base), .current_pass_base_k(current_pass_base_k),
         .bias_wr_addr(bias_wr_addr), .bias_wr_data(bias_wr_data), .bias_wr_en(bias_wr_en),
