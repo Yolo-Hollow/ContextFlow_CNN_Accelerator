@@ -3,6 +3,15 @@
 //
 // This is not an AXI-Lite slave yet. It exposes a small local config bus that
 // can later be wrapped by AXI-Lite without changing the compute datapath.
+//
+// Extra config-bus register map owned by this wrapper:
+//   0x20 QUANT_ADDR: [5:0]=quant lane address
+//   0x21 QUANT_DATA: [15:0]=mult, [19:16]=shift, [31:24]=zp
+//   0x22 LUT_ADDR:   [7:0]=activation LUT address
+//   0x23 LUT_DATA:   [7:0]=activation LUT data
+//
+// The legacy direct quant/LUT programming ports remain available for unit
+// tests and non-AXI wrappers. AXI-Lite system tops program through 0x20..0x23.
 module conv_accel_core #(
     parameter ROWS = 32,
     parameter COLS = 32,
@@ -91,6 +100,7 @@ module conv_accel_core #(
     wire start_pulse;
     wire layer_busy;
     wire layer_done;
+    wire [31:0] layer_cfg_rdata;
     wire [8:0] fm_h;
     wire [8:0] fm_w;
     wire [8:0] ofm_h;
@@ -111,6 +121,21 @@ module conv_accel_core #(
     wire [COLS*2*MULT_W-1:0] quant_mult_flat;
     wire [COLS*2*SHIFT_W-1:0] quant_shift_flat;
     wire [COLS*2*ZP_W-1:0] quant_zp_flat;
+    reg [5:0] cfg_quant_addr;
+    reg [7:0] cfg_lut_addr;
+    reg [31:0] quant_shadow [0:COLS*2-1];
+    reg [7:0] lut_shadow [0:255];
+    wire cfg_quant_wr_en = cfg_wr_en && (cfg_addr == 6'h21);
+    wire cfg_lut_wr_en = cfg_wr_en && (cfg_addr == 6'h23);
+    wire merged_quant_wr_en = cfg_quant_wr_en || quant_wr_en;
+    wire [5:0] merged_quant_wr_addr = cfg_quant_wr_en ? cfg_quant_addr : quant_wr_addr;
+    wire [31:0] merged_quant_wr_data = cfg_quant_wr_en ? cfg_wdata : quant_wr_data;
+    wire [31:0] quant_rd_data_int;
+    wire merged_act_lut_wr_en = cfg_lut_wr_en || act_lut_wr_en;
+    wire [7:0] merged_act_lut_wr_addr = cfg_lut_wr_en ? cfg_lut_addr : act_lut_wr_addr;
+    wire [7:0] merged_act_lut_wr_data = cfg_lut_wr_en ? cfg_wdata[7:0] : act_lut_wr_data;
+
+    integer lut_i;
 
     assign configured_cout_total = cout_total;
     assign configured_num_pixels = num_pixels;
@@ -118,11 +143,37 @@ module conv_accel_core #(
     assign configured_ofm_w = ofm_w;
     assign configured_pool_enable = pool_enable;
     assign configured_pool_stride = pool_stride;
+    assign quant_rd_data = quant_rd_data_int;
+    assign cfg_rdata = (cfg_addr == 6'h20) ? {26'd0, cfg_quant_addr} :
+                       (cfg_addr == 6'h21) ? quant_shadow[cfg_quant_addr] :
+                       (cfg_addr == 6'h22) ? {24'd0, cfg_lut_addr} :
+                       (cfg_addr == 6'h23) ? {24'd0, lut_shadow[cfg_lut_addr]} :
+                       layer_cfg_rdata;
+
+    always @(posedge clk) begin
+        if (rst) begin
+            cfg_quant_addr <= 6'd0;
+            cfg_lut_addr <= 8'd0;
+            for (lut_i = 0; lut_i < COLS*2; lut_i = lut_i + 1)
+                quant_shadow[lut_i] <= {8'd0, 4'd0, {SHIFT_W{1'b0}}, {{(MULT_W-1){1'b0}}, 1'b1}};
+            for (lut_i = 0; lut_i < 256; lut_i = lut_i + 1)
+                lut_shadow[lut_i] <= lut_i[7:0];
+        end else begin
+            if (cfg_wr_en && cfg_addr == 6'h20)
+                cfg_quant_addr <= cfg_wdata[5:0];
+            if (cfg_wr_en && cfg_addr == 6'h22)
+                cfg_lut_addr <= cfg_wdata[7:0];
+            if (merged_quant_wr_en)
+                quant_shadow[merged_quant_wr_addr] <= merged_quant_wr_data;
+            if (merged_act_lut_wr_en)
+                lut_shadow[merged_act_lut_wr_addr] <= merged_act_lut_wr_data;
+        end
+    end
 
     layer_config_regs u_cfg (
         .clk(clk), .rst(rst),
         .cfg_wr_en(cfg_wr_en), .cfg_addr(cfg_addr), .cfg_wdata(cfg_wdata),
-        .cfg_rd_en(cfg_rd_en), .cfg_rdata(cfg_rdata),
+        .cfg_rd_en(cfg_rd_en), .cfg_rdata(layer_cfg_rdata),
         .layer_busy(layer_busy), .layer_done(layer_done),
         .dbg_expected_bytes(debug_expected_bytes),
         .dbg_core_wr_count(debug_core_wr_count),
@@ -144,8 +195,8 @@ module conv_accel_core #(
         .COUT_TILE(COLS*2), .MULT_W(MULT_W), .SHIFT_W(SHIFT_W), .ZP_W(ZP_W), .ADDR_W(6)
     ) u_quant (
         .clk(clk), .rst(rst),
-        .wr_en(quant_wr_en), .wr_addr(quant_wr_addr), .wr_data(quant_wr_data),
-        .rd_addr(quant_rd_addr), .rd_data(quant_rd_data),
+        .wr_en(merged_quant_wr_en), .wr_addr(merged_quant_wr_addr), .wr_data(merged_quant_wr_data),
+        .rd_addr(quant_rd_addr), .rd_data(quant_rd_data_int),
         .mult_flat(quant_mult_flat), .shift_flat(quant_shift_flat), .zp_flat(quant_zp_flat)
     );
 
@@ -178,8 +229,8 @@ module conv_accel_core #(
         .dma_wr_data(dma_wr_data), .dma_line_advance(dma_line_advance),
         .final_valid(), .final_addr(), .final_data(), .final_cout_base(), .final_channel_valid(),
         .quant_mult_flat(quant_mult_flat), .quant_shift_flat(quant_shift_flat), .quant_zp_flat(quant_zp_flat),
-        .activation_mode(activation_mode), .act_lut_wr_en(act_lut_wr_en),
-        .act_lut_wr_addr(act_lut_wr_addr), .act_lut_wr_data(act_lut_wr_data),
+        .activation_mode(activation_mode), .act_lut_wr_en(merged_act_lut_wr_en),
+        .act_lut_wr_addr(merged_act_lut_wr_addr), .act_lut_wr_data(merged_act_lut_wr_data),
         .ofm_valid(), .ofm_addr(), .ofm_cout_base(), .ofm_channel_valid(), .ofm_data(),
         .ofm_mem_wr_en(ofm_mem_wr_en), .ofm_mem_wr_ready(ofm_mem_wr_ready),
         .ofm_mem_wr_addr(ofm_mem_wr_addr),

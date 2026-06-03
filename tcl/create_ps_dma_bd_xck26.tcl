@@ -259,17 +259,6 @@ set_property -dict [list CONFIG.NUM_PORTS {8} CONFIG.IN7_WIDTH {9}] [get_bd_cell
 create_bd_cell -type ip -vlnv xilinx.com:ip:xlconcat:* irq_concat
 set_property -dict [list CONFIG.NUM_PORTS {4}] [get_bd_cells irq_concat]
 
-# Quantization reset defaults are identity and activation mode 0 is bypass, so
-# the first PS/DMA smoke test can hold the additional programming ports at 0.
-create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:* const_zero1
-set_property -dict [list CONFIG.CONST_WIDTH {1} CONFIG.CONST_VAL {0}] [get_bd_cells const_zero1]
-create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:* const_zero6
-set_property -dict [list CONFIG.CONST_WIDTH {6} CONFIG.CONST_VAL {0}] [get_bd_cells const_zero6]
-create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:* const_zero8
-set_property -dict [list CONFIG.CONST_WIDTH {8} CONFIG.CONST_VAL {0}] [get_bd_cells const_zero8]
-create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:* const_zero32
-set_property -dict [list CONFIG.CONST_WIDTH {32} CONFIG.CONST_VAL {0}] [get_bd_cells const_zero32]
-
 # AXI-Lite control path from the PS.
 connect_bd_intf_net [get_bd_intf_pins ps/M_AXI_HPM0_FPD] [get_bd_intf_pins ctrl_sc/S00_AXI]
 connect_bd_intf_net [get_bd_intf_pins ctrl_sc/M00_AXI] [get_bd_intf_pins accel/s_axi]
@@ -346,14 +335,6 @@ connect_bd_net [get_bd_pins dma_weight/mm2s_introut] [get_bd_pins irq_concat/In1
 connect_bd_net [get_bd_pins dma_ifm/mm2s_introut] [get_bd_pins irq_concat/In2]
 connect_bd_net [get_bd_pins dma_ofm/s2mm_introut] [get_bd_pins irq_concat/In3]
 connect_bd_net [get_bd_pins irq_concat/dout] [get_bd_pins ps/pl_ps_irq0]
-
-connect_bd_net [get_bd_pins const_zero1/dout] [get_bd_pins accel/quant_wr_en]
-connect_bd_net [get_bd_pins const_zero1/dout] [get_bd_pins accel/act_lut_wr_en]
-connect_bd_net [get_bd_pins const_zero6/dout] [get_bd_pins accel/quant_wr_addr]
-connect_bd_net [get_bd_pins const_zero6/dout] [get_bd_pins accel/quant_rd_addr]
-connect_bd_net [get_bd_pins const_zero8/dout] [get_bd_pins accel/act_lut_wr_addr]
-connect_bd_net [get_bd_pins const_zero8/dout] [get_bd_pins accel/act_lut_wr_data]
-connect_bd_net [get_bd_pins const_zero32/dout] [get_bd_pins accel/quant_wr_data]
 
 # Keep DMA address spaces focused on DDR.  The generic assign_bd_address flow
 # also considers PS OCM register segments and emits exclusions that do not

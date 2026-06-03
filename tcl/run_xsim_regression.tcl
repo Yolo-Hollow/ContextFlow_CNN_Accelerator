@@ -89,6 +89,7 @@ set tests {
     {tb_conv_accel_core_axi_lite_axis_stream_pooling tb/tb_conv_accel_core_axi_lite_axis_stream_pooling.v}
     {tb_conv_accel_core_axi_lite_axis_stream_conv0_crop_pool_ext tb/tb_conv_accel_core_axi_lite_axis_stream_conv0_crop_pool_ext.v}
     {tb_conv_accel_core_axi_lite_axis_stream_input_zp tb/tb_conv_accel_core_axi_lite_axis_stream_input_zp.v}
+    {tb_conv_accel_core_axi_lite_quant_lut tb/tb_conv_accel_core_axi_lite_quant_lut.v}
     {tb_conv_accel_core_axi_lite_full_stream_input_zp tb/tb_conv_accel_core_axi_lite_full_stream_input_zp.v}
     {tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_tile4 tb/tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_tile4.v}
     {tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_tile4_fifo16 tb/tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_tile4_fifo16.v}

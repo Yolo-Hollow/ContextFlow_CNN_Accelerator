@@ -1,6 +1,7 @@
 # Vitis 2022.2 r18_c16 smoke test
 
 This bare-metal test mirrors `tb/tb_conv_accel_core_axi_lite_axis_stream_r18_c16_smoke.v`.
+It is an early deterministic smoke test, not the current real-layer runtime.
 
 Test shape:
 
@@ -17,6 +18,19 @@ the debug OFM stream `{addr[23:0], data[7:0]}`, and compares 200 output bytes.
 The carrier-based hardware export exposes `feeder_fill_fy` in GPIO2 bits
 `[15:7]`; the software defaults to `USE_GPIO_FILL_FY=1` and uses that value
 when serving IFM line requests.
+
+Current accelerator AXI-Lite configuration also includes indirect quant/LUT
+programming registers inside the accelerator address window:
+
+```text
+0x80 QUANT_ADDR  [5:0] = quant lane address
+0x84 QUANT_DATA  [15:0] mult, [19:16] raw shift, [31:24] output zp
+0x88 LUT_ADDR    [7:0] = activation LUT address
+0x8c LUT_DATA    [7:0] = activation LUT byte
+```
+
+Future real-layer Vitis smoke tests should program these registers before
+starting a layer instead of relying on the old top-level quant/LUT pins.
 
 From a Vitis 2022.2 command shell:
 

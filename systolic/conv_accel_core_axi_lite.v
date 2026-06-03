@@ -2,8 +2,10 @@
 
 // AXI-Lite configured wrapper around conv_accel_core.
 //
-// This wrapper only replaces the local layer configuration bus with AXI-Lite.
-// Quant/LUT programming and data movement ports remain local for now.
+// This wrapper replaces the local configuration bus with AXI-Lite. Quant/LUT
+// programming is available through conv_accel_core cfg addresses 0x20..0x23,
+// while the legacy direct programming ports remain available for tests and
+// non-system wrappers.
 module conv_accel_core_axi_lite #(
     parameter ROWS = 32,
     parameter COLS = 32,

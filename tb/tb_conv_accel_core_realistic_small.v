@@ -394,10 +394,12 @@ module `TB_CONV_ACCEL_CORE_MODULE;
         .dma_bank_wr_en(dma_bank_wr_en), .dma_wr_x(dma_wr_x), .dma_wr_fy(dma_wr_fy),
         .dma_wr_data(dma_wr_data), .dma_line_advance(dma_line_advance),
 `endif
+`ifndef TB_CONV_ACCEL_CORE_USE_AXIS_STREAM
         .quant_wr_en(quant_wr_en), .quant_wr_addr(quant_wr_addr), .quant_wr_data(quant_wr_data),
         .quant_rd_addr(quant_rd_addr), .quant_rd_data(quant_rd_data),
         .act_lut_wr_en(act_lut_wr_en), .act_lut_wr_addr(act_lut_wr_addr),
         .act_lut_wr_data(act_lut_wr_data),
+`endif
         .ofm_mem_wr_en(ofm_mem_wr_en), .ofm_mem_wr_addr(ofm_mem_wr_addr),
         .ofm_mem_wr_data(ofm_mem_wr_data),
 `ifdef TB_CONV_ACCEL_CORE_USE_AXIS_STREAM
@@ -645,12 +647,17 @@ module `TB_CONV_ACCEL_CORE_MODULE;
         input [3:0] shift;
         input [7:0] zp;
         begin
+`ifdef TB_CONV_ACCEL_CORE_USE_AXI_LITE
+            cfg_write(6'h20, {26'd0, lane[5:0]});
+            cfg_write(6'h21, {zp, 4'd0, shift, mult});
+`else
             @(negedge clk);
             quant_wr_addr = lane[5:0];
             quant_wr_data = {zp, 4'd0, shift, mult};
             quant_wr_en = 1'b1;
             @(negedge clk);
             quant_wr_en = 1'b0;
+`endif
         end
     endtask
 
@@ -658,12 +665,17 @@ module `TB_CONV_ACCEL_CORE_MODULE;
         input [7:0] addr;
         input [7:0] data;
         begin
+`ifdef TB_CONV_ACCEL_CORE_USE_AXI_LITE
+            cfg_write(6'h22, {24'd0, addr});
+            cfg_write(6'h23, {24'd0, data});
+`else
             @(negedge clk);
             act_lut_wr_addr = addr;
             act_lut_wr_data = data;
             act_lut_wr_en = 1'b1;
             @(negedge clk);
             act_lut_wr_en = 1'b0;
+`endif
         end
     endtask
 
