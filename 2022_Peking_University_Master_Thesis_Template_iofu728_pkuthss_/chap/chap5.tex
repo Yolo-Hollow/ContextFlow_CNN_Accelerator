@@ -73,13 +73,13 @@ Bias 数据宽度为 32 bit（PSUM 等宽），64-bit TDATA 每 beat 打包 2 �
 
 \subsection{IFM Line Stream 打包}
 
-IFM Line 的逻辑 beat 为单像素位置的 5 个 Bank 字节。64-bit TDATA 打包方式为：
+IFM Line 的逻辑 beat 为单像素位置的 $BANKS$ 个 Bank 字节。64-bit TDATA 使用低位字节 lane 承载有效 Bank 数据，打包方式为：
 
 \begin{equation}
-\text{TDATA}[7:0] = \text{bank}_0,\ \dots,\ \text{TDATA}[39:32] = \text{bank}_4,\ \text{TDATA}[63:40] = 0
+\text{TDATA}[8b+7:8b] = \text{bank}_b,\quad b=0,1,\dots,BANKS-1
 \end{equation}
 
-每行 IFM 需要 $fm\_w$ beats。TLAST 在一行的最后一个 x beat 拉高。TKEEP[4:0] 必须为 5'b11111。
+未使用的高位字节 lane 置零。每行 IFM 需要 $fm\_w$ beats。TLAST 在一行的最后一个 x beat 拉高，TKEEP 的低 $BANKS$ 位必须为有效，其余位可置零。
 
 \subsection{OFM Debug Stream}
 
@@ -181,7 +181,7 @@ AXI-Stream 协议边界由三个独立模块实现，每一模块均进行了独
 
 \begin{itemize}
     \item \texttt{axis\_bias\_weight\_loader}：从 64-bit AXI-Stream 接收偏置和权重数据，解包后驱动内部 bias SRAM 写口和 weight tile 写口。区分 Bias 事务和 Weight 事务（基于内部状态机），分别检查 TLAST/TKEEP 协议完整性。
-    \item \texttt{axis\_ifm\_line\_loader}：从 64-bit AXI-Stream 接收 IFM 行数据（TDATA[39:0] 解包为 5 个 Bank 字节），TLAST 标记行尾。输出经典 DMA 写接口（$dma\_bank\_wr\_en$, $dma\_wr\_x$, $dma\_wr\_f_y$, $dma\_wr\_data$, $dma\_line\_advance$）。
+    \item \texttt{axis\_ifm\_line\_loader}：从 64-bit AXI-Stream 接收 IFM 行数据，将低 $8\times BANKS$ 位解包为 $BANKS$ 个 Bank 字节，TLAST 标记行尾。输出经典 DMA 写接口（$dma\_bank\_wr\_en$, $dma\_wr\_x$, $dma\_wr\_f_y$, $dma\_wr\_data$, $dma\_line\_advance$）。
     \item \texttt{axis\_ofm\_byte\_writer}：将 OFM byte stream（$ofm\_m\_addr + ofm\_m\_data$）封装为标准 AXI-Stream 输出（TDATA 包含地址+数据），TLAST 直通传递。
 \end{itemize}
 

@@ -12,7 +12,7 @@
     \item \textbf{Vivado XSIM 回归}（\texttt{tcl/run\_xsim\_regression.tcl}）：共 24 项集成测试，覆盖全流水线、多级分块、AXI 接口和背压场景。适合长时序全系统验证。
 \end{itemize}
 
-每个测试均包含与 Golden 参考结果的自动比对断言，测试结果要求 0 Fail。
+每个测试均包含与 golden/reference 参考结果的自动比对断言，测试结果要求 0 Fail。
 
 \section{模块级验证}
 
@@ -83,11 +83,11 @@ tb\_conv\_accel\_core\_axi\_lite\_full\_stream\_backpressure & 1165 & OFM 背压
 \begin{itemize}
     \item IFM/OFM 尺寸：$8 \times 8$
     \item 输入通道数 $C_{in} = 16$，$K_{total} = 144$
-    \item K Pass 数 $= 5$（对应 $K_{TILE}=32$ 的旧配置）或 $8$（对应 $K_{TILE}=18$ 的新配置）
-    \item $C_{out}=18$，分 3 个 Cout Block（$COUT_{TILE}=8$ 或 $32$，随配置变化）
+    \item K Pass 数随资源配置变化：$K_{TILE}=32$ 时为 5，$K_{TILE}=18$ 时为 8
+    \item $C_{out}=18$；测试集合覆盖 $COUT_{TILE}=8$ 的 3 个 Cout Block 场景，以及 $COUT_{TILE}=32$ 的最终资源配置场景
     \item 空间分块：3 个 Tile，行数分别为 $3 + 3 + 2$
     \item PS 调度检查项：Tile start/done/clear 次数、Bias/Weight/Line Fill 服务次数
-    \item OFM 比对：全局 OFM 内存与 Golden 卷积完全一致
+    \item OFM 比对：全局 OFM 内存与 golden/reference 卷积完全一致
 \end{itemize}
 
 背压测试额外验证了在 OFM Stream Ready 短时拉低的情况下，后处理流水线暂停-恢复后数据完整性不受影响。
@@ -156,7 +156,7 @@ LUT 是四种配置中的主要资源瓶颈。最大 LUT 消耗者分析表明�
     \item 32/64 路 PSUM FIFO 的分布式 RAM 开销。
 \end{itemize}
 
-后续 LUT 优化建议：用有效计数或集中式延迟控制替代分布式 SRL 链；将 activation Leaky LUT 和 packet FIFO 做成可裁剪配置，对非必要场景 disable；优化 Systolic Array 内部双 INT8 DSP 封装的旁路逻辑。
+后续 LUT 优化建议：用有效计数或集中式延迟控制替代分布式 SRL 链；将 activation Leaky LUT 和 packet FIFO 做成可裁剪配置，对非必要场景关闭或裁剪；优化 Systolic Array 内部双 INT8 DSP 封装的旁路逻辑。
 
 \subsection{时序分析}
 
@@ -164,7 +164,7 @@ LUT 是四种配置中的主要资源瓶颈。最大 LUT 消耗者分析表明�
 
 \subsection{计算性能估算}
 
-18×16 配置在 100 MHz 下理论峰值吞吐为 $18 \times 16 \times 2 \times 100\text{ MHz} = 57.6$ GOPS（INT8）。对于 YOLOv3-tiny 的典型卷积层（如 416×416 输入的 3×3 卷积），实际有效吞吐受到以下因素影响：K Pass 数（取决于 $C_{in}$）、权重重载开销（取决于 $C_{out}$ 和 $COUT_{TILE}$ 的比例）、流水线填充/排空气泡。在 3-Tile Spatial 分块、$C_{in}=16$, $C_{out}=18$ 的小规模测试场景下，完整推理仿真在 307,160 ns 内完成，对应的有效吞吐约为理论峰值的 35-45\%。
+18×16 配置在 100 MHz 下理论峰值吞吐为 $18 \times 16 \times 2 \times 100\text{ MHz} = 57.6$ GOPS（INT8）。对于 YOLOv3-tiny 的典型卷积层（如 416×416 输入的 3×3 卷积），实际有效吞吐受到以下因素影响：K Pass 数（取决于 $C_{in}$）、权重重载开销（取决于 $C_{out}$ 和 $COUT_{TILE}$ 的比例）、流水线填充/排空气泡以及 PS/DMA 服务延迟。在 3-Tile Spatial 分块、$C_{in}=16$, $C_{out}=18$ 的小规模测试场景下，完整推理仿真在 307,160 ns 内完成。该数值主要用于验证调度链路、AXI 边界和空间拼接正确性，不宜直接外推为整网代表性性能；实际有效吞吐应结合各层 MAC 数、启动次数和 DMA 服务时序逐层统计。
 
 \subsection{与其他工作的定性对比}
 
@@ -181,7 +181,7 @@ LUT 是四种配置中的主要资源瓶颈。最大 LUT 消耗者分析表明�
 架构类型        & 单引擎卷积 & 脉动阵列 & 脉动阵列 \\
 精度            & INT16/INT8 & INT8 & INT8 \\
 权重驻留        & --  & 否  & 是 \\
-PSUM 反馈       & 未公开 & 无  & 乒乓缓冲 \\
+PSUM 反馈       & 未公开 & 无  & 片上反馈缓冲 \\
 验证深度        & 单层   & 模块级 & 60+ 项系统级 \\
 XCK26 综合+布线 & 无     & 无    & 4 种配置全评估 \\
 AXI-Stream 边界 & 示意   & 无    & AXI-Lite + 4路 AXI-Stream \\

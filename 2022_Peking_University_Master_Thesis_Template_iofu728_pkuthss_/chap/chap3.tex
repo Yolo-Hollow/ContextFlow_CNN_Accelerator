@@ -5,7 +5,7 @@
 
 \section{整体架构概览}
 
-加速器顶层数据流遵循以下路径：DDR/DMA 通过 AXI-Stream 接口向行缓存注入 IFM 行数据；五体行缓存存储卷积窗口所需的输入特征图行；窗口提取器根据当前输出坐标 $(oy, ox)$、步长和填充并行提取 32 路 IFM 元素；IFM 通过 FIFO 以脉动偏斜时序注入二维脉动阵列；阵列中的每个 PE 驻留 2 个 INT8 权重，IFM 在行方向传播，PSUM 在列方向传播；阵列底部收集的 32 路 PSUM 经 PSUM FIFO 缓冲后，非最终 K 轮次的 PSUM 存入乒乓缓冲等待反馈，最终轮次的 PSUM 进入后处理流水线；后处理流水线包含重量化、激活和 OFM 写回三级，最终输出 INT8 OFM 字节流。
+加速器顶层数据流遵循以下路径：DDR/DMA 通过 AXI-Stream 接口向行缓存注入 IFM 行数据；参数化多 Bank 行缓存存储卷积窗口所需的输入特征图行；窗口提取器根据当前输出坐标 $(oy, ox)$、步长和填充并行提取 $K_{TILE}$ 路 IFM 元素；IFM 通过 FIFO 以脉动偏斜时序注入二维脉动阵列；阵列中的每个 PE 驻留 2 个 INT8 权重，IFM 在行方向传播，PSUM 在列方向传播；阵列底部收集的 $COUT_{TILE}$ 路 PSUM 经 PSUM FIFO 缓冲后，非最终 K 轮次的 PSUM 存入片上反馈缓冲等待下一轮累加，最终轮次的 PSUM 进入后处理流水线；后处理流水线包含重量化、激活和 OFM 写回三级，最终输出 INT8 OFM 字节流。
 
 \begin{figure}[htbp]
 \centering
@@ -22,7 +22,7 @@
 
 \node[block] (ddr0) {DDR / DMA};
 \node[block, right=of ddr0] (ifm) {AXI-Stream\\IFM Line};
-\node[block, right=of ifm] (lb) {Line Buffer\\5-Bank, 3-Line};
+\node[block, right=of ifm] (lb) {Line Buffer\\Banked, 3-Line};
 \node[block, right=of lb] (win) {Window\\Extract};
 \node[block, right=of win] (fifo) {IFM FIFOs\\Staggered};
 
@@ -39,7 +39,7 @@
 
 \node[block, below=11mm of array] (psum) {PSUM\\FIFOs};
 \node[block, right=of psum] (drain) {PSUM\\Drain};
-\node[block, left=of psum] (pingpong) {Ping-Pong\\Buffer};
+\node[block, left=of psum] (pingpong) {PSUM\\Feedback};
 
 \draw[stream] (ddr0) -- (ifm);
 \draw[stream] (ifm) -- (lb);
@@ -215,24 +215,24 @@ valid\_v\_in / valid\_v\_out & 1 bit & 垂直 Valid 传播\\
 
 \section{行缓存与窗口提取}
 
-\subsection{五体行缓存}
+\subsection{多 Bank 行缓存}
 
 行缓存模块（Line Buffer）为窗口提取器提供 3×3 卷积所需的 3 行并行像素访问。其设计要点如下：
 
 \begin{itemize}
-    \item \textbf{存储结构}：5 Bank × 3 物理 Line。每条物理 Line 包含输入特征图一整行的像素数据，采用环形替换策略（最老行被最新填充行覆盖）。
-    \item \textbf{Bank 交错}：物理 Line 的 $x$ 坐标像素分布于 5 个 Bank，Bank 索引 $= x \bmod 5$。对于 YOLOv3-tiny 通常的 5 通道输入，此交错策略可避免 3×3 窗口内 Bank 访问冲突。当目标网络输入通道数较小时，Bank 数可相应缩减为 2。
+    \item \textbf{存储结构}：$BANKS \times 3$ 物理 Line。每条物理 Line 包含输入特征图一整行的像素数据，采用环形替换策略（最老行被最新填充行覆盖）。早期资源评估包含 5 Bank 配置，最终 18×16 落地配置采用 2 Bank 以降低 LUT 与布线压力。
+    \item \textbf{Bank 交错}：Bank 索引由输入通道决定，即 $bank = c_{in} \bmod BANKS$。窗口提取器按照展开维度 $k=c_{in}\times3\times3+k_y\times3+k_x$ 选择对应 Bank 和窗口位置，从而将多通道 3×3 访问转换为可参数化的并行读出结构。
     \item \textbf{三路并行读出}：每条物理 Line 支持 $k_x=0$, $k_x=1$, $k_x=2$ 三个独立读地址，对应 3×3 卷积窗口的水平三列同时展开。
-    \item \textbf{填充接口}：通过 DMA 侧行填充服务驱动写入，协议为 $feeder\_fill\_req + feeder\_fill\_f_y$ 发起请求，外部按 $x=0..fm\_w-1$ 顺序每拍发送 5 个 Bank 字节，以 $dma\_line\_advance$ 完成一行提交。
+    \item \textbf{填充接口}：通过 DMA 侧行填充服务驱动写入，协议为 $feeder\_fill\_req + feeder\_fill\_f_y$ 发起请求，外部按 $x=0..fm\_w-1$ 顺序每拍发送 $BANKS$ 个 Bank 字节，以 $dma\_line\_advance$ 完成一行提交。
 \end{itemize}
 
 \subsection{窗口提取}
 
-窗口提取器（Window Extract）负责将当前输出坐标 $(oy, ox)$ 映射为 32-lane 的 IFM 向量，供脉动阵列消费：
+窗口提取器（Window Extract）负责将当前输出坐标 $(oy, ox)$ 映射为 $K_{TILE}$-lane 的 IFM 向量，供脉动阵列消费：
 
 \begin{itemize}
     \item 根据 $(oy, ox)$、stride 和 pad 计算 3×3 窗口中 9 个位置的 IFM 空间坐标 $(f_{y_i}, f_{x_i})$。
-    \item 从 Line Buffer 并行读出 3 行 × 3 列对应的像素值，按 $k = c_{in} \times 3 \times 3 + k_y \times 3 + k_x$ 的展开顺序映射到 32 个并行 lane。
+    \item 从 Line Buffer 并行读出 3 行 × 3 列对应的像素值，按 $k = c_{in} \times 3 \times 3 + k_y \times 3 + k_x$ 的展开顺序映射到 $K_{TILE}$ 个并行 lane。
     \item 越界或填充位置的 lane 输出为 0。
     \item 通过检查 Line Buffer 的行有效标记（$line\_valid$）和 $f_y$ 匹配（当前窗口需要的行已全部就位）判定窗口是否就绪（Window Ready）。未就绪时暂停 $ox/oy$ 推进。
 \end{itemize}
@@ -251,16 +251,16 @@ valid\_v\_in / valid\_v\_out & 1 bit & 垂直 Valid 传播\\
 
 \section{部分和反馈路径}
 
-PSUM 乒乓缓冲（Ping-Pong Buffer）是 K Pass 之间部分和数据的桥接模块。其工作原理为：
+PSUM 反馈缓冲是 K Pass 之间部分和数据的桥接模块。其工作原理为：
 
 \begin{itemize}
-    \item PSUM 排出模块（PSUM Drain Writer）从阵列底部的 32 路 PSUM FIFO 中读取数据，每个像素产生一个 $COUT_{TILE}$ 宽的 PSUM 包。
-    \item 非最终 K Pass 的 PSUM 包写入乒乓缓冲的写半区。
-    \item 下一 K Pass 开始时，PSUM 流注入模块（PSUM Stream Feeder）从乒乓缓冲的读半区读出 PSUM 包，以倾斜时序（Staggered）注入阵列顶部对应列。
-    \item 最终 K Pass 的 PSUM 包不经过乒乓缓冲，直接推入后处理流水线。
+    \item PSUM 排出模块（PSUM Drain Writer）从阵列底部的 $COUT_{TILE}$ 路 PSUM FIFO 中读取数据，每个像素产生一个 $COUT_{TILE}$ 宽的 PSUM 包。
+    \item 非最终 K Pass 的 PSUM 包写入片上反馈缓冲。
+    \item 下一 K Pass 开始时，PSUM 流注入模块（PSUM Stream Feeder）从反馈缓冲读出上一轮 PSUM 包，以倾斜时序（Staggered）注入阵列顶部对应列。
+    \item 最终 K Pass 的 PSUM 包不经过反馈缓冲写回，直接推入后处理流水线。
 \end{itemize}
 
-乒乓双半区的设计使得一 K Pass 的 PSUM 排空（Drain）可以与下一 K Pass 的 PSUM 注入（Feed）在时间上重叠，减少流水线气泡。
+当前 RTL 以正确实现多轮累加语义为主，保留了双 Bank 缓冲接口和后续重叠调度扩展空间；在现有调度中，PSUM 排空、反馈读取和下一轮计算按阶段顺序推进，便于降低控制复杂度并提升验证可观测性。
 
 \section{后处理流水线}
 

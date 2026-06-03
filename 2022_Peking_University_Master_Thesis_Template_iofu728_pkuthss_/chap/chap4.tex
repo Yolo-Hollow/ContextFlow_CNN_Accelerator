@@ -8,7 +8,9 @@
 如第~\ref{chap:related}章所述，卷积运算可经 im2col 展开转化为 GEMM 形式。然而对于 YOLOv3-tiny 中的典型卷积层（如 $C_{in}=512$, $C_{out}=1024$, $K_h=K_w=3$），展开后的矩阵维度 $K_{total} \times C_{out}$ 可达 $4608 \times 1024$，远超脉动阵列的物理规模（$K_{TILE}=18$, $COUT_{TILE}=32$）。因此，本文采用三级分块策略将大规模 GEMM 分解为可装入阵列的子矩阵序列：
 
 \begin{equation}
-\text{OFM}[p, c_{out}] = \text{Bias}[c_{out}] + \sum_{p=0}^{K_{p}-1}\ \sum_{k=0}^{K_{T}-1} \text{IFM}[p, p K_{T} + k] \cdot W[p K_{T} + k, c_{out}]
+\text{OFM}[p, c_{out}] = \text{Bias}[c_{out}] +
+\sum_{t=0}^{K_{\mathrm{passes}}-1}\ \sum_{r=0}^{K_{TILE}-1}
+\text{IFM}[p, tK_{TILE}+r] \cdot W[tK_{TILE}+r, c_{out}]
 \label{eq:tiled_gemm}
 \end{equation}
 
@@ -120,12 +122,12 @@
 
 \section{K 分块多轮累加}
 
-K 分块将 $K_{total} = C_{in} \times K_h \times K_w$ 个展开输入维度切分为 $K\_passes = \lceil K_{total} / K_{TILE} \rceil$ 个连续子块，每个 K Pass 在一个 $K_{TILE} \times COUT_{TILE}$ 子矩阵上完成乘加运算。K Pass 间的 PSUM 通过乒乓缓冲传递：
+K 分块将 $K_{total} = C_{in} \times K_h \times K_w$ 个展开输入维度切分为 $K\_passes = \lceil K_{total} / K_{TILE} \rceil$ 个连续子块，每个 K Pass 在一个 $K_{TILE} \times COUT_{TILE}$ 子矩阵上完成乘加运算。K Pass 间的 PSUM 通过片上反馈缓冲传递：
 
 \begin{enumerate}
-    \item \textbf{Pass \#0}：注入 Bias 作为初始累加值，计算第一组 $K_{TILE}$ 个输入 lane 的乘加。PSUM 经 Drain 后存入乒乓缓冲。
-    \item \textbf{Pass \#1 至 Pass \#(K\_passes-2)}：从乒乓缓冲读取上轮 PSUM 注入阵列顶部作为初始值，继续累加当前 K 子块。结果写回乒乓缓冲。
-    \item \textbf{最终 Pass}：从乒乓缓冲读取上轮 PSUM，执行最后 $K_{TILE}$ 个输入 lane 的乘加。结果直接发送至 Requant $\rightarrow$ Activation $\rightarrow$ Writeback 后处理链路。
+    \item \textbf{Pass \#0}：注入 Bias 作为初始累加值，计算第一组 $K_{TILE}$ 个输入 lane 的乘加。若当前不是最终 Pass，则 PSUM 经 Drain 后存入反馈缓冲。
+    \item \textbf{Pass \#1 至 Pass \#(K\_passes-2)}：从反馈缓冲读取上轮 PSUM 注入阵列顶部作为初始值，继续累加当前 K 子块。结果再次写回反馈缓冲。
+    \item \textbf{最终 Pass}：从反馈缓冲读取上轮 PSUM，执行最后一组有效输入 lane 的乘加。结果直接发送至 Requant $\rightarrow$ Activation $\rightarrow$ Writeback 后处理链路。
 \end{enumerate}
 
 当 $K_{total}$ 不是 $K_{TILE}$ 的整倍数时，最后 K Pass 仅包含 $K_{total} \bmod K_{TILE}$ 个有效输入 lane，其余 lane 的 IFM 输入恒为零，PSUM 仅加上零增量后继续向下传播。
@@ -142,9 +144,9 @@ K 分块将 $K_{total} = C_{in} \times K_h \times K_w$ 个展开输入维度切�
     \item 在最终 Pass 后，OFM 写回时以 $(cout\_base + lane)$ 计算写回通道地址，不同 Cout Block 写到同一像素的不同通道范围。
 \end{enumerate}
 
-关键优化：IFM 窗口数据在不同 Cout Block 间完全复用。这意味着对于同一 Spatial Tile 内的同一组 IFM 行，不需要重复窗口提取和 IFM 加载，仅需重新加载权重和执行累加。这显著节省了 IFM 带宽。
+关键优化：不同 Cout Block 在数学上共享同一 Spatial Tile 的 IFM 行和窗口坐标序列，因此外部调度可复用相同的 IFM 地址生成规则和行填充服务逻辑，仅需替换权重 tile 并重新执行 K Pass 循环。当前 RTL 为降低片上缓存容量和控制复杂度，仍按 Cout Block 重放窗口流；该设计优先保证权重驻留阵列的规整性，而不是将所有 IFM 窗口在片上跨 Cout Block 长时间缓存。
 
-对于 YOLOv3-tiny 最后层（$C_{out}=1024$），以 $COUT_{TILE}=64$ 需 16 个 Cout Block，每个 Block 均需重新加载权重 tile 并完成全部 K Pass 循环。
+对于 YOLOv3-tiny 最后层（$C_{out}=1024$），以最终选定的 $COUT_{TILE}=32$ 配置为例需要 32 个 Cout Block；若采用早期 32×32 阵列对应的 $COUT_{TILE}=64$ 配置，则需要 16 个 Cout Block。每个 Block 均需重新加载权重 tile 并完成全部 K Pass 循环。
 
 \section{空间（Spatial）分块}
 
@@ -178,12 +180,12 @@ OFM 写回的全局地址计算公式（详见第~\ref{chap:architecture}章）�
     \item \textbf{WEIGHT\_LOAD}：发起权重加载请求，等待权重 Tile 传输完成。完成后跳转至 LINE\_FILL。
     \item \textbf{LINE\_FILL}：根据当前 $oy$ 范围和 K Pass 的展开基地址向 Window Feeder 发出行填充请求。收到 Line Buffer 的窗口就绪信号后跳转至 COMPUTE。
     \item \textbf{COMPUTE}：使能阵列 IFM FIFO 读，启动窗口流推进。$\text{num\_pixels}$ 个像素全部流过后跳转。若非最终 K Pass 则跳转至 PSUM\_DRAIN；若为最终 K Pass 则跳转至 FINAL\_DRAIN。
-    \item \textbf{PSUM\_DRAIN}：从 PSUM FIFO 排出 $\text{num\_pixels}$ 个 PSUM 包存入乒乓缓冲。完成后更新 K Pass 计数器，跳转回 WEIGHT\_LOAD 执行下一 K Pass。
-    \item \textbf{FINAL\_DRAIN}：将最终 PSUM 包排出并推入后处理流水线（Requant $\rightarrow$ Activation $\rightarrow$ Writeback）。完成所有像素后检查 Cout Block 和 Spatial Tile 的循环状态：
+    \item \textbf{PSUM\_DRAIN}：从 PSUM FIFO 排出 $\text{num\_pixels}$ 个 PSUM 包存入反馈缓冲。完成后更新 K Pass 计数器，跳转回 WEIGHT\_LOAD 执行下一 K Pass。
+    \item \textbf{FINAL\_DRAIN}：将最终 PSUM 包排出并推入后处理流水线（Requant $\rightarrow$ Activation $\rightarrow$ Writeback）。完成所有像素后检查当前 Spatial Tile 内的 Cout Block 循环状态：
     \begin{itemize}
         \item 若还有未处理的 Cout Block，更新 $cout\_base$ 跳转回 BIAS\_LOAD。
-        \item 若所有 Cout Block 已完成且还有未处理的 Spatial Tile，跳转至 DONE。
-        \item 若所有 Tile 完成，跳转至 IDLE。
+        \item 若当前 Spatial Tile 的所有 Cout Block 已完成，跳转至 DONE。
+        \item 后续 Spatial Tile 由外部 PS/DMA 调度器重新写入 Tile 配置并再次发出 start 脉冲。
     \end{itemize}
     \item \textbf{DONE}：置位 STATUS.done\_sticky 标志，等待外部写入 CTRL.clear\_done 清除后跳转至 IDLE。
 \end{enumerate}
@@ -213,7 +215,7 @@ OFM 写回的全局地址计算公式（详见第~\ref{chap:architecture}章）�
     \draw[arr] (line.south) -- ++(0,-0.3) -| (comp.north);
 
     % COMPUTE -> PSUM Drain (non-final K)
-    \draw[arr] (comp.west) -- ++(-0.6,0) |- (pdrain.north) node[cond, pos=0.6, left] {last K?};
+    \draw[arr] (comp.west) -- ++(-0.6,0) |- (pdrain.north) node[cond, pos=0.6, left] {non-final K};
 
     % COMPUTE -> Final Drain (final K)
     \draw[arr] (comp.west) -- ++(-2.8,0) |- (fdrain.north) node[cond, pos=0.3, left] {final K};
@@ -262,7 +264,7 @@ OFM 写回的全局地址计算公式（详见第~\ref{chap:architecture}章）�
         \item 轮询 STATUS.done\_sticky 直至为 1。
         \item 写 CTRL.clear\_done 清除完成标志。
     \end{enumerate}
-    \item 验证 OFM 与 Golden 卷积结果一致。
+    \item 验证 OFM 与 golden/reference 卷积结果一致。
 \end{enumerate}
 
 经验证的调度契约关键检查项包括：Tile 启动次数、Done 观测次数、Done Clear 次数、Bias 服务次数（$= Tile\_count \times Cout\_blocks$）、Weight 服务次数（$= Tile\_count \times Cout\_blocks \times K\_passes$），以及 Line Fill 服务次数（由 Feeder 按窗口需要动态发起，大于 0）。

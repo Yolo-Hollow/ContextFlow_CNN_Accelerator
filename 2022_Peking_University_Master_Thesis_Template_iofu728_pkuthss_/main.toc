@@ -10,7 +10,7 @@
 \contentsline {section}{\numberline {2.2}脉动阵列架构}{6}{section.2.2}%
 \contentsline {subsection}{\numberline {2.2.1}基本概念}{6}{subsection.2.2.1}%
 \contentsline {subsection}{\numberline {2.2.2}数据流分类}{6}{subsection.2.2.2}%
-\contentsline {section}{\numberline {2.3}INT8 量化}{6}{section.2.3}%
+\contentsline {section}{\numberline {2.3}INT8 量化}{7}{section.2.3}%
 \contentsline {section}{\numberline {2.4}FPGA CNN 加速器相关工作}{7}{section.2.4}%
 \contentsline {section}{\numberline {2.5}Zynq UltraScale+ XCK26 平台}{7}{section.2.5}%
 \contentsline {chapter}{\numberline {第三章\hspace {.3em}}加速器硬件架构设计}{9}{chapter.3}%
@@ -22,7 +22,7 @@
 \contentsline {subsection}{\numberline {3.3.1}阵列拓扑}{11}{subsection.3.3.1}%
 \contentsline {subsection}{\numberline {3.3.2}阵列吞吐分析}{11}{subsection.3.3.2}%
 \contentsline {section}{\numberline {3.4}行缓存与窗口提取}{11}{section.3.4}%
-\contentsline {subsection}{\numberline {3.4.1}五体行缓存}{11}{subsection.3.4.1}%
+\contentsline {subsection}{\numberline {3.4.1}多 Bank 行缓存}{11}{subsection.3.4.1}%
 \contentsline {subsection}{\numberline {3.4.2}窗口提取}{12}{subsection.3.4.2}%
 \contentsline {section}{\numberline {3.5}权重加载与偏置注入}{12}{section.3.5}%
 \contentsline {section}{\numberline {3.6}部分和反馈路径}{12}{section.3.6}%
