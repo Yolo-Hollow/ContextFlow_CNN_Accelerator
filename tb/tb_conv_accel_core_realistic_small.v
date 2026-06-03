@@ -78,6 +78,9 @@
 `ifndef TB_CONV_ACCEL_CORE_TIMEOUT
 `define TB_CONV_ACCEL_CORE_TIMEOUT 120000
 `endif
+`ifndef TB_CONV_ACCEL_CORE_PROGRESS_INTERVAL
+`define TB_CONV_ACCEL_CORE_PROGRESS_INTERVAL 1000000
+`endif
 `ifndef TB_CONV_ACCEL_CORE_TILE_OY_BASE
 `define TB_CONV_ACCEL_CORE_TILE_OY_BASE 0
 `endif
@@ -401,6 +404,10 @@ module `TB_CONV_ACCEL_CORE_MODULE;
     integer ps_tile_start_count, ps_done_seen_count, ps_done_clear_count;
     integer layer_done_pulse_count;
     integer ps_bias_service_count, ps_weight_service_count, ps_line_fill_count;
+`ifdef TB_CONV_ACCEL_CORE_PROGRESS_PRINT
+    integer progress_last_ofm_wr_count;
+    integer progress_last_compute_fire_count;
+`endif
 `ifdef TB_CONV_ACCEL_CORE_USE_FULL_STREAM
     integer ifm_loader_write_count, ifm_loader_advance_count, ifm_loader_fail_count;
     integer ifm_loader_bank_ch, ifm_loader_expected;
@@ -995,6 +1002,58 @@ module `TB_CONV_ACCEL_CORE_MODULE;
     end
 `endif
 
+`ifdef TB_CONV_ACCEL_CORE_PROGRESS_PRINT
+    task print_progress;
+        begin
+            $display("[PROGRESS] t=%0t ofm_wr=%0d/%0d delta=%0d axis_tlast=%0d cout=%0d k=%0d sched_state=%0d busy=%0d done_pending=%0d fill_req=%0d feeder_done=%0d compute_done=%0d drain_done=%0d compute_fire=%0d delta_fire=%0d psum_wr=%0d final_valid=%0d final_full=%0d rq_valid=%0d rq_full=%0d rq_level=%0d act_valid=%0d act_fifo_valid=%0d act_full=%0d act_level=%0d wb_busy=%0d wb_full=%0d wb_level=%0d ofm_packet_full=%0d ofm_valid=%0d ofm_stream_valid=%0d ofm_stream_ready=%0d ofm_stream_full=%0d ofm_stream_level=%0d",
+                $time,
+                ofm_mem_wr_count, EXPECTED_OFM_WRITES,
+                ofm_mem_wr_count - progress_last_ofm_wr_count,
+`ifdef TB_CONV_ACCEL_CORE_USE_AXIS_STREAM
+                axis_ofm_tlast_count,
+`else
+                0,
+`endif
+                current_cout_base, current_pass_base_k,
+                `TB_DUT_LAYER.u_sched.state, `TB_DUT_LAYER.busy, `TB_DUT_LAYER.done_pending,
+                feeder_fill_req, `TB_DUT_LAYER.feeder_done, `TB_DUT_LAYER.compute_done,
+                `TB_DUT_LAYER.drain_done, compute_fire_count,
+                compute_fire_count - progress_last_compute_fire_count,
+                psum_wr_count,
+                `TB_DUT_LAYER.final_fifo_valid, `TB_DUT_LAYER.final_fifo_full,
+                `TB_DUT_LAYER.rq_fifo_valid, `TB_DUT_LAYER.rq_fifo_full,
+                `TB_DUT_LAYER.u_rq_packet_fifo.level,
+                `TB_DUT_LAYER.act_valid, `TB_DUT_LAYER.act_fifo_valid,
+                `TB_DUT_LAYER.act_fifo_full, `TB_DUT_LAYER.u_ofm_packet_fifo.level,
+                `TB_DUT_LAYER.ofm_wb_busy, `TB_DUT_LAYER.u_ofm_writeback.fifo_full,
+                `TB_DUT_LAYER.u_ofm_writeback.wptr - `TB_DUT_LAYER.u_ofm_writeback.rptr,
+                ofm_packet_full, `TB_DUT_LAYER.ofm_valid,
+`ifdef TB_CONV_ACCEL_CORE_USE_AXIS_STREAM
+                dut.ofm_stream_valid, dut.ofm_stream_ready, dut.ofm_stream_full,
+                dut.u_ofm_stream_fifo.level
+`elsif TB_CONV_ACCEL_CORE_USE_FULL_STREAM
+                dut.ofm_m_valid, dut.ofm_m_ready, dut.ofm_stream_full,
+                dut.u_ofm_stream_fifo.level
+`else
+                1'b0, 1'b1, 1'b0, 0
+`endif
+            );
+            progress_last_ofm_wr_count = ofm_mem_wr_count;
+            progress_last_compute_fire_count = compute_fire_count;
+        end
+    endtask
+
+    initial begin
+        progress_last_ofm_wr_count = 0;
+        progress_last_compute_fire_count = 0;
+        forever begin
+            repeat (`TB_CONV_ACCEL_CORE_PROGRESS_INTERVAL) @(negedge clk);
+            if (!rst)
+                print_progress();
+        end
+    end
+`endif
+
     initial begin
         clk = 0;
         rst = 1;
@@ -1027,6 +1086,10 @@ module `TB_CONV_ACCEL_CORE_MODULE;
 `endif
 `ifdef TB_CONV_ACCEL_CORE_USE_AXIS_STREAM
         axis_ofm_tlast_count = 0;
+`endif
+`ifdef TB_CONV_ACCEL_CORE_PROGRESS_PRINT
+        progress_last_ofm_wr_count = 0;
+        progress_last_compute_fire_count = 0;
 `endif
         clear_inputs();
         for (idx = 0; idx < OFM_WORDS; idx = idx + 1)

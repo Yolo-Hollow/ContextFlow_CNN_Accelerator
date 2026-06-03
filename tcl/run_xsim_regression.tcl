@@ -91,6 +91,7 @@ set tests {
     {tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_tiles tb/tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_tiles.v}
     {tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_ext_tiles tb/tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_ext_tiles.v}
     {tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_backpressure tb/tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_backpressure.v}
+    {tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_full_fifo256 tb/tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_full_fifo256.v diagnostic}
     {tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_full tb/tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_full.v}
     {tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_ext_full tb/tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_ext_full.v}
     {tb_conv_accel_core_axi_lite_axis_stream_ps_driver tb/tb_conv_accel_core_axi_lite_axis_stream_ps_driver.v}
@@ -142,6 +143,10 @@ set ran_count 0
 foreach test $tests {
     set top [lindex $test 0]
     set tb_file [lindex $test 1]
+    set test_kind [lindex $test 2]
+    if {[llength $top_filter] == 0 && $test_kind eq "diagnostic"} {
+        continue
+    }
     if {![selected $top $top_filter]} {
         continue
     }
