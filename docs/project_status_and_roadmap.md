@@ -134,6 +134,7 @@ requant 与输入零点修正后，以下 xsim 回归已经通过：
 - `tb_ofm_pooling`：activation 后 packet-level pooling 单元测试。
 - `tb_conv_accel_core_pooling`：core 内部 `Conv -> Requant -> Activation -> Pool -> OFM` directed test。
 - `tb_conv_accel_core_axi_lite_axis_stream_pooling`：pool-enabled AXIS 顶层 TLAST/debug byte counter directed test。
+- `tb_conv_accel_core_axi_lite_axis_stream_conv0_crop_pool_ext`：真实 Conv0 crop 的 `Conv -> LUT -> Pool -> OFM AXIS` external golden test。
 - `tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_ext_tile4`：Layer06 小 tile 真实 golden。
 - `tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_ext_tiles`：Layer06 多 spatial tile。
 - `tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_ext_full`：完整 `52x52x64 -> 52x52x128` 层。
@@ -176,9 +177,8 @@ D:/MPSoC/python_prj
 
 ### RTL 主线
 
-1. 增加真实数据 `Conv -> Activation -> Pool -> OFM` 小 tile 测试。
-2. 按单尺度网络调度确认是否需要 stride-1 或特殊 pooling。
-3. 继续保持无 pooling 路径的默认 ABI 兼容。
+1. 按单尺度网络调度确认是否需要 stride-1 或特殊 pooling。
+2. 继续保持无 pooling 路径的默认 ABI 兼容。
 
 ### 网络验证主线
 

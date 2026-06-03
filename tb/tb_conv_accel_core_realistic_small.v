@@ -1395,10 +1395,6 @@ module `TB_CONV_ACCEL_CORE_MODULE;
             for (idx = 0; idx < run_pixels; idx = idx + 1) begin
                 for (co = 0; co < COUT_TOTAL; co = co + 1) begin
 `ifdef TB_CONV_ACCEL_CORE_USE_EXTERNAL_GOLDEN
-                    if (POOL_ACTIVE) begin
-                        $display("[FAIL] external golden compare does not support pooling yet");
-                        fail = fail + 1;
-                    end else begin
                     expected_ofm_byte = ext_golden[(run_pixel_base + idx)*COUT_TOTAL + co];
                     if (ofm_mem[(run_pixel_base + idx)*COUT_TOTAL + co] !== expected_ofm_byte) begin
                         $display("[FAIL] tile%0d pixel%0d global%0d cout%0d addr%0d got=%0d exp=%0d",
@@ -1408,7 +1404,6 @@ module `TB_CONV_ACCEL_CORE_MODULE;
                             expected_ofm_byte);
                         fail = fail + 1;
                     end else pass = pass + 1;
-                    end
 `else
                     if (POOL_ACTIVE) begin
                         y = idx / OUT_W;

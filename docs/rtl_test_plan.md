@@ -380,6 +380,37 @@ Current result:
 
 - `81 pass, 0 fail`
 
+### `tb_conv_accel_core_axi_lite_axis_stream_conv0_crop_pool_ext`
+
+目的：
+
+- 验证真实数据驱动的 `Conv0 -> Requant -> LUT activation -> 2x2 Pool -> OFM AXIS`。
+- 使用真实 facemask 图片 crop、真实 Conv0 权重、int32 bias、量化参数和 activation LUT。
+- 覆盖 external golden + pooling 的 byte-for-byte 对比。
+
+数据来源：
+
+- Full Conv0 export: `D:/MPSoC/python_prj/rtl_golden/facemask_conv0`
+- Crop fixture: `D:/MPSoC/python_prj/rtl_golden/facemask_conv0_crop16x8_pool`
+- 生成脚本：`tools/golden/export_rtl_conv0_golden.py --pool-stride2`
+- xsim mem 转换脚本：`tb/make_conv0_xsim_mem.py` 和 `tb/make_conv0_crop_xsim_mem.py`
+
+配置：
+
+- Crop: source image quantized IFM at `(x=96, y=96, w=16, h=8)`
+- Shape: `16x8x3 -> 16x8x16 -> pool 8x4x16`
+- Array: `ROWS=32, COLS=8, IFM_BANKS=5`
+- Quant: `mult=18898`, raw `shift=9`, effective shift `24`, output `zp=69`
+- Input zero point: `0`; crop centered range `38..105`, `sat_count=0`
+
+当前结果：
+
+- `529 pass, 0 fail`
+
+说明：
+
+- A full-width `416x4` Conv0 tile was too slow for regular xsim use without progress instrumentation, so the checked regression uses a small real-data crop. It still exercises the same RTL semantic data path and external golden comparison.
+
 ## Layer06 real-image external golden tests
 
 These tests verify a real intermediate layer shape:
