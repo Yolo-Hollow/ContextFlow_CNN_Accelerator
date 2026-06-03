@@ -97,6 +97,7 @@ set rtl_files {
     systolic/psum_packet_fifo.v
     systolic/ofm_requant_writer.v
     systolic/ofm_activation.v
+    systolic/ofm_pooling.v
     systolic/ofm_writeback.v
     systolic/ofm_packet_fifo.v
     systolic/ofm_byte_stream_fifo.v

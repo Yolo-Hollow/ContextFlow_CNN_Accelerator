@@ -356,9 +356,29 @@ Current result:
 
 - `139 pass, 0 fail`
 
-已知限制：
+### `tb_conv_accel_core_axi_lite_axis_stream_pooling`
 
-- 本测试走 `conv_accel_core` 内部 OFM 写回路径，尚未覆盖 pool-enabled AXIS 顶层的 TLAST 和 debug byte counter 语义。
+目的：
+
+- 验证 pool-enabled AXI-Lite + AXIS 顶层 `Conv -> Requant -> Activation -> Pool -> OFM AXIS`。
+- 覆盖 pool 后输出 byte 数、AXIS TLAST 和 debug byte counter。
+- 使用 `IFM_U8_FROM_CENTERED` 和 `input_zero_point=128`，确保 AXIS 输入按外部 uint8 activation 语义送入。
+
+检查项：
+
+- OFM byte 写出数量按 pool 后 pixel 数统计。
+- AXIS `TLAST` 只在 pool 后 tile 输出最后一个 byte 置位。
+- debug core/sink write count、TLAST count、last TLAST index 与 pool 后输出数量一致。
+- 输出 byte 与 testbench 内部 RTL semantic golden 的 activation 后 maxpool 一致。
+
+配置语义：
+
+- pool 打开时，`OFM_SIZE/NUM_PIXELS/TILE_OFM_H` 仍描述 pooling 前的 convolution output tile。
+- `TILE_PIXEL_BASE` 描述最终写回地址空间；pooling 多 tile 调度时应写 pool 后 OFM 的 pixel base。
+
+当前结果：
+
+- `81 pass, 0 fail`
 
 ## Layer06 real-image external golden tests
 

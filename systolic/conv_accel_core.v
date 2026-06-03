@@ -46,6 +46,9 @@ module conv_accel_core #(
     output [10:0] configured_cout_total,
     output [15:0] configured_num_pixels,
     output [7:0]  configured_input_zero_point,
+    output [8:0]  configured_ofm_w,
+    output        configured_pool_enable,
+    output [1:0]  configured_pool_stride,
     input  [31:0] debug_expected_bytes,
     input  [31:0] debug_core_wr_count,
     input  [31:0] debug_axis_wr_count,
@@ -112,6 +115,9 @@ module conv_accel_core #(
     assign configured_cout_total = cout_total;
     assign configured_num_pixels = num_pixels;
     assign configured_input_zero_point = input_zero_point;
+    assign configured_ofm_w = ofm_w;
+    assign configured_pool_enable = pool_enable;
+    assign configured_pool_stride = pool_stride;
 
     layer_config_regs u_cfg (
         .clk(clk), .rst(rst),

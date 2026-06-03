@@ -131,6 +131,9 @@ requant 与输入零点修正后，以下 xsim 回归已经通过：
 - `tb_conv_accel_core_axi_lite_axis_stream_smoke`：AXI-Lite + AXIS smoke path。
 - `tb_conv_accel_core_axi_lite_axis_stream_input_zp`：顶层非零 input zero-point directed test。
 - `tb_conv_accel_core_axi_lite_full_stream_input_zp`：full-stream 非零 input zero-point directed test。
+- `tb_ofm_pooling`：activation 后 packet-level pooling 单元测试。
+- `tb_conv_accel_core_pooling`：core 内部 `Conv -> Requant -> Activation -> Pool -> OFM` directed test。
+- `tb_conv_accel_core_axi_lite_axis_stream_pooling`：pool-enabled AXIS 顶层 TLAST/debug byte counter directed test。
 - `tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_ext_tile4`：Layer06 小 tile 真实 golden。
 - `tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_ext_tiles`：Layer06 多 spatial tile。
 - `tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_ext_full`：完整 `52x52x64 -> 52x52x128` 层。
@@ -141,7 +144,7 @@ requant 与输入零点修正后，以下 xsim 回归已经通过：
 
 - 当前 RTL 还不是完整 YOLOv3-tiny 推理系统。
 - pooling 第一版已经作为 activation 后、OFM writer 前的可选输出侧后处理模块接入，当前支持 bypass 和 `2x2` uint8 maxpool stride-2。
-- pool-enabled AXIS 顶层的 TLAST/debug byte counter 语义还没有作为本轮验收项，后续需要单独覆盖。
+- pool 打开时，`OFM_SIZE/NUM_PIXELS/TILE_OFM_H` 描述 pool 前 conv output tile，`TILE_PIXEL_BASE` 按最终 pool 后 OFM 地址空间配置。
 - 当前验证重点是卷积数据流、量化语义和写回正确性，不覆盖 YOLO decode/NMS。
 - 旧 Vitis 最小系统验证已经不代表当前 RTL 状态，后续需要重新建立软件运行时。
 - RTL semantic golden 是硬件 bit-exact 仿真的标准；PyTorch reference 只能作为模型级参考。
@@ -173,10 +176,9 @@ D:/MPSoC/python_prj
 
 ### RTL 主线
 
-1. 完成 pool-enabled AXIS 顶层 TLAST/debug byte counter 验证。
+1. 增加真实数据 `Conv -> Activation -> Pool -> OFM` 小 tile 测试。
 2. 按单尺度网络调度确认是否需要 stride-1 或特殊 pooling。
-3. 增加真实数据 `Conv -> Activation -> Pool -> OFM` 小 tile 测试。
-4. 继续保持无 pooling 路径的默认 ABI 兼容。
+3. 继续保持无 pooling 路径的默认 ABI 兼容。
 
 ### 网络验证主线
 

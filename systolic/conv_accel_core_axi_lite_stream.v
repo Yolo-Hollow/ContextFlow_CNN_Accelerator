@@ -100,6 +100,9 @@ module conv_accel_core_axi_lite_stream #(
     wire [WEIGHT_W-1:0] wgt_tile_wr_data;
     wire [10:0] unused_configured_cout_total;
     wire [15:0] unused_configured_num_pixels;
+    wire [8:0] unused_configured_ofm_w;
+    wire unused_configured_pool_enable;
+    wire [1:0] unused_configured_pool_stride;
 
     bias_weight_stream_loader #(
         .ROWS(ROWS), .COLS(COLS), .PSUM_W(PSUM_W), .WEIGHT_W(WEIGHT_W),
@@ -141,6 +144,9 @@ module conv_accel_core_axi_lite_stream #(
         .configured_cout_total(unused_configured_cout_total),
         .configured_num_pixels(unused_configured_num_pixels),
         .configured_input_zero_point(configured_input_zero_point),
+        .configured_ofm_w(unused_configured_ofm_w),
+        .configured_pool_enable(unused_configured_pool_enable),
+        .configured_pool_stride(unused_configured_pool_stride),
         .debug_expected_bytes(32'd0), .debug_core_wr_count(32'd0),
         .debug_axis_wr_count(32'd0), .debug_tlast_count(32'd0),
         .debug_last_tlast_index(32'd0),

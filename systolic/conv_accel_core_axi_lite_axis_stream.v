@@ -136,6 +136,9 @@ module conv_accel_core_axi_lite_axis_stream #(
     wire [10:0] configured_cout_total;
     wire [15:0] configured_num_pixels;
     wire [7:0] configured_input_zero_point;
+    wire [8:0] configured_ofm_w;
+    wire configured_pool_enable;
+    wire [1:0] configured_pool_stride;
 
     wire bias_tkeep_error;
     wire bias_tlast_error;
@@ -148,7 +151,14 @@ module conv_accel_core_axi_lite_axis_stream #(
     reg [31:0] axis_ofm_wr_count;
     reg [31:0] axis_tlast_count;
     reg [31:0] last_tlast_index;
-    wire [31:0] ofm_expected_bytes = configured_num_pixels * configured_cout_total;
+    wire pool_active = configured_pool_enable && (configured_pool_stride == 2'd2);
+    wire [31:0] configured_tile_rows =
+        (configured_ofm_w == 9'd0) ? 32'd0 : (configured_num_pixels / configured_ofm_w);
+    wire [31:0] configured_pool_pixels =
+        (configured_tile_rows >> 1) * ({23'd0, configured_ofm_w[8:1]});
+    wire [31:0] configured_output_pixels =
+        pool_active ? configured_pool_pixels : {16'd0, configured_num_pixels};
+    wire [31:0] ofm_expected_bytes = configured_output_pixels * configured_cout_total;
     wire core_ofm_wr_fire = core_ofm_wr_en && core_ofm_wr_ready;
     wire ofm_stream_fire = ofm_stream_valid && ofm_stream_ready;
     wire ofm_stream_last = ofm_stream_valid && (ofm_expected_bytes != 32'd0) &&
@@ -286,6 +296,9 @@ module conv_accel_core_axi_lite_axis_stream #(
         .configured_cout_total(configured_cout_total),
         .configured_num_pixels(configured_num_pixels),
         .configured_input_zero_point(configured_input_zero_point),
+        .configured_ofm_w(configured_ofm_w),
+        .configured_pool_enable(configured_pool_enable),
+        .configured_pool_stride(configured_pool_stride),
         .debug_expected_bytes(ofm_expected_bytes),
         .debug_core_wr_count(core_ofm_wr_count),
         .debug_axis_wr_count(axis_ofm_wr_count),
