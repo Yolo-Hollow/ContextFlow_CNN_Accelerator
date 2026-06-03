@@ -135,6 +135,7 @@ module conv_accel_core_axi_lite_axis_stream #(
     wire ofm_stream_almost_full;
     wire [10:0] configured_cout_total;
     wire [15:0] configured_num_pixels;
+    wire [7:0] configured_input_zero_point;
 
     wire bias_tkeep_error;
     wire bias_tlast_error;
@@ -233,6 +234,7 @@ module conv_accel_core_axi_lite_axis_stream #(
         .fm_w(ifm_line_words),
         .fill_req(feeder_fill_req),
         .fill_fy(feeder_fill_fy),
+        .input_zero_point(configured_input_zero_point),
         .s_axis_tready(ifm_s_axis_tready),
         .s_axis_tvalid(ifm_s_axis_tvalid),
         .s_axis_tdata(ifm_s_axis_tdata),
@@ -283,6 +285,7 @@ module conv_accel_core_axi_lite_axis_stream #(
         .current_pass_base_k(current_pass_base_k),
         .configured_cout_total(configured_cout_total),
         .configured_num_pixels(configured_num_pixels),
+        .configured_input_zero_point(configured_input_zero_point),
         .debug_expected_bytes(ofm_expected_bytes),
         .debug_core_wr_count(core_ofm_wr_count),
         .debug_axis_wr_count(axis_ofm_wr_count),

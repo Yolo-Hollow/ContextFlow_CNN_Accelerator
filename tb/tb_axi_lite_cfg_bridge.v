@@ -35,6 +35,7 @@ module tb_axi_lite_cfg_bridge;
     wire [15:0] num_pixels;
     wire [8:0] tile_oy_base, tile_ofm_h;
     wire [23:0] tile_pixel_base;
+    wire [7:0] input_zero_point;
 
     axi_lite_cfg_bridge dut_bridge (
         .clk(clk), .rst(rst),
@@ -60,7 +61,8 @@ module tb_axi_lite_cfg_bridge;
         .activation_mode(activation_mode),
         .k_total(k_total), .cout_total(cout_total), .num_pixels(num_pixels),
         .tile_oy_base(tile_oy_base), .tile_ofm_h(tile_ofm_h),
-        .tile_pixel_base(tile_pixel_base)
+        .tile_pixel_base(tile_pixel_base),
+        .input_zero_point(input_zero_point)
     );
 
     always #5 clk = ~clk;
@@ -231,6 +233,18 @@ module tb_axi_lite_cfg_bridge;
         axi_write(8'h1c, 32'd2, 4'hf);
         axi_write(8'h20, {7'd0, 9'd3, 7'd0, 9'd2}, 4'hf);
         axi_write(8'h24, 32'd6, 4'hf);
+        axi_write(8'h3c, 32'd36, 4'hf);
+        axi_read(8'h3c, rd);
+        check_eq(rd, 32'd36, "input_zero_point read");
+        check_eq({24'd0, input_zero_point}, 32'd36, "input_zero_point output");
+
+        axi_write(8'h3c, 32'h0000_5500, 4'h2);
+        axi_read(8'h3c, rd);
+        check_eq(rd, 32'd36, "input_zero_point upper-byte partial keeps low byte");
+
+        axi_write(8'h3c, 32'd42, 4'h1);
+        axi_read(8'h3c, rd);
+        check_eq(rd, 32'd42, "input_zero_point lower-byte partial");
 
         check_eq({30'd0, conv_pad, 6'd0, conv_stride}, {22'd0, 2'd1, 6'd0, 2'd2}, "conv");
         check_eq({21'd0, k_total}, 32'd45, "k_total");
@@ -277,6 +291,10 @@ module tb_axi_lite_cfg_bridge;
         axi_write(8'h04, {7'd0, 9'd99, 7'd0, 9'd88}, 4'hf);
         axi_read(8'h04, rd);
         check_eq(rd, {7'd0, 9'd5, 7'd0, 9'd8}, "busy freezes fm_size");
+
+        axi_write(8'h3c, 32'd99, 4'hf);
+        axi_read(8'h3c, rd);
+        check_eq(rd, 32'd42, "busy freezes input_zero_point");
 
         axi_write(8'h00, 32'd1, 4'h1);
         repeat (2) @(negedge clk);

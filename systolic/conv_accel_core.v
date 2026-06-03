@@ -45,6 +45,7 @@ module conv_accel_core #(
     output [10:0] current_pass_base_k,
     output [10:0] configured_cout_total,
     output [15:0] configured_num_pixels,
+    output [7:0]  configured_input_zero_point,
     input  [31:0] debug_expected_bytes,
     input  [31:0] debug_core_wr_count,
     input  [31:0] debug_axis_wr_count,
@@ -100,6 +101,7 @@ module conv_accel_core #(
     wire [8:0] tile_oy_base;
     wire [8:0] tile_ofm_h;
     wire [23:0] tile_pixel_base;
+    wire [7:0] input_zero_point;
     wire [OFM_ADDR_W-1:0] tile_pixel_base_ext = tile_pixel_base[OFM_ADDR_W-1:0];
     wire [COLS*2*MULT_W-1:0] quant_mult_flat;
     wire [COLS*2*SHIFT_W-1:0] quant_shift_flat;
@@ -107,6 +109,7 @@ module conv_accel_core #(
 
     assign configured_cout_total = cout_total;
     assign configured_num_pixels = num_pixels;
+    assign configured_input_zero_point = input_zero_point;
 
     layer_config_regs u_cfg (
         .clk(clk), .rst(rst),
@@ -124,7 +127,8 @@ module conv_accel_core #(
         .activation_mode(activation_mode),
         .k_total(k_total), .cout_total(cout_total), .num_pixels(num_pixels),
         .tile_oy_base(tile_oy_base), .tile_ofm_h(tile_ofm_h),
-        .tile_pixel_base(tile_pixel_base)
+        .tile_pixel_base(tile_pixel_base),
+        .input_zero_point(input_zero_point)
     );
 
     quant_param_regs #(

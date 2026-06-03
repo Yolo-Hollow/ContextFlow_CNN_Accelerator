@@ -25,6 +25,7 @@ module axis_ifm_line_loader #(
     input  [AW-1:0] fm_w,
     input           fill_req,
     input  [AW-1:0] fill_fy,
+    input  [7:0]    input_zero_point,
 
     output          s_axis_tready,
     input           s_axis_tvalid,
@@ -60,6 +61,7 @@ module axis_ifm_line_loader #(
         .fm_w(fm_w),
         .fill_req(fill_req),
         .fill_fy(fill_fy),
+        .input_zero_point(input_zero_point),
         .line_s_ready(s_axis_tready),
         .line_s_valid(s_axis_tvalid),
         .line_s_data(line_s_data),

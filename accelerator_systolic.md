@@ -502,6 +502,20 @@ AXI-Lite config
 
 `ifm_line_stream_loader` 将 PS/DMA 侧的一行 IFM stream 转换为现有 line buffer 写接口。
 
+外部 IFM stream 的数据语义是 `uint8 activation`。进入 line buffer 前，
+loader 会使用配置寄存器 `0x0f` 的 `input_zero_point[7:0]` 做中心化：
+
+```text
+centered = ifm_u8 - input_zero_point
+if centered > 127:  ifm_s8 = 127
+if centered < -128: ifm_s8 = -128
+else:               ifm_s8 = centered[7:0]
+```
+
+line buffer 仍然只存 8 bit，但语义是 two's-complement signed int8 centered IFM。
+窗口越界 padding 仍是内部 signed 0；未被当前 K pass 使用的 stream bank 应发送
+`input_zero_point`，这样写入 line buffer 后也是内部 0。
+
 协议语义：
 
 ```text
@@ -522,6 +536,7 @@ input  [8:0] ifm_line_words;
 output       ifm_line_s_ready;
 input        ifm_line_s_valid;
 input  [7:0] ifm_line_s_data [0:4];
+input  [7:0] input_zero_point;
 ```
 
 内部转换为：
@@ -798,6 +813,8 @@ tb/tb_axis_ifm_line_loader.v
 功能：
 
 - `TDATA[39:0]` 解包为 5 个 IFM bank byte。
+- 解包后的 byte 是外部 uint8 activation，写 line buffer 前会减 `input_zero_point`
+  并饱和到 signed int8。
 - `TKEEP[4:0]` 必须为 `5'b11111`。
 - `TLAST` 必须只在一行最后一个 x beat 拉高。
 - 输出仍复用原来的 `dma_bank_wr_en/dma_wr_x/dma_wr_fy/dma_wr_data/dma_line_advance`。

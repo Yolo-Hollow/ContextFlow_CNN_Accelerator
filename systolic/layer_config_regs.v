@@ -17,6 +17,7 @@
 //   0x0c DBG_AXIS_WR:  OFM AXIS packets accepted by the downstream sink
 //   0x0d DBG_TLASTS:   OFM AXIS TLAST handshake count
 //   0x0e DBG_LAST_END: packet count at the most recent TLAST handshake
+//   0x0f IFM_ZP:       [7:0]=input_zero_point for uint8-to-sint8 IFM centering
 module layer_config_regs (
     input  clk,
     input  rst,
@@ -48,7 +49,8 @@ module layer_config_regs (
     output reg [15:0] num_pixels,
     output reg [8:0]  tile_oy_base,
     output reg [8:0]  tile_ofm_h,
-    output reg [23:0] tile_pixel_base
+    output reg [23:0] tile_pixel_base,
+    output reg [7:0]  input_zero_point
 );
     reg done_sticky;
     wire cfg_idle = !layer_busy;
@@ -70,6 +72,7 @@ module layer_config_regs (
             tile_oy_base <= 9'd0;
             tile_ofm_h <= 9'd0;
             tile_pixel_base <= 24'd0;
+            input_zero_point <= 8'd0;
         end else begin
             start_pulse <= 1'b0;
             if (layer_done)
@@ -114,6 +117,7 @@ module layer_config_regs (
                         end
                     end
                     6'h09: if (cfg_idle) tile_pixel_base <= cfg_wdata[23:0];
+                    6'h0f: if (cfg_idle) input_zero_point <= cfg_wdata[7:0];
                     default: begin end
                 endcase
             end
@@ -137,6 +141,7 @@ module layer_config_regs (
             6'h0c: cfg_rdata = dbg_axis_wr_count;
             6'h0d: cfg_rdata = dbg_tlast_count;
             6'h0e: cfg_rdata = dbg_last_tlast_index;
+            6'h0f: cfg_rdata = {24'd0, input_zero_point};
             default: cfg_rdata = 32'd0;
         endcase
     end

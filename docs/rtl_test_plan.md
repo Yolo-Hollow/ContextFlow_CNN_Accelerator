@@ -155,6 +155,41 @@ AXI-Lite config
 
 - `217 pass, 0 fail`
 
+### `tb_conv_accel_core_axi_lite_axis_stream_input_zp`
+
+Purpose:
+
+- Verify the formal IFM input-zero-point hardware semantics at top level.
+- The testbench keeps the golden convolution on internal signed IFM values, but sends `feat + input_zero_point` as external uint8 activation bytes through the IFM AXIS path.
+- Uses `input_zero_point=36` and confirms that the IFM loader subtracts it before line-buffer storage.
+
+Checks:
+
+- AXI-Lite register `0x0f` programs the input zero point.
+- IFM AXIS input is uint8; internal line-buffer data is centered signed int8.
+- Window, MAC, requant, OFM writeback, TLAST, and debug counters still match the signed-IFM golden.
+
+Current result:
+
+- `1169 pass, 0 fail`
+
+### `tb_conv_accel_core_axi_lite_full_stream_input_zp`
+
+Purpose:
+
+- Verify the same non-zero input-zero-point semantics through the full-stream wrapper.
+- Covers the `conv_accel_core_axi_lite_stream -> ifm_line_stream_loader` configuration path that does not use the AXIS IFM wrapper.
+
+Checks:
+
+- AXI-Lite register `0x0f` reaches the full-stream IFM line loader.
+- The full-stream IFM source sends uint8 `feat + input_zero_point`; internal loader checks compare centered signed bytes.
+- End-to-end OFM output still matches the signed-IFM golden.
+
+Current result:
+
+- `1165 pass, 0 fail`
+
 ## 关键模块测试
 
 ### `tb_ofm_activation`
@@ -222,12 +257,13 @@ AXI-Lite config
 
 - AW/W 同时到达、分离到达、W-first 到达。
 - CTRL partial write 不把 status 位错误合并成 start/clear side effect。
+- `0x0f` input-zero-point write/read, lower-byte partial write, and upper-byte partial no-op behavior.
 - `layer_busy=1` 时 start 被忽略，配置寄存器冻结。
 - idle 后 start 和配置写入正常生效。
 
 当前结果：
 
-- `46 pass, 0 fail`
+- `59 pass, 0 fail`
 
 ### `tb_layer_config_regs`
 
@@ -238,13 +274,14 @@ AXI-Lite config
 检查项：
 
 - busy 时 FM/K/activation/tile/pixel 配置不被改写。
+- busy 时 `input_zero_point` 配置不被改写。
 - busy 时 start pulse 被忽略。
 - busy 时 clear done 仍可工作。
 - idle 时配置和 start 正常接受。
 
 当前结果：
 
-- `31 pass, 0 fail`
+- `34 pass, 0 fail`
 
 ### `tb_axis_ifm_line_loader`
 
@@ -256,12 +293,32 @@ AXI-Lite config
 
 - `fill_req` 后 ready 拉高。
 - 一行 `fm_w` 个 beat，每 beat 写所有 bank。
+- `input_zero_point=36` 时覆盖 `36->0`, `22->-14`, `86->50`, `255->127` 饱和上限。
+- `input_zero_point=200` 时覆盖 `0->-128` 饱和下限。
+- `input_zero_point=0` 时输出 byte 等于原始输入 byte，保持旧 directed pattern 兼容。
 - `TKEEP` 和 `TLAST` 错误检测。
 - `fm_w=0` 时不进入活跃状态，不误写。
 
 当前结果：
 
-- `58 pass, 0 fail`
+- `80 pass, 0 fail`
+
+### `tb_ifm_line_stream_loader`
+
+Purpose:
+
+- Verify the bus-agnostic IFM line stream loader and the uint8-to-centered-sint8 conversion before the line buffer.
+
+Checks:
+
+- `input_zero_point=0` preserves existing byte order and values.
+- `input_zero_point=36` covers zero, negative, positive, and high saturation cases.
+- `input_zero_point=200` covers low saturation.
+- `dma_line_advance`, `dma_wr_x`, `dma_wr_fy`, and bank write enables remain correct.
+
+Current result:
+
+- `81 pass, 0 fail`
 
 ## Layer06 real-image external golden tests
 
@@ -279,9 +336,12 @@ Data source:
 - xsim `$readmemh` files: `D:/MPSoC/python_prj/rtl_golden/facemask_layer06_rtl/xsim_mem`
 - Conversion script: `tb/make_layer06_xsim_mem.py`
 - Quant config: `mult=18055`, `shift=7`, `zp=75`
+- IFM input zero point: `input_zero_point=36`, programmed through config register `0x0f`
 - Activation: LUT mode, loaded from `activation_lut_u8.mem`
 
-The golden follows the current RTL signed IFM datapath. It does not apply input zero-point compensation before the MAC, because the current RTL datapath directly multiplies signed IFM bytes by signed weights.
+The external IFM stream is uint8 activation data. The RTL line loader converts each byte to internal signed int8 as `saturate_s8(ifm_u8 - input_zero_point)` before writing the line buffer. Padding outside the feature map is still internal signed zero. Layer06 has `ifm_u8` range `22..86`, centered range `-14..50`, and `sat_count=0`.
+
+The regenerated Layer06 golden follows this RTL semantic. The requant output itself still has only 4 unique signed values (`-128`, `127`, `75`, `-66`), and the activation LUT maps them to final OFM byte values (`130`, `127`, `16`, `255`). This layer is therefore useful for scheduling and bit-exact dataflow verification, but not ideal for observing a rich OFM distribution.
 
 ### `tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_ext_tile4`
 
@@ -300,7 +360,7 @@ Checks:
 
 Current result:
 
-- `26641 pass, 0 fail`
+- `26641 pass, 0 fail`; xsim elapsed about `00:00:21`
 
 ### `tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_tile4_fifo16_backpressure`
 
@@ -334,7 +394,7 @@ Checks:
 
 Current result:
 
-- `79889 pass, 0 fail`
+- `79889 pass, 0 fail`; xsim elapsed about `00:02:16`
 
 ### `tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_ext_full`
 
@@ -350,7 +410,7 @@ Checks:
 
 Current result:
 
-- `346129 pass, 0 fail`
+- `346129 pass, 0 fail`; xsim elapsed about `00:10:33`
 
 ### OFM backpressure implementation note
 

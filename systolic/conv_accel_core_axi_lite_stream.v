@@ -57,6 +57,7 @@ module conv_accel_core_axi_lite_stream #(
     output weight_load_req,
     output [10:0] current_cout_base,
     output [10:0] current_pass_base_k,
+    output [7:0]  configured_input_zero_point,
 
     output              bias_s_ready,
     input               bias_s_valid,
@@ -97,6 +98,8 @@ module conv_accel_core_axi_lite_stream #(
     wire wgt_tile_wr_en;
     wire [WGT_TILE_AW-1:0] wgt_tile_wr_addr;
     wire [WEIGHT_W-1:0] wgt_tile_wr_data;
+    wire [10:0] unused_configured_cout_total;
+    wire [15:0] unused_configured_num_pixels;
 
     bias_weight_stream_loader #(
         .ROWS(ROWS), .COLS(COLS), .PSUM_W(PSUM_W), .WEIGHT_W(WEIGHT_W),
@@ -135,6 +138,9 @@ module conv_accel_core_axi_lite_stream #(
         .s_axi_rvalid(s_axi_rvalid), .s_axi_rready(s_axi_rready),
         .bias_load_req(bias_load_req), .bias_load_done(bias_load_done),
         .current_cout_base(current_cout_base), .current_pass_base_k(current_pass_base_k),
+        .configured_cout_total(unused_configured_cout_total),
+        .configured_num_pixels(unused_configured_num_pixels),
+        .configured_input_zero_point(configured_input_zero_point),
         .debug_expected_bytes(32'd0), .debug_core_wr_count(32'd0),
         .debug_axis_wr_count(32'd0), .debug_tlast_count(32'd0),
         .debug_last_tlast_index(32'd0),

@@ -21,6 +21,7 @@ module ifm_line_stream_loader #(
     input  [AW-1:0] fm_w,
     input           fill_req,
     input  [AW-1:0] fill_fy,
+    input  [7:0]    input_zero_point,
 
     output          line_s_ready,
     input           line_s_valid,
@@ -49,10 +50,25 @@ module ifm_line_stream_loader #(
     assign dma_wr_fy = fy_latched;
     assign dma_line_advance = advance_pending;
 
+    function [7:0] center_ifm_byte;
+        input [7:0] raw_u8;
+        input [7:0] zero_point;
+        reg signed [9:0] centered;
+        begin
+            centered = $signed({2'b00, raw_u8}) - $signed({2'b00, zero_point});
+            if (centered > 10'sd127)
+                center_ifm_byte = 8'sh7f;
+            else if (centered < -10'sd128)
+                center_ifm_byte = 8'sh80;
+            else
+                center_ifm_byte = centered[7:0];
+        end
+    endfunction
+
     genvar db;
     generate
         for (db = 0; db < BANKS; db = db + 1) begin : dma_data_assign
-            assign dma_wr_data[db] = line_s_data[db];
+            assign dma_wr_data[db] = center_ifm_byte(line_s_data[db], input_zero_point);
         end
     endgenerate
 

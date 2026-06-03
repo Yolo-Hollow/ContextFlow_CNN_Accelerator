@@ -51,6 +51,9 @@
 `ifndef TB_CONV_ACCEL_CORE_QUANT_ZP
 `define TB_CONV_ACCEL_CORE_QUANT_ZP 8'd0
 `endif
+`ifndef TB_CONV_ACCEL_CORE_INPUT_ZP
+`define TB_CONV_ACCEL_CORE_INPUT_ZP 8'd0
+`endif
 `ifndef TB_CONV_ACCEL_CORE_ACT_MODE
 `define TB_CONV_ACCEL_CORE_ACT_MODE 0
 `endif
@@ -196,6 +199,7 @@ module `TB_CONV_ACCEL_CORE_MODULE;
     localparam FULL_PIXELS = OFM_W * OFM_H;
     localparam OFM_WORDS = OFM_W * OFM_H * COUT_TOTAL;
     localparam EXPECTED_OFM_WRITES = RUN_PIXELS * COUT_TOTAL;
+    localparam [7:0] INPUT_ZERO_POINT = `TB_CONV_ACCEL_CORE_INPUT_ZP;
 
     reg clk, rst;
     reg cfg_wr_en, cfg_rd_en;
@@ -438,6 +442,60 @@ module `TB_CONV_ACCEL_CORE_MODULE;
         end
     endfunction
 
+    function [7:0] center_ifm_byte_tb;
+        input [7:0] raw_u8;
+        input [7:0] zero_point;
+        reg signed [9:0] centered;
+        begin
+            centered = $signed({2'b00, raw_u8}) - $signed({2'b00, zero_point});
+            if (centered > 10'sd127)
+                center_ifm_byte_tb = 8'h7f;
+            else if (centered < -10'sd128)
+                center_ifm_byte_tb = 8'h80;
+            else
+                center_ifm_byte_tb = centered[7:0];
+        end
+    endfunction
+
+    function [7:0] add_input_zp_byte_tb;
+        input signed [7:0] centered_s8;
+        reg signed [9:0] raw_sum;
+        begin
+            raw_sum = centered_s8 + $signed({2'b00, INPUT_ZERO_POINT});
+            if (raw_sum < 10'sd0)
+                add_input_zp_byte_tb = 8'd0;
+            else if (raw_sum > 10'sd255)
+                add_input_zp_byte_tb = 8'hff;
+            else
+                add_input_zp_byte_tb = raw_sum[7:0];
+        end
+    endfunction
+
+    function [7:0] stream_ifm_byte_tb;
+        input integer stream_ch;
+        input integer stream_y;
+        input integer stream_x;
+        begin
+            if (stream_ch < 0) begin
+                stream_ifm_byte_tb = INPUT_ZERO_POINT;
+            end else begin
+`ifdef TB_CONV_ACCEL_CORE_USE_EXTERNAL_GOLDEN
+`ifdef TB_CONV_ACCEL_CORE_CENTER_EXTERNAL_IFM
+                stream_ifm_byte_tb = ext_ifm[(stream_y*FM_W + stream_x)*CIN + stream_ch];
+`else
+                stream_ifm_byte_tb = feat[stream_ch][stream_y][stream_x];
+`endif
+`else
+`ifdef TB_CONV_ACCEL_CORE_IFM_U8_FROM_CENTERED
+                stream_ifm_byte_tb = add_input_zp_byte_tb(feat[stream_ch][stream_y][stream_x]);
+`else
+                stream_ifm_byte_tb = feat[stream_ch][stream_y][stream_x];
+`endif
+`endif
+            end
+        end
+    endfunction
+
     function integer pass_needs_ch;
         input integer k_base;
         input integer c;
@@ -650,9 +708,9 @@ module `TB_CONV_ACCEL_CORE_MODULE;
                 for (b = 0; b < IFM_BANKS; b = b + 1) begin
                     bank_ch = channel_for_bank(k_base, b);
 `ifdef TB_CONV_ACCEL_CORE_USE_AXIS_STREAM
-                    axis_word[b*8 +: 8] = (bank_ch >= 0) ? feat[bank_ch][row_y][x] : 8'd0;
+                    axis_word[b*8 +: 8] = stream_ifm_byte_tb(bank_ch, row_y, x);
 `elsif TB_CONV_ACCEL_CORE_USE_FULL_STREAM
-                    ifm_line_s_data[b] = (bank_ch >= 0) ? feat[bank_ch][row_y][x] : 8'd0;
+                    ifm_line_s_data[b] = stream_ifm_byte_tb(bank_ch, row_y, x);
 `else
                     dma_wr_data[b] = (bank_ch >= 0) ? feat[bank_ch][row_y][x] : 8'd0;
 `endif
@@ -1105,7 +1163,11 @@ module `TB_CONV_ACCEL_CORE_MODULE;
         for (ch = 0; ch < CIN; ch = ch + 1)
             for (y = 0; y < FM_H; y = y + 1)
                 for (x = 0; x < FM_W; x = x + 1)
+`ifdef TB_CONV_ACCEL_CORE_CENTER_EXTERNAL_IFM
+                    feat[ch][y][x] = center_ifm_byte_tb(ext_ifm[(y*FM_W + x)*CIN + ch], INPUT_ZERO_POINT);
+`else
                     feat[ch][y][x] = ext_ifm[(y*FM_W + x)*CIN + ch];
+`endif
 
         for (k = 0; k < K_TOTAL; k = k + 1)
             for (co = 0; co < COUT_TOTAL; co = co + 1)
@@ -1161,6 +1223,7 @@ module `TB_CONV_ACCEL_CORE_MODULE;
         cfg_write(6'h04, K_TOTAL);
         cfg_write(6'h05, COUT_TOTAL);
         cfg_write(6'h07, `TB_CONV_ACCEL_CORE_ACT_MODE);
+        cfg_write(6'h0f, {24'd0, INPUT_ZERO_POINT});
         for (run_idx = 0; run_idx < TILE_COUNT; run_idx = run_idx + 1)
             run_tile(run_idx);
 `ifdef TB_CONV_ACCEL_CORE_USE_FULL_STREAM
