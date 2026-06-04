@@ -1,6 +1,7 @@
 #include "accel_smoke.h"
 #include "accel_layer_desc.h"
 #include "accel_single_scale_plan.h"
+#include "accel_single_scale_scheduler.h"
 
 #include <stdarg.h>
 #include <stdint.h>
@@ -120,6 +121,58 @@ static void log_printf(const char *fmt, ...)
 }
 
 #define xil_printf(...) log_printf(__VA_ARGS__)
+
+static void print_single_scale_buffer_id(uint32_t id)
+{
+    if (id == ACCEL_SINGLE_SCALE_BUFFER_EXTERNAL) {
+        xil_printf("ext");
+    } else {
+        xil_printf("fb%lu", (unsigned long)id);
+    }
+}
+
+static int run_single_scale_scheduler_dry_run(void)
+{
+    accel_single_scale_layer_schedule_t schedule[ACCEL_SINGLE_SCALE_LAYER_COUNT];
+    accel_single_scale_schedule_summary_t summary;
+    int rc = accel_single_scale_dry_run(schedule, ACCEL_SINGLE_SCALE_LAYER_COUNT, &summary);
+
+    if (rc != 0) {
+        xil_printf("single-scale scheduler dry-run failed rc=%d\r\n", rc);
+        return rc;
+    }
+
+    xil_printf("single-scale dry-run: layers=%lu ext_in=%lu fb0=%lu fb1=%lu max_axis=%lu\r\n",
+               (unsigned long)summary.layer_count,
+               (unsigned long)summary.external_input_bytes,
+               (unsigned long)summary.feature_buffer_bytes[0],
+               (unsigned long)summary.feature_buffer_bytes[1],
+               (unsigned long)summary.max_ofm_axis_bytes);
+
+    for (uint32_t i = 0U; i < ACCEL_SINGLE_SCALE_LAYER_COUNT; ++i) {
+        const accel_single_scale_layer_plan_t *p = schedule[i].plan;
+        xil_printf("plan[%lu] %s m=%u infer=%u ",
+                   (unsigned long)i,
+                   p->name,
+                   (unsigned)p->model_index,
+                   (unsigned)p->infer_index);
+        print_single_scale_buffer_id(schedule[i].input_buffer_id);
+        xil_printf("->");
+        print_single_scale_buffer_id(schedule[i].output_buffer_id);
+        xil_printf(" %lux%lux%u -> %lux%lux%u bytes=%lu kpass=%lu cblk=%lu\r\n",
+                   (unsigned long)p->fm_w,
+                   (unsigned long)p->fm_h,
+                   (unsigned)p->cin,
+                   (unsigned long)schedule[i].final_w,
+                   (unsigned long)schedule[i].final_h,
+                   (unsigned)p->cout_total,
+                   (unsigned long)schedule[i].output_bytes,
+                   (unsigned long)p->k_passes,
+                   (unsigned long)p->cout_blocks);
+    }
+
+    return 0;
+}
 
 static inline void wr32(uint32_t base, uint32_t off, uint32_t v)
 {
@@ -668,6 +721,10 @@ int main(void)
                accel_single_scale_plan[0].name,
                accel_single_scale_plan[ACCEL_SINGLE_SCALE_LAYER_COUNT - 1U].name,
                (unsigned long)ACCEL_SINGLE_SCALE_COUT_TILE);
+    if (run_single_scale_scheduler_dry_run() != 0) {
+        xil_printf("FAIL: single-scale scheduler dry-run failed\r\n");
+        return -1;
+    }
 
     make_vectors();
     debug_stage = 0x02000000U;

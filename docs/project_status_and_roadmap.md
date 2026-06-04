@@ -276,7 +276,7 @@ D:/MPSoC/python_prj
 - 当前 KV260 日常基线固定为 `ROWS=18, COLS=8, IFM_BANKS=2, COUT_TILE=16`。
 - 单尺度 layer list 已固化在 `tools/golden/single_scale_yolov3tiny_layers.json`，覆盖 Conv0 到 13x13 单尺度检测头的 10 个硬件卷积候选层。
 - 多层 RTL semantic golden exporter 已加入 `tools/golden/export_rtl_single_scale_golden.py`，默认输出到外部 `D:/MPSoC/python_prj/rtl_golden/facemask_single_scale_rtl`，不把大 binary dump 写入 RTL 仓库。
-- Vitis smoke 已加入 descriptor/scheduler 雏形：`accel_layer_desc_t` 描述单层运行参数，`accel_single_scale_plan` 记录 10 层单尺度调度表；当前 smoke 仍一次运行一个 descriptor。
+- Vitis smoke 已加入 descriptor/scheduler dry-run：`accel_layer_desc_t` 描述单层运行参数，`accel_single_scale_plan` 记录 10 层单尺度调度表，`accel_single_scale_scheduler.h` 在启动时检查 shape 链接、K pass、COUT block、expected bytes 和 ping-pong feature buffer 分配；当前 smoke 仍一次运行一个 descriptor。
 - 短回归入口为 `tb/run_short_xsim_regression.ps1`，覆盖 r18_c8 deterministic、Conv0 crop + pool r18_c8、OFM AXIS writer、quant/LUT、requant 和 OFM requant writer。
 - 板子恢复后的入口为 `sw/vitis_2022_2/scripts/run_kv260_smoke_sequence.ps1`，流程为 JTAG probe -> bit/ELF download -> UART capture -> PL register probe；先跑 r18_c8 deterministic，再可选跑 Conv0 crop + pool。
 
@@ -285,5 +285,6 @@ D:/MPSoC/python_prj
 - `export_rtl_single_scale_golden.py --metadata-only` 已对 10 层全部跑通，全部 `sat_count=0`。
 - 单尺度检测头映射已修正为 `1.model.20.m.1.weight`，输出 shape 为 `13x13x24`，预计输出 `4056` bytes。
 - 两个 Vitis manual ELF 构建通过：`conv_accel_r18_c8_smoke.elf` 和 `conv_accel_conv0_crop_pool_smoke.elf`。
+- 两个 ELF 启动路径均已接入 10 层 scheduler dry-run，编译期覆盖 deterministic 与 Conv0 crop + pool 两种模式。
 - `tb/run_short_xsim_regression.ps1` 已通过。
 - 上板 smoke 暂未复跑，原因是开发板当前不在手边。

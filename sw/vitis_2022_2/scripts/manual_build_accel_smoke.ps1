@@ -34,6 +34,7 @@ Copy-Item -Path `
     (Join-Path $SwDir "src\accel_smoke.h"), `
     (Join-Path $SwDir "src\accel_layer_desc.h"), `
     (Join-Path $SwDir "src\accel_single_scale_plan.h"), `
+    (Join-Path $SwDir "src\accel_single_scale_scheduler.h"), `
     (Join-Path $SwDir "src\conv0_crop_pool_data.h") `
     -Destination $AppSrcDir -Force
 

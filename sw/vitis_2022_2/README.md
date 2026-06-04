@@ -100,14 +100,21 @@ The smoke source now has a small layer descriptor layer:
 ```text
 src/accel_layer_desc.h
 src/accel_single_scale_plan.h
+src/accel_single_scale_scheduler.h
 ```
 
 `accel_layer_desc_t` is the per-run descriptor used by the current single-layer
 smoke path. It holds shape, tile, pool, quant, LUT, expected byte count, and
 golden pointers. `accel_single_scale_plan.h` records the 10-layer single-scale
 YOLOv3-tiny plan for the current `ROWS=18, COLS=8, COUT_TILE=16` profile. The
-current smoke still runs one descriptor at a time; the table is the next
-software scheduler entry point.
+current smoke still runs one descriptor at a time.
+
+At startup the ELF runs a scheduler dry-run over the 10-layer table before it
+touches DMA or accelerator registers. The dry-run checks layer chaining, output
+shape, COUT blocks, K passes, expected OFM byte counts, and ping-pong feature
+buffer assignment. It prints a compact per-layer plan such as `ext->fb0`,
+`fb0->fb1`, plus the required external input bytes, feature buffer sizes, and
+maximum OFM debug AXIS capture size.
 
 ## Board smoke sequence
 
