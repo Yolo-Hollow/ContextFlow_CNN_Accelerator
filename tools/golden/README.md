@@ -24,3 +24,51 @@ C:\Users\hp\.conda\envs\pytorch_env\python.exe tools\golden\export_rtl_layer06_g
 Scripts default to writing full generated data back to the external
 `python_prj/rtl_golden` directory. Do not write large layer dumps into this repo
 unless they are intentionally curated as small regression fixtures.
+
+## Single-scale RTL semantic export
+
+The current offline network-prep path is described by:
+
+```text
+tools/golden/single_scale_yolov3tiny_layers.json
+```
+
+It fixes the KV260 baseline array to:
+
+```text
+ROWS=18, COLS=8, IFM_BANKS=2, COUT_TILE=16
+```
+
+The layer list covers the single low-resolution YOLOv3-tiny path from Conv0
+through the 13x13 detection head. COUT values above 16 are expected to run as
+multiple COUT blocks. Decode, threshold, and NMS remain software-side.
+
+Generate RTL semantic metadata and binaries for all listed layers:
+
+```powershell
+C:\Users\hp\.conda\envs\pytorch_env\python.exe tools\golden\export_rtl_single_scale_golden.py --project D:\MPSoC\python_prj
+```
+
+Generate only manifests, useful for quick shape/quant checks:
+
+```powershell
+C:\Users\hp\.conda\envs\pytorch_env\python.exe tools\golden\export_rtl_single_scale_golden.py --project D:\MPSoC\python_prj --metadata-only
+```
+
+Limit export to selected infer indices or names:
+
+```powershell
+C:\Users\hp\.conda\envs\pytorch_env\python.exe tools\golden\export_rtl_single_scale_golden.py --layers 3,6,head_detect_conv9_1x1
+```
+
+The exporter writes per-layer `manifest.json` files with shape, quant,
+`sat_count`, expected bytes, K/COUT scheduling counts, and PyTorch-reference
+mismatch statistics when a comparable PyTorch layer output exists. The RTL
+semantic golden uses:
+
+```text
+ifm_s8 = saturate_s8(ifm_u8 - input_zero_point)
+psum = conv_accumulator + int32_bias
+requant = round(psum * mult / 2^(raw_shift + 15)) + output_zp
+ofm = activation_lut[requant]
+```

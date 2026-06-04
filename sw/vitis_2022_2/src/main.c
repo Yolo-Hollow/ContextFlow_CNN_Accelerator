@@ -1,4 +1,6 @@
 #include "accel_smoke.h"
+#include "accel_layer_desc.h"
+#include "accel_single_scale_plan.h"
 
 #include <stdarg.h>
 #include <stdint.h>
@@ -33,6 +35,51 @@ static uint64_t ifm_buf[FM_W] __attribute__((aligned(64)));
 static uint64_t ofm_axis_buf[EXPECTED_OFM_BYTES] __attribute__((aligned(64)));
 volatile uint32_t debug_stage = 0;
 volatile uint32_t debug_value = 0;
+
+static const accel_layer_desc_t active_layer = {
+    .name = SMOKE_NAME,
+    .fm_w = FM_W,
+    .fm_h = FM_H,
+    .ofm_w = OFM_W,
+    .ofm_h = OFM_H,
+    .cin = CIN,
+    .cout_total = COUT_TOTAL,
+    .k_total = K_TOTAL,
+    .conv_stride = CONV_STRIDE,
+    .conv_pad = CONV_PAD,
+    .act_mode = ACT_MODE,
+    .input_zero_point = INPUT_ZERO_POINT,
+    .pool_enable = POOL_ENABLE,
+    .pool_stride = POOL_STRIDE,
+    .tile_oy_base = TILE_OY_BASE,
+    .tile_ofm_h = TILE_OFM_H,
+    .tile_pixel_base = TILE_PIXEL_BASE,
+    .tile_pixels = TILE_PIXELS,
+    .expected_output_pixels = EXPECTED_OUTPUT_PIXELS,
+    .expected_ofm_bytes = EXPECTED_OFM_BYTES,
+    .quant_mult = QUANT_MULT,
+    .quant_shift = QUANT_SHIFT,
+    .quant_zp = QUANT_ZP,
+#if ACCEL_SMOKE_REAL_CONV0_CROP_POOL
+    .activation_lut = conv0_crop_activation_lut_u8,
+    .golden_ofm_u8 = conv0_crop_golden_pool_u8,
+#else
+    .activation_lut = NULL,
+    .golden_ofm_u8 = NULL,
+#endif
+};
+
+static const accel_layer_runtime_t active_runtime = {
+    .layer = &active_layer,
+    .bias_buf = bias_buf,
+    .bias_bytes = sizeof(bias_buf),
+    .weight_buf = weight_buf,
+    .weight_bytes = sizeof(weight_buf),
+    .ifm_buf = ifm_buf,
+    .ifm_bytes = sizeof(ifm_buf),
+    .ofm_axis_buf = ofm_axis_buf,
+    .ofm_axis_bytes = OFM_AXIS_BYTES,
+};
 
 static void uart_putc_one(uint32_t base, char c)
 {
@@ -362,7 +409,7 @@ static int wait_ifm_request_advance(uint32_t serviced_status)
 static int service_bias(void)
 {
     pack_bias();
-    dma_start_mm2s(DMA_BIAS_BASE_ADDR, bias_buf, sizeof(bias_buf));
+    dma_start_mm2s(DMA_BIAS_BASE_ADDR, active_runtime.bias_buf, active_runtime.bias_bytes);
     if (dma_wait(DMA_BIAS_BASE_ADDR, DMA_MM2S_DMASR, "bias MM2S") != 0) {
         return -1;
     }
@@ -374,7 +421,7 @@ static int service_weight(int *next_k_pass, int *active_k_base)
     int k_base = (*next_k_pass) * ROWS;
     *active_k_base = k_base;
     pack_weight(k_base);
-    dma_start_mm2s(DMA_WEIGHT_BASE_ADDR, weight_buf, sizeof(weight_buf));
+    dma_start_mm2s(DMA_WEIGHT_BASE_ADDR, active_runtime.weight_buf, active_runtime.weight_bytes);
     if (dma_wait(DMA_WEIGHT_BASE_ADDR, DMA_MM2S_DMASR, "weight MM2S") != 0) {
         return -1;
     }
@@ -406,7 +453,7 @@ static int service_ifm(uint32_t status, int active_k_base, int *ifm_row_phase)
     }
 
     pack_ifm_line(fy, active_k_base);
-    dma_start_mm2s(DMA_IFM_BASE_ADDR, ifm_buf, sizeof(ifm_buf));
+    dma_start_mm2s(DMA_IFM_BASE_ADDR, active_runtime.ifm_buf, active_runtime.ifm_bytes);
     if (dma_wait(DMA_IFM_BASE_ADDR, DMA_MM2S_DMASR, "ifm MM2S") != 0) {
         return -1;
     }
@@ -450,7 +497,7 @@ static int parse_ofm(void)
         for (int co = 0; co < COUT_TOTAL; ++co) {
             uint8_t got = ofm_mem[global_pixel * COUT_TOTAL + co];
 #if ACCEL_SMOKE_REAL_CONV0_CROP_POOL
-            uint8_t exp = conv0_crop_golden_pool_u8[idx * COUT_TOTAL + co];
+            uint8_t exp = active_layer.golden_ofm_u8[idx * COUT_TOTAL + co];
 #else
             uint8_t exp = clamp8(golden[global_pixel][co]);
 #endif
@@ -493,28 +540,22 @@ static int run_smoke(void)
 
     debug_stage = 0x20000000U;
     xil_printf("stage: config regs\r\n");
-    wr32(ACCEL_BASE_ADDR, ACCEL_FM_SIZE, ((uint32_t)FM_W << 16) | FM_H);
-    wr32(ACCEL_BASE_ADDR, ACCEL_OFM_SIZE, ((uint32_t)OFM_W << 16) | OFM_H);
-    wr32(ACCEL_BASE_ADDR, ACCEL_CONV, ((uint32_t)CONV_PAD << 8) | CONV_STRIDE);
-    wr32(ACCEL_BASE_ADDR, ACCEL_K_TOTAL, K_TOTAL);
-    wr32(ACCEL_BASE_ADDR, ACCEL_COUT_TOTAL, COUT_TOTAL);
-    wr32(ACCEL_BASE_ADDR, ACCEL_ACT_CFG, ACT_MODE);
-    wr32(ACCEL_BASE_ADDR, ACCEL_IFM_ZP, INPUT_ZERO_POINT);
-    wr32(ACCEL_BASE_ADDR, ACCEL_POOL_CFG, ((uint32_t)POOL_STRIDE << 2) | (uint32_t)POOL_ENABLE);
-    wr32(ACCEL_BASE_ADDR, ACCEL_NUM_PIXELS, TILE_PIXELS);
-    wr32(ACCEL_BASE_ADDR, ACCEL_TILE_ROWS, ((uint32_t)TILE_OFM_H << 16) | TILE_OY_BASE);
-    wr32(ACCEL_BASE_ADDR, ACCEL_PIXEL_BASE, TILE_PIXEL_BASE);
-    wr32(ACCEL_BASE_ADDR, ACCEL_EXPECTED_BYTES, EXPECTED_OFM_BYTES);
-    if (program_quant_tile(QUANT_MULT, QUANT_SHIFT, QUANT_ZP) != 0) {
+    wr32(ACCEL_BASE_ADDR, ACCEL_FM_SIZE, (active_layer.fm_w << 16) | active_layer.fm_h);
+    wr32(ACCEL_BASE_ADDR, ACCEL_OFM_SIZE, (active_layer.ofm_w << 16) | active_layer.ofm_h);
+    wr32(ACCEL_BASE_ADDR, ACCEL_CONV, (active_layer.conv_pad << 8) | active_layer.conv_stride);
+    wr32(ACCEL_BASE_ADDR, ACCEL_K_TOTAL, active_layer.k_total);
+    wr32(ACCEL_BASE_ADDR, ACCEL_COUT_TOTAL, active_layer.cout_total);
+    wr32(ACCEL_BASE_ADDR, ACCEL_ACT_CFG, active_layer.act_mode);
+    wr32(ACCEL_BASE_ADDR, ACCEL_IFM_ZP, active_layer.input_zero_point);
+    wr32(ACCEL_BASE_ADDR, ACCEL_POOL_CFG, (active_layer.pool_stride << 2) | active_layer.pool_enable);
+    wr32(ACCEL_BASE_ADDR, ACCEL_NUM_PIXELS, active_layer.tile_pixels);
+    wr32(ACCEL_BASE_ADDR, ACCEL_TILE_ROWS, (active_layer.tile_ofm_h << 16) | active_layer.tile_oy_base);
+    wr32(ACCEL_BASE_ADDR, ACCEL_PIXEL_BASE, active_layer.tile_pixel_base);
+    wr32(ACCEL_BASE_ADDR, ACCEL_EXPECTED_BYTES, active_layer.expected_ofm_bytes);
+    if (program_quant_tile(active_layer.quant_mult, active_layer.quant_shift, active_layer.quant_zp) != 0) {
         return -1;
     }
-    if (program_activation_lut(
-#if ACCEL_SMOKE_REAL_CONV0_CROP_POOL
-            conv0_crop_activation_lut_u8
-#else
-            NULL
-#endif
-        ) != 0) {
+    if (program_activation_lut(active_layer.activation_lut) != 0) {
         return -1;
     }
     xil_printf("cfg readback: cout=%lu pixels=%lu tile_rows=0x%08lx pixel_base=%lu\r\n",
@@ -523,7 +564,7 @@ static int run_smoke(void)
                (unsigned long)rd32(ACCEL_BASE_ADDR, ACCEL_TILE_ROWS),
                (unsigned long)rd32(ACCEL_BASE_ADDR, ACCEL_PIXEL_BASE));
 
-    dma_start_s2mm(DMA_OFM_BASE_ADDR, ofm_axis_buf, OFM_AXIS_BYTES);
+    dma_start_s2mm(DMA_OFM_BASE_ADDR, active_runtime.ofm_axis_buf, active_runtime.ofm_axis_bytes);
     debug_stage = 0x30000000U;
     xil_printf("stage: start accel\r\n");
     wr32(ACCEL_BASE_ADDR, ACCEL_CTRL, 1U);
@@ -622,6 +663,11 @@ int main(void)
     xil_printf("\r\n%s AXI DMA smoke test\r\n", SMOKE_NAME);
     xil_printf("FM=%dx%d Cin=%d Cout=%d tile_h=%d expected_ofm=%d bytes\r\n",
                FM_W, FM_H, CIN, COUT_TOTAL, TILE_OFM_H, EXPECTED_OFM_BYTES);
+    xil_printf("single-scale plan: layers=%lu first=%s last=%s cout_tile=%lu\r\n",
+               (unsigned long)ACCEL_SINGLE_SCALE_LAYER_COUNT,
+               accel_single_scale_plan[0].name,
+               accel_single_scale_plan[ACCEL_SINGLE_SCALE_LAYER_COUNT - 1U].name,
+               (unsigned long)ACCEL_SINGLE_SCALE_COUT_TILE);
 
     make_vectors();
     debug_stage = 0x02000000U;

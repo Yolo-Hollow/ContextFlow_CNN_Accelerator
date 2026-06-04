@@ -517,6 +517,26 @@ Current result:
 
 The full-layer shallow-FIFO diagnostic wrapper `tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_full_fifo256` is intentionally not listed in the default xsim regression because it timed out in targeted runs. Use the tile4 shallow-FIFO backpressure test for regular correctness coverage, and keep full-layer tests at normal FIFO depth for targeted/nightly external-golden verification.
 
+### Current short xsim baseline
+
+The daily offline baseline for the current KV260 profile is:
+
+```text
+ROWS=18, COLS=8, IFM_BANKS=2, COUT_TILE=16
+```
+
+Run the short baseline with:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tb/run_short_xsim_regression.ps1
+```
+
+The script runs `tb_axis_ofm_byte_writer`, the r18_c8 deterministic smoke, the
+r18_c8 Conv0 crop + pool external-golden smoke, AXI-Lite quant/LUT, requant,
+and OFM requant writer tests. Layer06 external golden tests remain
+targeted/nightly because the full-layer case is heavier than the daily smoke
+set.
+
 ## 回归命令
 
 单个 xsim 顶层：

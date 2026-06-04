@@ -92,3 +92,42 @@ build_system_xck26_kv260/conv_accel_ps_dma_minimal.xsa
 
 That XSA is expected to include the KV260 carrier board preset and the GPIO2
 exposure of `feeder_fill_fy`.
+
+## Software scheduler skeleton
+
+The smoke source now has a small layer descriptor layer:
+
+```text
+src/accel_layer_desc.h
+src/accel_single_scale_plan.h
+```
+
+`accel_layer_desc_t` is the per-run descriptor used by the current single-layer
+smoke path. It holds shape, tile, pool, quant, LUT, expected byte count, and
+golden pointers. `accel_single_scale_plan.h` records the 10-layer single-scale
+YOLOv3-tiny plan for the current `ROWS=18, COLS=8, COUT_TILE=16` profile. The
+current smoke still runs one descriptor at a time; the table is the next
+software scheduler entry point.
+
+## Board smoke sequence
+
+When the KV260 USB/JTAG/UART link is available again, run the deterministic
+smoke and register probe from one script:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/run_kv260_smoke_sequence.ps1 -PortName COM8
+```
+
+To also run the real Conv0 crop + pool smoke after the deterministic test:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/run_kv260_smoke_sequence.ps1 -PortName COM8 -RunConv0
+```
+
+The script starts `hw_server` if needed, probes JTAG, captures serial logs,
+downloads the bitstream and ELF, then runs `probe_pl_regs.tcl`. Logs are saved
+under:
+
+```text
+build_system_xck26_kv260/board_smoke_logs/
+```
