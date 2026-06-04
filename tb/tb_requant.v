@@ -55,6 +55,7 @@ module tb_requant;
 
         $display("=== saturation ===");
         m0=32767; m1=32767; s0=0; s1=0; z0=0; z1=0;
+        feed_check(       -29,        32);  // identity-scale negative / positive
         feed_check( 500000000, -500000000);  // clamp to 127 / -128
 
         $display("=== valid chain ===");

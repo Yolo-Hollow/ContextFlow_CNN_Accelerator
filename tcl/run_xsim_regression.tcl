@@ -71,6 +71,8 @@ set common_files {
 }
 
 set tests {
+    {tb_systolic_pe tb/tb_systolic_pe.v}
+    {tb_systolic_array_small tb/tb_systolic_array_small.v}
     {tb_conv_accel_core_realistic_small tb/tb_conv_accel_core_realistic_small.v}
     {tb_conv_accel_core_pooling tb/tb_conv_accel_core_pooling.v}
     {tb_layer_scheduler_cout64_fulltile tb/tb_layer_scheduler_cout64_fulltile.v}

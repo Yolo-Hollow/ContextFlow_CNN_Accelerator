@@ -254,8 +254,8 @@ D:/MPSoC/python_prj
 
 1. 用 KV260 board preset 重新生成包含当前 RTL 的 bitstream/XSA。
 2. 先用 `probe_pl_regs.tcl` 验证 accelerator、DMA、GPIO 和 `0xA0000080..0xA000008c` quant/LUT MMIO 地址可访问。
-3. 上板运行 `conv_accel_r18_c8_smoke.elf`，确认旧 deterministic PS/DMA/GPIO 通路仍可用。
-4. 上板运行 `conv_accel_conv0_crop_pool_smoke.elf`，确认真实 Conv0 crop + pool 的 quant/LUT、pool、OFM debug stream 和软件 golden 对比。
+3. 上板优先运行 `conv_accel_conv0_crop_pool_smoke.elf`，确认真实 Conv0 crop + pool 的 quant/LUT、pool、OFM debug stream 和软件 golden 对比。
+4. 如需控制面诊断，再运行 `conv_accel_r18_c8_smoke.elf`，观察旧 deterministic PS/DMA/GPIO 通路和 raw psum mismatch。
 5. 可选增加 AXI VIP BD smoke，目标只验证 BD 地址映射和控制面，不重复 RTL 大规模 golden 验证。
 6. 再扩展到多层单尺度 pipeline。
 7. 等寄存器和 buffer ABI 稳定后，再加入 SD 卡或 host-side 参数加载。
@@ -277,8 +277,8 @@ D:/MPSoC/python_prj
 - 单尺度 layer list 已固化在 `tools/golden/single_scale_yolov3tiny_layers.json`，覆盖 Conv0 到 13x13 单尺度检测头的 10 个硬件卷积候选层。
 - 多层 RTL semantic golden exporter 已加入 `tools/golden/export_rtl_single_scale_golden.py`，默认输出到外部 `D:/MPSoC/python_prj/rtl_golden/facemask_single_scale_rtl`，不把大 binary dump 写入 RTL 仓库。
 - Vitis smoke 已加入 descriptor/scheduler dry-run：`accel_layer_desc_t` 描述单层运行参数，`accel_single_scale_plan` 记录 10 层单尺度调度表，`accel_single_scale_scheduler.h` 在启动时检查 shape 链接、K pass、COUT block、expected bytes 和 ping-pong feature buffer 分配；当前 smoke 仍一次运行一个 descriptor。
-- 短回归入口为 `tb/run_short_xsim_regression.ps1`，覆盖 r18_c8 deterministic、Conv0 crop + pool r18_c8、OFM AXIS writer、quant/LUT、requant 和 OFM requant writer。
-- 板子恢复后的入口为 `sw/vitis_2022_2/scripts/run_kv260_smoke_sequence.ps1`，流程为 JTAG probe -> bit/ELF download -> UART capture -> PL register probe；先跑 r18_c8 deterministic，再可选跑 Conv0 crop + pool。
+- 短回归入口为 `tb/run_short_xsim_regression.ps1`，核心通过标准优先使用 Conv0 crop + pool r18_c8 external golden；r18_c8 deterministic 作为控制面/诊断 smoke，不再单独代表核心正确性。
+- 板子恢复后的入口为 `sw/vitis_2022_2/scripts/run_kv260_smoke_sequence.ps1`，流程为 JTAG probe -> bit/ELF download -> UART capture -> PL register probe；默认先跑真实 Conv0 crop + pool，若需要追加旧 deterministic 诊断则使用 `-RunDeterministic`。
 
 已完成的离线验证：
 
@@ -287,4 +287,5 @@ D:/MPSoC/python_prj
 - 两个 Vitis manual ELF 构建通过：`conv_accel_r18_c8_smoke.elf` 和 `conv_accel_conv0_crop_pool_smoke.elf`。
 - 两个 ELF 启动路径均已接入 10 层 scheduler dry-run，编译期覆盖 deterministic 与 Conv0 crop + pool 两种模式。
 - `tb/run_short_xsim_regression.ps1` 已通过。
-- 上板 smoke 暂未复跑，原因是开发板当前不在手边。
+- 2026-06-04 上板 deterministic r18_c8 smoke 已复现 mismatch；同配置 xsim 在对齐 `mult=32767, shift=0, zp=0` 后可复现 raw psum mismatch，因此该 fixture 暂作为诊断项处理。
+- 2026-06-04 离线复跑 `tb_conv_accel_core_axi_lite_axis_stream_conv0_crop_pool_r18_c8_b2_ext` 通过，结果为 `529 pass, 0 fail`，说明当前 r18_c8 真实 Conv0 crop + pool external-golden 路径仍可作为核心正确性依据。

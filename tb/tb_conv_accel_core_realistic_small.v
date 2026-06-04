@@ -427,6 +427,7 @@ module `TB_CONV_ACCEL_CORE_MODULE;
     integer first_extra_ofm_wr_data;
     integer first_extra_ofm_wr_index;
     integer ifm_write_count, compute_fire_count, psum_wr_count, drain_capture_count;
+    integer final_raw_lane, final_raw_index;
     integer run_idx, run_pixels, run_oy_base, run_ofm_h, run_pixel_base;
     integer ps_tile_start_count, ps_done_seen_count, ps_done_clear_count;
     integer layer_done_pulse_count;
@@ -447,6 +448,8 @@ module `TB_CONV_ACCEL_CORE_MODULE;
     reg signed [PSUM_W-1:0] bias [0:COUT_TOTAL-1];
     reg signed [PSUM_W-1:0] golden [0:FULL_PIXELS-1][0:COUT_TOTAL-1];
     reg [7:0] ofm_mem [0:OFM_WORDS-1];
+    reg signed [PSUM_W-1:0] final_raw_mem [0:OFM_WORDS-1];
+    reg final_raw_valid [0:OFM_WORDS-1];
     reg [7:0] expected_det_byte;
     reg [7:0] expected_pool_byte;
 `ifdef TB_CONV_ACCEL_CORE_USE_EXTERNAL_GOLDEN
@@ -1033,6 +1036,23 @@ module `TB_CONV_ACCEL_CORE_MODULE;
         end
     end
 
+    always @(posedge clk) begin
+        if (!rst && `TB_DUT_LAYER.final_fifo_valid && `TB_DUT_LAYER.rq_in_ready) begin
+            for (final_raw_lane = 0; final_raw_lane < COUT_TILE; final_raw_lane = final_raw_lane + 1) begin
+                if (`TB_DUT_LAYER.final_fifo_channel_valid[final_raw_lane] &&
+                    (`TB_DUT_LAYER.final_fifo_cout_base + final_raw_lane) < COUT_TOTAL) begin
+                    final_raw_index = (`TB_DUT_LAYER.final_fifo_addr * COUT_TOTAL) +
+                                      `TB_DUT_LAYER.final_fifo_cout_base + final_raw_lane;
+                    if (final_raw_index < OFM_WORDS) begin
+                        final_raw_mem[final_raw_index] <=
+                            $signed(`TB_DUT_LAYER.final_fifo_data[final_raw_lane*PSUM_W +: PSUM_W]);
+                        final_raw_valid[final_raw_index] <= 1'b1;
+                    end
+                end
+            end
+        end
+    end
+
 `ifdef TB_CONV_ACCEL_CORE_USE_AXIS_STREAM
     always @(posedge clk) begin
         if (!rst && ofm_m_axis_tvalid && ofm_m_axis_tready && ofm_m_axis_tlast)
@@ -1218,8 +1238,11 @@ module `TB_CONV_ACCEL_CORE_MODULE;
         progress_last_compute_fire_count = 0;
 `endif
         clear_inputs();
-        for (idx = 0; idx < OFM_WORDS; idx = idx + 1)
+        for (idx = 0; idx < OFM_WORDS; idx = idx + 1) begin
             ofm_mem[idx] = 8'hxx;
+            final_raw_mem[idx] = {PSUM_W{1'bx}};
+            final_raw_valid[idx] = 1'b0;
+        end
 
 `ifdef TB_CONV_ACCEL_CORE_USE_EXTERNAL_GOLDEN
         $readmemh(`TB_CONV_ACCEL_CORE_IFM_MEM, ext_ifm);
@@ -1432,10 +1455,13 @@ module `TB_CONV_ACCEL_CORE_MODULE;
                         expected_det_byte = requant_byte_tb(golden[run_pixel_base + idx][co]);
                     end
                     if (ofm_mem[(run_pixel_base + idx)*COUT_TOTAL + co] !== expected_det_byte) begin
-                        $display("[FAIL] tile%0d pixel%0d global%0d cout%0d got=%0d exp=%0d",
+                        $display("[FAIL] tile%0d pixel%0d global%0d cout%0d got=%0d exp=%0d raw_got=%0d raw_exp=%0d raw_valid=%0d",
                             run_idx, idx, run_pixel_base + idx, co,
                             ofm_mem[(run_pixel_base + idx)*COUT_TOTAL + co],
-                            expected_det_byte);
+                            expected_det_byte,
+                            final_raw_mem[(run_pixel_base + idx)*COUT_TOTAL + co],
+                            golden[run_pixel_base + idx][co],
+                            final_raw_valid[(run_pixel_base + idx)*COUT_TOTAL + co]);
                         fail = fail + 1;
                     end else pass = pass + 1;
 `endif

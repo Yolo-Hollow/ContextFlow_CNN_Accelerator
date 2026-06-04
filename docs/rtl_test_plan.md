@@ -531,11 +531,17 @@ Run the short baseline with:
 powershell -ExecutionPolicy Bypass -File tb/run_short_xsim_regression.ps1
 ```
 
-The script runs `tb_axis_ofm_byte_writer`, the r18_c8 deterministic smoke, the
-r18_c8 Conv0 crop + pool external-golden smoke, AXI-Lite quant/LUT, requant,
-and OFM requant writer tests. Layer06 external golden tests remain
-targeted/nightly because the full-layer case is heavier than the daily smoke
-set.
+The script runs `tb_axis_ofm_byte_writer`, the r18_c8 Conv0 crop + pool
+external-golden smoke, AXI-Lite quant/LUT, requant, and OFM requant writer
+tests. The r18_c8 deterministic smoke is retained as a control-path diagnostic,
+and can be reproduced with `-RunDeterministicDiagnostics`, but core correctness
+for the current KV260 profile should be judged first from the real Conv0
+external-golden fixture. On 2026-06-04,
+`tb_conv_accel_core_axi_lite_axis_stream_conv0_crop_pool_r18_c8_b2_ext`
+passed with `529 pass, 0 fail`; the deterministic fixture reproduced a raw psum
+mismatch after aligning its quant config to `mult=32767, shift=0, zp=0`.
+Layer06 external golden tests remain targeted/nightly because the full-layer
+case is heavier than the daily smoke set.
 
 ## 回归命令
 

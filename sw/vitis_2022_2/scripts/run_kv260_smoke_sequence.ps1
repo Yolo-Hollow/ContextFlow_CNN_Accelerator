@@ -3,7 +3,7 @@ param(
     [int]$BaudRate = 115200,
     [int]$CaptureSeconds = 90,
     [switch]$SkipBit,
-    [switch]$RunConv0
+    [switch]$RunDeterministic
 )
 
 $ErrorActionPreference = "Stop"
@@ -100,12 +100,12 @@ if (!$SkipBit) {
 Write-Host "Available COM ports: $([string]::Join(', ', [System.IO.Ports.SerialPort]::getportnames()))"
 Start-HwServer
 & $Xsct $JtagProbeTcl | Tee-Object -FilePath (Join-Path $LogDir "$Stamp`_jtag_probe.log")
-Run-Smoke "r18_c8" $DetElf (!$SkipBit)
-& $Xsct $ProbeTcl | Tee-Object -FilePath (Join-Path $LogDir "$Stamp`_pl_probe_after_r18_c8.log")
+Run-Smoke "conv0_crop_pool" $Conv0Elf (!$SkipBit)
+& $Xsct $ProbeTcl | Tee-Object -FilePath (Join-Path $LogDir "$Stamp`_pl_probe_after_conv0.log")
 
-if ($RunConv0) {
-    Run-Smoke "conv0_crop_pool" $Conv0Elf $false
-    & $Xsct $ProbeTcl | Tee-Object -FilePath (Join-Path $LogDir "$Stamp`_pl_probe_after_conv0.log")
+if ($RunDeterministic) {
+    Run-Smoke "r18_c8" $DetElf $false
+    & $Xsct $ProbeTcl | Tee-Object -FilePath (Join-Path $LogDir "$Stamp`_pl_probe_after_r18_c8.log")
 }
 
 Write-Host "=== KV260 smoke sequence complete ==="

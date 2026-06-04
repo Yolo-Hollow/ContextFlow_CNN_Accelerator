@@ -118,17 +118,17 @@ maximum OFM debug AXIS capture size.
 
 ## Board smoke sequence
 
-When the KV260 USB/JTAG/UART link is available again, run the deterministic
+When the KV260 USB/JTAG/UART link is available, run the real Conv0 crop + pool
 smoke and register probe from one script:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/run_kv260_smoke_sequence.ps1 -PortName COM8
 ```
 
-To also run the real Conv0 crop + pool smoke after the deterministic test:
+To append the deterministic r18_c8 control-path smoke after Conv0:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/run_kv260_smoke_sequence.ps1 -PortName COM8 -RunConv0
+powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/run_kv260_smoke_sequence.ps1 -PortName COM8 -RunDeterministic
 ```
 
 The script starts `hw_server` if needed, probes JTAG, captures serial logs,
@@ -138,3 +138,7 @@ under:
 ```text
 build_system_xck26_kv260/board_smoke_logs/
 ```
+
+The deterministic smoke is kept as a control/DMA/GPIO diagnostic. Core
+correctness should be judged first from the real Conv0 crop + pool fixture,
+which uses external RTL semantic golden data.

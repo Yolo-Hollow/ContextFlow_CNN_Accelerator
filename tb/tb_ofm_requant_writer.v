@@ -82,6 +82,45 @@ module tb_ofm_requant_writer;
         end
     endtask
 
+    task check_identity_negative;
+        integer lane;
+        begin
+            packet_data = {COLS*2*PSUM_W{1'b0}};
+            mult_flat = {COLS*2*MULT_W{1'b0}};
+            shift_flat = {COLS*2*SHIFT_W{1'b0}};
+            zp_flat = {COLS*2*ZP_W{1'b0}};
+            for (lane = 0; lane < COLS*2; lane = lane + 1) begin
+                packet_data[lane*PSUM_W +: PSUM_W] = (lane[0] ? -32'sd29 : -32'sd128) + lane;
+                mult_flat[lane*MULT_W +: MULT_W] = 16'd32767;
+                shift_flat[lane*SHIFT_W +: SHIFT_W] = 4'd0;
+                zp_flat[lane*ZP_W +: ZP_W] = 8'd0;
+            end
+
+            packet_addr = 4'd2;
+            packet_cout_base = 11'd0;
+            packet_channel_valid = {COLS*2{1'b1}};
+            ofm_ready = 1'b1;
+            wait(packet_ready);
+            @(negedge clk);
+            packet_valid = 1'b1;
+            @(negedge clk);
+            packet_valid = 1'b0;
+
+            wait(ofm_valid);
+            #1;
+            for (lane = 0; lane < COLS*2; lane = lane + 1)
+                check_byte(lane);
+
+            @(posedge clk);
+            @(posedge clk);
+            #1;
+            if (ofm_valid !== 1'b0) begin
+                $display("[FAIL] identity negative valid did not clear");
+                fail = fail + 1;
+            end else pass = pass + 1;
+        end
+    endtask
+
     task make_packet;
         input integer pkt;
         output [ADDR_W-1:0] addr_o;
@@ -310,6 +349,8 @@ module tb_ofm_requant_writer;
             fail = fail + 1;
         end else pass = pass + 1;
 
+        check_identity_negative();
+
         check_back_to_back();
         check_output_backpressure();
 
@@ -319,7 +360,7 @@ module tb_ofm_requant_writer;
     end
 
     initial begin
-        repeat (200) @(negedge clk);
+        repeat (1000) @(negedge clk);
         $display("[FAIL] timeout valid=%0d", ofm_valid);
         $fatal(1);
     end
