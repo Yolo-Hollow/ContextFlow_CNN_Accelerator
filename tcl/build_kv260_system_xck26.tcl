@@ -9,6 +9,11 @@ set project_name conv_accel_ps_dma_minimal
 set bd_name conv_accel_ps_dma
 set board_part xilinx.com:kv260_som:part0:1.4
 set board_connection [list som240_1_connector xilinx.com:kv260_carrier:som240_1_connector:1.3]
+set rows 18
+set cols 8
+set k_tile 18
+set cout_tile 16
+set ifm_banks 2
 set jobs 8
 set synth_only 0
 set reuse_synth 0
@@ -30,6 +35,21 @@ for {set i 0} {$i < [llength $argv]} {incr i} {
     } elseif {$arg eq "-board_connection"} {
         incr i
         set board_connection [lindex $argv $i]
+    } elseif {$arg eq "-rows"} {
+        incr i
+        set rows [lindex $argv $i]
+    } elseif {$arg eq "-cols"} {
+        incr i
+        set cols [lindex $argv $i]
+    } elseif {$arg eq "-k_tile"} {
+        incr i
+        set k_tile [lindex $argv $i]
+    } elseif {$arg eq "-cout_tile"} {
+        incr i
+        set cout_tile [lindex $argv $i]
+    } elseif {$arg eq "-ifm_banks"} {
+        incr i
+        set ifm_banks [lindex $argv $i]
     } elseif {$arg eq "-jobs"} {
         incr i
         set jobs [lindex $argv $i]
@@ -67,6 +87,11 @@ if {$reuse_synth} {
         -bd_name $bd_name \
         -board_part $board_part \
         -board_connection $board_connection \
+        -rows $rows \
+        -cols $cols \
+        -k_tile $k_tile \
+        -cout_tile $cout_tile \
+        -ifm_banks $ifm_banks \
         -generate_targets \
     ]
     source [file join $script_dir create_ps_dma_bd_xck26.tcl]

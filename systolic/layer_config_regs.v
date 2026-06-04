@@ -19,6 +19,7 @@
 //   0x0e DBG_LAST_END: packet count at the most recent TLAST handshake
 //   0x0f IFM_ZP:       [7:0]=input_zero_point for uint8-to-sint8 IFM centering
 //   0x10 POOL_CFG:     bit0=pool_enable, [3:2]=pool_stride, 0/bypass by default
+//   0x11 EXPECTED_BYTES: expected OFM byte-stream payload bytes for TLAST/debug
 module layer_config_regs (
     input  clk,
     input  rst,
@@ -53,7 +54,8 @@ module layer_config_regs (
     output reg [23:0] tile_pixel_base,
     output reg [7:0]  input_zero_point,
     output reg        pool_enable,
-    output reg [1:0]  pool_stride
+    output reg [1:0]  pool_stride,
+    output reg [31:0] expected_bytes
 );
     reg done_sticky;
     wire cfg_idle = !layer_busy;
@@ -78,6 +80,7 @@ module layer_config_regs (
             input_zero_point <= 8'd0;
             pool_enable <= 1'b0;
             pool_stride <= 2'd0;
+            expected_bytes <= 32'd0;
         end else begin
             start_pulse <= 1'b0;
             if (layer_done)
@@ -129,6 +132,7 @@ module layer_config_regs (
                             pool_stride <= cfg_wdata[3:2];
                         end
                     end
+                    6'h11: if (cfg_idle) expected_bytes <= cfg_wdata;
                     default: begin end
                 endcase
             end
@@ -154,6 +158,7 @@ module layer_config_regs (
             6'h0e: cfg_rdata = dbg_last_tlast_index;
             6'h0f: cfg_rdata = {24'd0, input_zero_point};
             6'h10: cfg_rdata = {28'd0, pool_stride, 1'b0, pool_enable};
+            6'h11: cfg_rdata = expected_bytes;
             default: cfg_rdata = 32'd0;
         endcase
     end

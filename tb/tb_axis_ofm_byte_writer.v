@@ -54,7 +54,7 @@ module tb_axis_ofm_byte_writer;
         #1;
         check(!byte_ready, "byte ready follows low AXIS ready");
         check(!m_axis_tvalid, "AXIS valid follows low byte valid");
-        check(m_axis_tkeep == 8'h0f, "AXIS keep marks addr+data bytes");
+        check(m_axis_tkeep == 8'hff, "AXIS keep marks full 64-bit beat");
 
         byte_valid = 1'b1;
         byte_last = 1'b1;

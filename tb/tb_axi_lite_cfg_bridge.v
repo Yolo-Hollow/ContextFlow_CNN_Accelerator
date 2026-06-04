@@ -38,6 +38,7 @@ module tb_axi_lite_cfg_bridge;
     wire [7:0] input_zero_point;
     wire pool_enable;
     wire [1:0] pool_stride;
+    wire [31:0] expected_bytes;
 
     axi_lite_cfg_bridge dut_bridge (
         .clk(clk), .rst(rst),
@@ -65,7 +66,8 @@ module tb_axi_lite_cfg_bridge;
         .tile_oy_base(tile_oy_base), .tile_ofm_h(tile_ofm_h),
         .tile_pixel_base(tile_pixel_base),
         .input_zero_point(input_zero_point),
-        .pool_enable(pool_enable), .pool_stride(pool_stride)
+        .pool_enable(pool_enable), .pool_stride(pool_stride),
+        .expected_bytes(expected_bytes)
     );
 
     always #5 clk = ~clk;

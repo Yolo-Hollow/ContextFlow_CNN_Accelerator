@@ -146,7 +146,7 @@ requant 与输入零点修正后，以下 xsim 回归已经通过：
 - `tb_conv_accel_core_pooling`：core 内部 `Conv -> Requant -> Activation -> Pool -> OFM` directed test。
 - `tb_conv_accel_core_axi_lite_axis_stream_pooling`：pool-enabled AXIS 顶层 TLAST/debug byte counter directed test。
 - `tb_conv_accel_core_axi_lite_axis_stream_conv0_crop_pool_ext`：真实 Conv0 crop 的 `Conv -> LUT -> Pool -> OFM AXIS` external golden test。
-- `tb_conv_accel_core_axi_lite_axis_stream_conv0_crop_pool_r18_c16_b2_ext`：同一份真实 Conv0 crop + pool golden，在当前 BD 默认阵列配置 `ROWS=18, COLS=16, IFM_BANKS=2` 下通过。
+- `tb_conv_accel_core_axi_lite_axis_stream_conv0_crop_pool_r18_c8_b2_ext`：同一份真实 Conv0 crop + pool golden，在当前 BD 默认阵列配置 `ROWS=18, COLS=8, IFM_BANKS=2` 下通过。
 - `tb_conv_accel_core_axi_lite_quant_lut`：AXI-Lite 间接写读 `QUANT_ADDR/DATA` 和 `LUT_ADDR/DATA`，并检查 legacy quant/LUT 端口兼容性。
 - `tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_ext_tile4`：Layer06 小 tile 真实 golden。
 - `tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_ext_tiles`：Layer06 多 spatial tile。
@@ -179,17 +179,17 @@ PS M_AXI_HPM0_FPD
 Vitis 侧当前有两个可构建 smoke ELF：
 
 ```text
-build_vitis_2022_2/conv_accel_r18_c16_smoke/manual_build/conv_accel_r18_c16_smoke.elf
+build_vitis_2022_2/conv_accel_r18_c16_smoke/manual_build/conv_accel_r18_c8_smoke.elf
 build_vitis_2022_2/conv_accel_r18_c16_smoke/manual_build/conv_accel_conv0_crop_pool_smoke.elf
 ```
 
-`conv_accel_r18_c16_smoke.elf` 是旧 deterministic smoke 的更新版，会显式通过 AXI-Lite 写入 identity quant 和 identity LUT。`conv_accel_conv0_crop_pool_smoke.elf` 使用真实 Conv0 crop + pool fixture，按当前 BD 默认配置调度：
+`conv_accel_r18_c8_smoke.elf` 是旧 deterministic smoke 的更新版，会显式通过 AXI-Lite 写入 identity quant、identity LUT 和 `EXPECTED_BYTES`。`conv_accel_conv0_crop_pool_smoke.elf` 使用真实 Conv0 crop + pool fixture，按当前 BD 默认配置调度：
 
 ```text
 ROWS=18
-COLS=16
+COLS=8
 IFM_BANKS=2
-COUT_TILE=32
+COUT_TILE=16
 ```
 
 该 Conv0 fixture 来自外部 golden：
@@ -254,7 +254,7 @@ D:/MPSoC/python_prj
 
 1. 用 KV260 board preset 重新生成包含当前 RTL 的 bitstream/XSA。
 2. 先用 `probe_pl_regs.tcl` 验证 accelerator、DMA、GPIO 和 `0xA0000080..0xA000008c` quant/LUT MMIO 地址可访问。
-3. 上板运行 `conv_accel_r18_c16_smoke.elf`，确认旧 deterministic PS/DMA/GPIO 通路仍可用。
+3. 上板运行 `conv_accel_r18_c8_smoke.elf`，确认旧 deterministic PS/DMA/GPIO 通路仍可用。
 4. 上板运行 `conv_accel_conv0_crop_pool_smoke.elf`，确认真实 Conv0 crop + pool 的 quant/LUT、pool、OFM debug stream 和软件 golden 对比。
 5. 可选增加 AXI VIP BD smoke，目标只验证 BD 地址映射和控制面，不重复 RTL 大规模 golden 验证。
 6. 再扩展到多层单尺度 pipeline。

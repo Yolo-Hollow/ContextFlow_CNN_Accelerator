@@ -1293,6 +1293,7 @@ module `TB_CONV_ACCEL_CORE_MODULE;
         cfg_write(6'h07, `TB_CONV_ACCEL_CORE_ACT_MODE);
         cfg_write(6'h0f, {24'd0, INPUT_ZERO_POINT});
         cfg_write(6'h10, {28'd0, POOL_STRIDE, 1'b0, (POOL_ENABLE != 0)});
+        cfg_write(6'h11, EXPECTED_OFM_WRITES);
         for (run_idx = 0; run_idx < TILE_COUNT; run_idx = run_idx + 1)
             run_tile(run_idx);
 `ifdef TB_CONV_ACCEL_CORE_USE_FULL_STREAM

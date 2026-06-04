@@ -58,6 +58,7 @@ module conv_accel_core #(
     output [8:0]  configured_ofm_w,
     output        configured_pool_enable,
     output [1:0]  configured_pool_stride,
+    output [31:0] configured_expected_bytes,
     input  [31:0] debug_expected_bytes,
     input  [31:0] debug_core_wr_count,
     input  [31:0] debug_axis_wr_count,
@@ -117,6 +118,7 @@ module conv_accel_core #(
     wire [7:0] input_zero_point;
     wire pool_enable;
     wire [1:0] pool_stride;
+    wire [31:0] expected_bytes;
     wire [OFM_ADDR_W-1:0] tile_pixel_base_ext = tile_pixel_base[OFM_ADDR_W-1:0];
     wire [COLS*2*MULT_W-1:0] quant_mult_flat;
     wire [COLS*2*SHIFT_W-1:0] quant_shift_flat;
@@ -143,6 +145,7 @@ module conv_accel_core #(
     assign configured_ofm_w = ofm_w;
     assign configured_pool_enable = pool_enable;
     assign configured_pool_stride = pool_stride;
+    assign configured_expected_bytes = expected_bytes;
     assign quant_rd_data = quant_rd_data_int;
     assign cfg_rdata = (cfg_addr == 6'h20) ? {26'd0, cfg_quant_addr} :
                        (cfg_addr == 6'h21) ? quant_shadow[cfg_quant_addr] :
@@ -188,7 +191,8 @@ module conv_accel_core #(
         .tile_oy_base(tile_oy_base), .tile_ofm_h(tile_ofm_h),
         .tile_pixel_base(tile_pixel_base),
         .input_zero_point(input_zero_point),
-        .pool_enable(pool_enable), .pool_stride(pool_stride)
+        .pool_enable(pool_enable), .pool_stride(pool_stride),
+        .expected_bytes(expected_bytes)
     );
 
     quant_param_regs #(

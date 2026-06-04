@@ -27,6 +27,7 @@
 #define ACCEL_DBG_LAST_END    0x38U
 #define ACCEL_IFM_ZP          0x3cU
 #define ACCEL_POOL_CFG        0x40U
+#define ACCEL_EXPECTED_BYTES  0x44U
 #define ACCEL_QUANT_ADDR      0x80U
 #define ACCEL_QUANT_DATA      0x84U
 #define ACCEL_LUT_ADDR        0x88U
@@ -39,6 +40,8 @@
 #define GPIO_TRI              0x04U
 #define GPIO2_DATA            0x08U
 #define GPIO2_TRI             0x0cU
+
+#define OFM_AXIS_BEAT_BYTES   8U
 
 #define DMA_MM2S_DMACR        0x00U
 #define DMA_MM2S_DMASR        0x04U
@@ -69,7 +72,7 @@
 #define ST_FILL_FY_MASK       (0x1ffU << ST_FILL_FY_SHIFT)
 #define ST_ERROR_MASK         (ST_BIAS_ERR | ST_WEIGHT_ERR | ST_IFM_ERR)
 
-/* Mirrors tb_conv_accel_core_axi_lite_axis_stream_r18_c16_smoke.v. */
+/* Mirrors tb_conv_accel_core_axi_lite_axis_stream_r18_c8_smoke.v. */
 #ifndef ACCEL_SMOKE_REAL_CONV0_CROP_POOL
 #define ACCEL_SMOKE_REAL_CONV0_CROP_POOL 0
 #endif
@@ -77,7 +80,7 @@
 #if ACCEL_SMOKE_REAL_CONV0_CROP_POOL
 
 #define ROWS                  18
-#define COLS                  16
+#define COLS                  8
 #define IFM_BANKS             2
 #define FM_W                  16
 #define FM_H                  8
@@ -107,13 +110,13 @@
 #define QUANT_ZP              69U
 #define EXPECTED_OUTPUT_PIXELS ((OFM_W / 2) * (TILE_OFM_H / 2))
 #define EXPECTED_OFM_BYTES    (EXPECTED_OUTPUT_PIXELS * COUT_TOTAL)
-#define OFM_AXIS_BYTES        (EXPECTED_OFM_BYTES * 4)
+#define OFM_AXIS_BYTES        (EXPECTED_OFM_BYTES * OFM_AXIS_BEAT_BYTES)
 #define SMOKE_NAME            "conv0 crop pool"
 
 #else
 
 #define ROWS                  18
-#define COLS                  16
+#define COLS                  8
 #define IFM_BANKS             2
 #define FM_W                  5
 #define FM_H                  5
@@ -124,7 +127,7 @@
 #define KW                    3
 #define K_TOTAL               (CIN * KH * KW)
 #define COUT_TILE             (COLS * 2)
-#define COUT_TOTAL            20
+#define COUT_TOTAL            16
 #define CONV_PAD              1
 #define CONV_STRIDE           1
 #define TILE_OY_BASE          0
@@ -143,8 +146,8 @@
 #define QUANT_ZP              0U
 #define EXPECTED_OUTPUT_PIXELS TILE_PIXELS
 #define EXPECTED_OFM_BYTES    (TILE_PIXELS * COUT_TOTAL)
-#define OFM_AXIS_BYTES        (EXPECTED_OFM_BYTES * 4)
-#define SMOKE_NAME            "r18_c16"
+#define OFM_AXIS_BYTES        (EXPECTED_OFM_BYTES * OFM_AXIS_BEAT_BYTES)
+#define SMOKE_NAME            "r18_c8"
 
 #endif
 

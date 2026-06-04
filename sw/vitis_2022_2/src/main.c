@@ -30,7 +30,7 @@ static uint8_t ofm_mem[FULL_PIXELS * COUT_TOTAL];
 static uint64_t bias_buf[COUT_TILE / 2] __attribute__((aligned(64)));
 static uint64_t weight_buf[(ROWS * COUT_TILE) / 8] __attribute__((aligned(64)));
 static uint64_t ifm_buf[FM_W] __attribute__((aligned(64)));
-static uint32_t ofm_axis_buf[EXPECTED_OFM_BYTES] __attribute__((aligned(64)));
+static uint64_t ofm_axis_buf[EXPECTED_OFM_BYTES] __attribute__((aligned(64)));
 volatile uint32_t debug_stage = 0;
 volatile uint32_t debug_value = 0;
 
@@ -332,6 +332,33 @@ static int wait_gpio_deassert(uint32_t mask)
     return -1;
 }
 
+static int status_fill_fy(uint32_t status)
+{
+    return (int)((status & ST_FILL_FY_MASK) >> ST_FILL_FY_SHIFT);
+}
+
+static int wait_ifm_request_advance(uint32_t serviced_status)
+{
+    uint32_t serviced_fy = serviced_status & ST_FILL_FY_MASK;
+
+    for (uint32_t i = 0; i < 10000000U; ++i) {
+        uint32_t st = rd32(GPIO_BASE_ADDR, GPIO2_DATA);
+        if ((st & ST_IFM_REQ) == 0U) {
+            return 0;
+        }
+#if USE_GPIO_FILL_FY
+        if ((st & ST_FILL_FY_MASK) != serviced_fy) {
+            return 0;
+        }
+#endif
+    }
+
+    xil_printf("IFM request did not advance, serviced_fy=%d status=0x%08lx\r\n",
+               status_fill_fy(serviced_status),
+               (unsigned long)rd32(GPIO_BASE_ADDR, GPIO2_DATA));
+    return -1;
+}
+
 static int service_bias(void)
 {
     pack_bias();
@@ -358,12 +385,12 @@ static int service_weight(int *next_k_pass, int *active_k_base)
 static int service_ifm(uint32_t status, int active_k_base, int *ifm_row_phase)
 {
 #if USE_GPIO_FILL_FY
-    int fy = (int)((status & ST_FILL_FY_MASK) >> ST_FILL_FY_SHIFT);
+    int fy = status_fill_fy(status);
 #else
     /*
      * Old XSA compatibility path.
      *
-     * The r18_c16 smoke tile computes oy=0..1 with pad=1/stride=1, so every
+     * The r18_c8 smoke tile computes oy=0..1 with pad=1/stride=1, so every
      * K pass needs physical IFM rows 0, 1, 2 in that order. The line scheduler
      * resets its line-valid state at each K pass, and COUT_BLOCKS is 1 here.
      */
@@ -394,16 +421,18 @@ static int parse_ofm(void)
 
     Xil_DCacheInvalidateRange((UINTPTR)ofm_axis_buf, OFM_AXIS_BYTES);
     for (int i = 0; i < 8; ++i) {
-        uint32_t raw = ofm_axis_buf[i];
-        xil_printf("ofm raw[%d]=0x%08lx addr=%lu data=%u\r\n",
+        uint64_t beat = ofm_axis_buf[i];
+        uint32_t raw = (uint32_t)(beat & 0xffffffffULL);
+        xil_printf("ofm raw[%d]=hi=0x%08lx lo=0x%08lx addr=%lu data=%u\r\n",
                    i,
+                   (unsigned long)(uint32_t)(beat >> 32),
                    (unsigned long)raw,
                    (unsigned long)(raw & 0x00ffffffU),
                    (unsigned)((raw >> 24) & 0xffU));
     }
     int parsed = 0;
     for (int i = 0; i < EXPECTED_OFM_BYTES; ++i) {
-        uint32_t raw = ofm_axis_buf[i];
+        uint32_t raw = (uint32_t)(ofm_axis_buf[i] & 0xffffffffULL);
         uint32_t addr = raw & 0x00ffffffU;
         uint8_t data = (uint8_t)((raw >> 24) & 0xffU);
         if (addr >= (FULL_PIXELS * COUT_TOTAL)) {
@@ -475,6 +504,7 @@ static int run_smoke(void)
     wr32(ACCEL_BASE_ADDR, ACCEL_NUM_PIXELS, TILE_PIXELS);
     wr32(ACCEL_BASE_ADDR, ACCEL_TILE_ROWS, ((uint32_t)TILE_OFM_H << 16) | TILE_OY_BASE);
     wr32(ACCEL_BASE_ADDR, ACCEL_PIXEL_BASE, TILE_PIXEL_BASE);
+    wr32(ACCEL_BASE_ADDR, ACCEL_EXPECTED_BYTES, EXPECTED_OFM_BYTES);
     if (program_quant_tile(QUANT_MULT, QUANT_SHIFT, QUANT_ZP) != 0) {
         return -1;
     }
@@ -531,11 +561,12 @@ static int run_smoke(void)
 
         if ((st & ST_IFM_REQ) != 0U) {
             debug_stage = 0x43000000U | (uint32_t)ifm_services;
-            xil_printf("service: ifm %d k_base=%d\r\n", ifm_services, active_k_base);
+            xil_printf("service: ifm %d fy=%d k_base=%d status=0x%08lx\r\n",
+                       ifm_services, status_fill_fy(st), active_k_base, (unsigned long)st);
             if (service_ifm(st, active_k_base, &ifm_row_phase) != 0) {
                 return -1;
             }
-            if (wait_gpio_deassert(ST_IFM_REQ) != 0) {
+            if (wait_ifm_request_advance(st) != 0) {
                 return -1;
             }
             ++ifm_services;
@@ -596,9 +627,9 @@ int main(void)
     debug_stage = 0x02000000U;
     int rc = run_smoke();
     if (rc == 0) {
-        xil_printf("PASS: r18_c16 smoke matches RTL golden\r\n");
+        xil_printf("PASS: r18_c8 smoke matches RTL golden\r\n");
     } else {
-        xil_printf("FAIL: r18_c16 smoke failed\r\n");
+        xil_printf("FAIL: r18_c8 smoke failed\r\n");
     }
 
     return rc;

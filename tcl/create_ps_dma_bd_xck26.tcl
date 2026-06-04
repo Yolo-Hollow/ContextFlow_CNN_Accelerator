@@ -10,9 +10,9 @@ set bd_name conv_accel_ps_dma
 set build_dir [file join $root build_bd_xck26]
 set part xck26-sfvc784-2LV-c
 set rows 18
-set cols 16
+set cols 8
 set k_tile 18
-set cout_tile 32
+set cout_tile 16
 set ifm_banks 2
 set jobs 8
 set board_part ""

@@ -34,6 +34,7 @@ foreach {name addr} {
     dbg_last    0xA0000038
     ifm_zp      0xA000003C
     pool_cfg    0xA0000040
+    expected    0xA0000044
     quant_addr  0xA0000080
     quant_data  0xA0000084
     lut_addr    0xA0000088

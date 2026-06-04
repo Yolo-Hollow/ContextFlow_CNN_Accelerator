@@ -19,6 +19,7 @@ module tb_layer_config_regs;
     wire [7:0] input_zero_point;
     wire pool_enable;
     wire [1:0] pool_stride;
+    wire [31:0] expected_bytes;
 
     layer_config_regs dut (
         .clk(clk), .rst(rst),
@@ -35,7 +36,8 @@ module tb_layer_config_regs;
         .tile_oy_base(tile_oy_base), .tile_ofm_h(tile_ofm_h),
         .tile_pixel_base(tile_pixel_base),
         .input_zero_point(input_zero_point),
-        .pool_enable(pool_enable), .pool_stride(pool_stride)
+        .pool_enable(pool_enable), .pool_stride(pool_stride),
+        .expected_bytes(expected_bytes)
     );
 
     always #5 clk = ~clk;

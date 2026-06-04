@@ -103,6 +103,7 @@ module conv_accel_core_axi_lite_stream #(
     wire [8:0] unused_configured_ofm_w;
     wire unused_configured_pool_enable;
     wire [1:0] unused_configured_pool_stride;
+    wire [31:0] unused_configured_expected_bytes;
 
     bias_weight_stream_loader #(
         .ROWS(ROWS), .COLS(COLS), .PSUM_W(PSUM_W), .WEIGHT_W(WEIGHT_W),
@@ -147,6 +148,7 @@ module conv_accel_core_axi_lite_stream #(
         .configured_ofm_w(unused_configured_ofm_w),
         .configured_pool_enable(unused_configured_pool_enable),
         .configured_pool_stride(unused_configured_pool_stride),
+        .configured_expected_bytes(unused_configured_expected_bytes),
         .debug_expected_bytes(32'd0), .debug_core_wr_count(32'd0),
         .debug_axis_wr_count(32'd0), .debug_tlast_count(32'd0),
         .debug_last_tlast_index(32'd0),

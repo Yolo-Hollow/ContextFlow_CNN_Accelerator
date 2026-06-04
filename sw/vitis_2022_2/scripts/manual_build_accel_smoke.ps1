@@ -1,6 +1,6 @@
 param(
-    [ValidateSet("r18_c16", "conv0_crop_pool")]
-    [string]$Mode = "r18_c16"
+    [ValidateSet("r18_c8", "conv0_crop_pool")]
+    [string]$Mode = "r18_c8"
 )
 
 $ErrorActionPreference = "Stop"

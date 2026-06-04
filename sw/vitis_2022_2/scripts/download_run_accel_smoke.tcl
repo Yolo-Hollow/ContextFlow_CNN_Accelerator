@@ -6,7 +6,7 @@ set workspace [file normalize [file join $root build_vitis_2022_2]]
 set hw_dir [file join $workspace conv_accel_kv260_platform hw]
 set bit_file [file join $hw_dir conv_accel_ps_dma_minimal.bit]
 set psu_init_tcl [file join $hw_dir psu_init.tcl]
-set elf [file join $workspace conv_accel_r18_c16_smoke manual_build conv_accel_r18_c16_smoke.elf]
+set elf [file join $workspace conv_accel_r18_c16_smoke manual_build conv_accel_r18_c8_smoke.elf]
 set fast_run 0
 set skip_bit 0
 

@@ -40,6 +40,7 @@ module tb_conv_accel_core_axi_lite_quant_lut;
     wire [8:0] configured_ofm_w;
     wire configured_pool_enable;
     wire [1:0] configured_pool_stride;
+    wire [31:0] configured_expected_bytes;
 
     reg [5:0] bias_wr_addr;
     reg [31:0] bias_wr_data;
@@ -87,6 +88,7 @@ module tb_conv_accel_core_axi_lite_quant_lut;
         .configured_ofm_w(configured_ofm_w),
         .configured_pool_enable(configured_pool_enable),
         .configured_pool_stride(configured_pool_stride),
+        .configured_expected_bytes(configured_expected_bytes),
         .debug_expected_bytes(32'd0), .debug_core_wr_count(32'd0),
         .debug_axis_wr_count(32'd0), .debug_tlast_count(32'd0),
         .debug_last_tlast_index(32'd0),

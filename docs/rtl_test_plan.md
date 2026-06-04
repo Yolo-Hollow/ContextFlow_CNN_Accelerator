@@ -399,7 +399,7 @@ Current result:
 
 - Crop: source image quantized IFM at `(x=96, y=96, w=16, h=8)`
 - Shape: `16x8x3 -> 16x8x16 -> pool 8x4x16`
-- Array: `ROWS=32, COLS=8, IFM_BANKS=5`
+- Array: `ROWS=18, COLS=8, IFM_BANKS=2`
 - Quant: `mult=18898`, raw `shift=9`, effective shift `24`, output `zp=69`
 - Input zero point: `0`; crop centered range `38..105`, `sat_count=0`
 
