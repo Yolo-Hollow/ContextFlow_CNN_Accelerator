@@ -142,12 +142,15 @@ static int run_single_scale_scheduler_dry_run(void)
         return rc;
     }
 
-    xil_printf("single-scale dry-run: layers=%lu ext_in=%lu fb0=%lu fb1=%lu max_axis=%lu\r\n",
+    xil_printf("single-scale dry-run: layers=%lu ext_in=%lu fb0=%lu fb1=%lu max_axis=%lu max_tile_axis=%lu tiles=%lu blocks=%lu\r\n",
                (unsigned long)summary.layer_count,
                (unsigned long)summary.external_input_bytes,
                (unsigned long)summary.feature_buffer_bytes[0],
                (unsigned long)summary.feature_buffer_bytes[1],
-               (unsigned long)summary.max_ofm_axis_bytes);
+               (unsigned long)summary.max_ofm_axis_bytes,
+               (unsigned long)summary.max_tile_axis_bytes,
+               (unsigned long)summary.total_spatial_tiles,
+               (unsigned long)summary.total_schedule_blocks);
 
     for (uint32_t i = 0U; i < ACCEL_SINGLE_SCALE_LAYER_COUNT; ++i) {
         const accel_single_scale_layer_plan_t *p = schedule[i].plan;
@@ -159,7 +162,7 @@ static int run_single_scale_scheduler_dry_run(void)
         print_single_scale_buffer_id(schedule[i].input_buffer_id);
         xil_printf("->");
         print_single_scale_buffer_id(schedule[i].output_buffer_id);
-        xil_printf(" %lux%lux%u -> %lux%lux%u bytes=%lu kpass=%lu cblk=%lu\r\n",
+        xil_printf(" %lux%lux%u -> %lux%lux%u bytes=%lu tile_h=%lu tiles=%lu tile_axis=%lu kpass=%lu cblk=%lu\r\n",
                    (unsigned long)p->fm_w,
                    (unsigned long)p->fm_h,
                    (unsigned)p->cin,
@@ -167,6 +170,9 @@ static int run_single_scale_scheduler_dry_run(void)
                    (unsigned long)schedule[i].final_h,
                    (unsigned)p->cout_total,
                    (unsigned long)schedule[i].output_bytes,
+                   (unsigned long)schedule[i].max_tile_ofm_h,
+                   (unsigned long)schedule[i].tile_count,
+                   (unsigned long)schedule[i].max_tile_axis_bytes,
                    (unsigned long)p->k_passes,
                    (unsigned long)p->cout_blocks);
     }
@@ -578,6 +584,18 @@ static int run_smoke(void)
     int ifm_services = 0;
     int ifm_row_phase = 0;
     int done_seen = 0;
+    uint32_t dbg_core_base;
+    uint32_t dbg_axis_base;
+    uint32_t dbg_tlast_base;
+    uint32_t dbg_last_base;
+    uint32_t dbg_core_now;
+    uint32_t dbg_axis_now;
+    uint32_t dbg_tlast_now;
+    uint32_t dbg_last_now;
+    uint32_t dbg_core_delta;
+    uint32_t dbg_axis_delta;
+    uint32_t dbg_tlast_delta;
+    uint32_t dbg_last_delta;
 
     debug_stage = 0x10000000U;
     xil_printf("stage: dma reset\r\n");
@@ -616,6 +634,11 @@ static int run_smoke(void)
                (unsigned long)rd32(ACCEL_BASE_ADDR, ACCEL_NUM_PIXELS),
                (unsigned long)rd32(ACCEL_BASE_ADDR, ACCEL_TILE_ROWS),
                (unsigned long)rd32(ACCEL_BASE_ADDR, ACCEL_PIXEL_BASE));
+
+    dbg_core_base = rd32(ACCEL_BASE_ADDR, ACCEL_DBG_CORE_WR);
+    dbg_axis_base = rd32(ACCEL_BASE_ADDR, ACCEL_DBG_AXIS_WR);
+    dbg_tlast_base = rd32(ACCEL_BASE_ADDR, ACCEL_DBG_TLASTS);
+    dbg_last_base = rd32(ACCEL_BASE_ADDR, ACCEL_DBG_LAST_END);
 
     dma_start_s2mm(DMA_OFM_BASE_ADDR, active_runtime.ofm_axis_buf, active_runtime.ofm_axis_bytes);
     debug_stage = 0x30000000U;
@@ -684,12 +707,35 @@ static int run_smoke(void)
     if (dma_wait(DMA_OFM_BASE_ADDR, DMA_S2MM_DMASR, "ofm S2MM") != 0) {
         return -1;
     }
+    dbg_core_now = rd32(ACCEL_BASE_ADDR, ACCEL_DBG_CORE_WR);
+    dbg_axis_now = rd32(ACCEL_BASE_ADDR, ACCEL_DBG_AXIS_WR);
+    dbg_tlast_now = rd32(ACCEL_BASE_ADDR, ACCEL_DBG_TLASTS);
+    dbg_last_now = rd32(ACCEL_BASE_ADDR, ACCEL_DBG_LAST_END);
+    dbg_core_delta = dbg_core_now - dbg_core_base;
+    dbg_axis_delta = dbg_axis_now - dbg_axis_base;
+    dbg_tlast_delta = dbg_tlast_now - dbg_tlast_base;
+    dbg_last_delta = dbg_last_now - dbg_last_base;
+
     xil_printf("ofm debug: expected=%lu core_wr=%lu axis_wr=%lu tlast=%lu last_end=%lu\r\n",
                (unsigned long)rd32(ACCEL_BASE_ADDR, ACCEL_DBG_EXPECTED),
-               (unsigned long)rd32(ACCEL_BASE_ADDR, ACCEL_DBG_CORE_WR),
-               (unsigned long)rd32(ACCEL_BASE_ADDR, ACCEL_DBG_AXIS_WR),
-               (unsigned long)rd32(ACCEL_BASE_ADDR, ACCEL_DBG_TLASTS),
-               (unsigned long)rd32(ACCEL_BASE_ADDR, ACCEL_DBG_LAST_END));
+               (unsigned long)dbg_core_now,
+               (unsigned long)dbg_axis_now,
+               (unsigned long)dbg_tlast_now,
+               (unsigned long)dbg_last_now);
+    xil_printf("ofm debug delta: core_wr=%lu axis_wr=%lu tlast=%lu last_end=%lu\r\n",
+               (unsigned long)dbg_core_delta,
+               (unsigned long)dbg_axis_delta,
+               (unsigned long)dbg_tlast_delta,
+               (unsigned long)dbg_last_delta);
+    if (dbg_core_delta != active_layer.expected_ofm_bytes ||
+        dbg_axis_delta != active_layer.expected_ofm_bytes ||
+        dbg_tlast_delta != 1U ||
+        dbg_last_delta != active_layer.expected_ofm_bytes) {
+        xil_printf("Unexpected OFM debug delta\r\n");
+        debug_stage = 0xe6000000U;
+        debug_value = dbg_axis_delta;
+        return -1;
+    }
     debug_stage = 0x50000000U;
     wr32(ACCEL_BASE_ADDR, ACCEL_CTRL, 2U);
 

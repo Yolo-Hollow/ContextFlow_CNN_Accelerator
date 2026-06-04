@@ -269,23 +269,28 @@ D:/MPSoC/python_prj
 - 小规模确定性测试和小 tile 真实数据测试作为日常回归。
 - 论文、Vitis、workspace 和 RTL 改动分开提交，避免互相混杂。
 
-## 10. 离线单尺度 Pipeline 准备状态
+## 10. 单尺度 Pipeline 准备状态
 
-在开发板暂时不在手边的情况下，离线网络级准备已经推进到以下状态：
+离线网络级准备和 KV260 上板 smoke 已经推进到以下状态：
 
 - 当前 KV260 日常基线固定为 `ROWS=18, COLS=8, IFM_BANKS=2, COUT_TILE=16`。
 - 单尺度 layer list 已固化在 `tools/golden/single_scale_yolov3tiny_layers.json`，覆盖 Conv0 到 13x13 单尺度检测头的 10 个硬件卷积候选层。
 - 多层 RTL semantic golden exporter 已加入 `tools/golden/export_rtl_single_scale_golden.py`，默认输出到外部 `D:/MPSoC/python_prj/rtl_golden/facemask_single_scale_rtl`，不把大 binary dump 写入 RTL 仓库。
+- 单尺度调度 cross-check 已加入 `tools/golden/verify_single_scale_schedule.py`，用于对齐 JSON layer spec 与 Vitis C plan，并复算 shape、K pass、COUT block、feature buffer、spatial tile、schedule block 和最大 AXIS capture。
 - Vitis smoke 已加入 descriptor/scheduler dry-run：`accel_layer_desc_t` 描述单层运行参数，`accel_single_scale_plan` 记录 10 层单尺度调度表，`accel_single_scale_scheduler.h` 在启动时检查 shape 链接、K pass、COUT block、expected bytes 和 ping-pong feature buffer 分配；当前 smoke 仍一次运行一个 descriptor。
 - 短回归入口为 `tb/run_short_xsim_regression.ps1`，核心通过标准优先使用 Conv0 crop + pool r18_c8 external golden；r18_c8 deterministic 作为控制面/诊断 smoke，不再单独代表核心正确性。
 - 板子恢复后的入口为 `sw/vitis_2022_2/scripts/run_kv260_smoke_sequence.ps1`，流程为 JTAG probe -> bit/ELF download -> UART capture -> PL register probe；默认先跑真实 Conv0 crop + pool，若需要追加旧 deterministic 诊断则使用 `-RunDeterministic`。
+- 板子未断电且 PL 已确认烧录后，软件端迭代可使用 `run_kv260_smoke_sequence.ps1 -FastRun`，该路径保留当前 PS/PL 初始化，只 reset A53 并下载 ELF；若重新上电、PL 指示灯异常或 DMA reset 卡在首个 MMIO 访问，应改用完整 bitstream 烧录流程。
 
 已完成的离线验证：
 
 - `export_rtl_single_scale_golden.py --metadata-only` 已对 10 层全部跑通，全部 `sat_count=0`。
+- `verify_single_scale_schedule.py` 已通过，当前摘要为 `layers=10, ext_in=519168, fb0=692224, fb1=346112, max_axis=5537792, max_tile_axis=851968, tiles=112, blocks=568`。
 - 单尺度检测头映射已修正为 `1.model.20.m.1.weight`，输出 shape 为 `13x13x24`，预计输出 `4056` bytes。
 - 两个 Vitis manual ELF 构建通过：`conv_accel_r18_c8_smoke.elf` 和 `conv_accel_conv0_crop_pool_smoke.elf`。
 - 两个 ELF 启动路径均已接入 10 层 scheduler dry-run，编译期覆盖 deterministic 与 Conv0 crop + pool 两种模式。
 - `tb/run_short_xsim_regression.ps1` 已通过。
 - 2026-06-04 上板 deterministic r18_c8 smoke 已复现 mismatch；同配置 xsim 在对齐 `mult=32767, shift=0, zp=0` 后可复现 raw psum mismatch，因此该 fixture 暂作为诊断项处理。
 - 2026-06-04 离线复跑 `tb_conv_accel_core_axi_lite_axis_stream_conv0_crop_pool_r18_c8_b2_ext` 通过，结果为 `529 pass, 0 fail`，说明当前 r18_c8 真实 Conv0 crop + pool external-golden 路径仍可作为核心正确性依据。
+- 2026-06-04 KV260 重新上电后完整烧录 bitstream 并运行 `conv_accel_conv0_crop_pool_smoke.elf` 通过，日志为 `build_system_xck26_kv260/board_smoke_logs/20260604_211655_conv0_crop_pool_COM8.log`；OFM debug 计数为 `expected=512, core_wr=512, axis_wr=512, tlast=1, last_end=512`，软件解析 `512/512` bytes，golden 对比 `0 mismatch`。
+- 2026-06-04 `-FastRun` 软件迭代路径已验证通过，日志为 `build_system_xck26_kv260/board_smoke_logs/20260604_213526_conv0_crop_pool_COM8.log`；硬件 debug counter 绝对值会跨 fast run 累加，但软件已打印并校验本次 delta：`core_wr=512, axis_wr=512, tlast=1, last_end=512`。

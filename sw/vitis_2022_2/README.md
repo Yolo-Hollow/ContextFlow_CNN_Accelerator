@@ -139,6 +139,19 @@ under:
 build_system_xck26_kv260/board_smoke_logs/
 ```
 
+For fast software-only iteration after the bitstream has already been
+programmed and the board has not been power-cycled, use `-FastRun`. This keeps
+the current PS/PL initialization and only resets the A53 before downloading the
+ELF:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/run_kv260_smoke_sequence.ps1 -PortName COM8 -FastRun
+```
+
+If the board was power-cycled, the PL indicator suggests no programmed logic, or
+DMA reset stalls at the first MMIO access, rerun the full sequence without
+`-FastRun` or `-SkipBit` so the bitstream is programmed again.
+
 The deterministic smoke is kept as a control/DMA/GPIO diagnostic. Core
 correctness should be judged first from the real Conv0 crop + pool fixture,
 which uses external RTL semantic golden data.

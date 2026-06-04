@@ -3,6 +3,7 @@ param(
     [int]$BaudRate = 115200,
     [int]$CaptureSeconds = 90,
     [switch]$SkipBit,
+    [switch]$FastRun,
     [switch]$RunDeterministic
 )
 
@@ -70,12 +71,14 @@ function Start-SerialCapture($Name) {
     }
 }
 
-function Run-Smoke($Name, $Elf, [bool]$ProgramBit) {
+function Run-Smoke($Name, $Elf, [bool]$ProgramBit, [bool]$UseFastRun) {
     Ensure-Tool $Elf "$Name ELF"
     $capture = Start-SerialCapture $Name
     Start-Sleep -Seconds 2
     $args = @($DownloadTcl, "-elf", $Elf, "-bit_file", $BitFile)
-    if (!$ProgramBit) {
+    if ($UseFastRun) {
+        $args += "-fast"
+    } elseif (!$ProgramBit) {
         $args += "-skip_bit"
     }
     & $Xsct @args
@@ -93,18 +96,18 @@ Ensure-Tool $HwServer "hw_server"
 Ensure-Tool $DownloadTcl "download script"
 Ensure-Tool $ProbeTcl "probe script"
 Ensure-Tool $JtagProbeTcl "JTAG probe script"
-if (!$SkipBit) {
+if (!$SkipBit -and !$FastRun) {
     Ensure-Tool $BitFile "bitstream"
 }
 
 Write-Host "Available COM ports: $([string]::Join(', ', [System.IO.Ports.SerialPort]::getportnames()))"
 Start-HwServer
 & $Xsct $JtagProbeTcl | Tee-Object -FilePath (Join-Path $LogDir "$Stamp`_jtag_probe.log")
-Run-Smoke "conv0_crop_pool" $Conv0Elf (!$SkipBit)
+Run-Smoke "conv0_crop_pool" $Conv0Elf (!$SkipBit -and !$FastRun) $FastRun
 & $Xsct $ProbeTcl | Tee-Object -FilePath (Join-Path $LogDir "$Stamp`_pl_probe_after_conv0.log")
 
 if ($RunDeterministic) {
-    Run-Smoke "r18_c8" $DetElf $false
+    Run-Smoke "r18_c8" $DetElf $false $FastRun
     & $Xsct $ProbeTcl | Tee-Object -FilePath (Join-Path $LogDir "$Stamp`_pl_probe_after_r18_c8.log")
 }
 

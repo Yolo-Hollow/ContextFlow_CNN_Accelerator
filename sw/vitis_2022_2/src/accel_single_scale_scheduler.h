@@ -21,6 +21,12 @@ typedef struct {
     uint32_t tile_ofm_h;
     uint32_t tile_pixel_base;
     uint32_t tile_pixels;
+    uint32_t tile_count;
+    uint32_t max_tile_ofm_h;
+    uint32_t max_tile_pixels;
+    uint32_t max_tile_output_pixels;
+    uint32_t max_tile_ofm_bytes;
+    uint32_t max_tile_axis_bytes;
     uint32_t expected_output_pixels;
     uint32_t input_buffer_id;
     uint32_t output_buffer_id;
@@ -31,7 +37,10 @@ typedef struct {
     uint32_t external_input_bytes;
     uint32_t feature_buffer_bytes[2];
     uint32_t max_ofm_axis_bytes;
+    uint32_t max_tile_axis_bytes;
     uint32_t total_output_bytes;
+    uint32_t total_spatial_tiles;
+    uint32_t total_schedule_blocks;
 } accel_single_scale_schedule_summary_t;
 
 static uint32_t accel_ceil_div_u32(uint32_t value, uint32_t divisor)
@@ -58,6 +67,10 @@ static int accel_single_scale_make_layer_schedule(
     uint32_t input_bytes;
     uint32_t output_bytes;
     uint32_t expected_pixels;
+    uint32_t max_tile_h;
+    uint32_t tile_count;
+    uint32_t last_tile_h;
+    uint32_t max_tile_output_pixels;
 
     if (layer == 0 || schedule == 0) {
         return -1;
@@ -103,6 +116,9 @@ static int accel_single_scale_make_layer_schedule(
     if (layer->cout_blocks != accel_ceil_div_u32(layer->cout_total, ACCEL_SINGLE_SCALE_COUT_TILE)) {
         return -15;
     }
+    if (ACCEL_SINGLE_SCALE_MAX_TILE_OFM_H == 0U) {
+        return -16;
+    }
 
     if (layer_index > 0U) {
         if (prev == 0) {
@@ -114,6 +130,31 @@ static int accel_single_scale_make_layer_schedule(
         }
     }
 
+    max_tile_h = ACCEL_SINGLE_SCALE_MAX_TILE_OFM_H;
+    if (layer->pool_enable != 0U) {
+        if ((max_tile_h % layer->pool_stride) != 0U) {
+            max_tile_h -= (max_tile_h % layer->pool_stride);
+        }
+        if (max_tile_h == 0U) {
+            return -30;
+        }
+    }
+    if (max_tile_h > conv_h) {
+        max_tile_h = conv_h;
+    }
+
+    tile_count = accel_ceil_div_u32(conv_h, max_tile_h);
+    last_tile_h = conv_h - ((tile_count - 1U) * max_tile_h);
+    if (layer->pool_enable != 0U && (last_tile_h % layer->pool_stride) != 0U) {
+        return -31;
+    }
+
+    max_tile_output_pixels = conv_w * max_tile_h;
+    if (layer->pool_enable != 0U) {
+        max_tile_output_pixels = (conv_w / layer->pool_stride) *
+                                 (max_tile_h / layer->pool_stride);
+    }
+
     schedule->plan = layer;
     schedule->conv_w = conv_w;
     schedule->conv_h = conv_h;
@@ -123,9 +164,15 @@ static int accel_single_scale_make_layer_schedule(
     schedule->output_bytes = output_bytes;
     schedule->ofm_axis_bytes = output_bytes * OFM_AXIS_BEAT_BYTES;
     schedule->tile_oy_base = 0U;
-    schedule->tile_ofm_h = conv_h;
+    schedule->tile_ofm_h = max_tile_h;
     schedule->tile_pixel_base = 0U;
-    schedule->tile_pixels = conv_w * conv_h;
+    schedule->tile_pixels = conv_w * max_tile_h;
+    schedule->tile_count = tile_count;
+    schedule->max_tile_ofm_h = max_tile_h;
+    schedule->max_tile_pixels = conv_w * max_tile_h;
+    schedule->max_tile_output_pixels = max_tile_output_pixels;
+    schedule->max_tile_ofm_bytes = max_tile_output_pixels * (uint32_t)layer->cout_total;
+    schedule->max_tile_axis_bytes = schedule->max_tile_ofm_bytes * OFM_AXIS_BEAT_BYTES;
     schedule->expected_output_pixels = expected_pixels;
     schedule->input_buffer_id = (layer_index == 0U) ?
         ACCEL_SINGLE_SCALE_BUFFER_EXTERNAL : prev->output_buffer_id;
@@ -165,7 +212,10 @@ static int accel_single_scale_dry_run(
     summary->feature_buffer_bytes[0] = 0U;
     summary->feature_buffer_bytes[1] = 0U;
     summary->max_ofm_axis_bytes = 0U;
+    summary->max_tile_axis_bytes = 0U;
     summary->total_output_bytes = 0U;
+    summary->total_spatial_tiles = 0U;
+    summary->total_schedule_blocks = 0U;
 
     for (i = 0U; i < ACCEL_SINGLE_SCALE_LAYER_COUNT; ++i) {
         const accel_single_scale_layer_schedule_t *prev = (i == 0U) ? 0 : &schedule[i - 1U];
@@ -187,7 +237,13 @@ static int accel_single_scale_dry_run(
         if (schedule[i].ofm_axis_bytes > summary->max_ofm_axis_bytes) {
             summary->max_ofm_axis_bytes = schedule[i].ofm_axis_bytes;
         }
+        if (schedule[i].max_tile_axis_bytes > summary->max_tile_axis_bytes) {
+            summary->max_tile_axis_bytes = schedule[i].max_tile_axis_bytes;
+        }
         summary->total_output_bytes += schedule[i].output_bytes;
+        summary->total_spatial_tiles += schedule[i].tile_count;
+        summary->total_schedule_blocks += schedule[i].tile_count *
+                                          schedule[i].plan->cout_blocks;
     }
 
     return 0;

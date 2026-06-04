@@ -61,6 +61,16 @@ Limit export to selected infer indices or names:
 C:\Users\hp\.conda\envs\pytorch_env\python.exe tools\golden\export_rtl_single_scale_golden.py --layers 3,6,head_detect_conv9_1x1
 ```
 
+Verify that the JSON layer spec and Vitis C scheduler plan still match:
+
+```powershell
+python tools\golden\verify_single_scale_schedule.py
+```
+
+The verifier recalculates shape transitions, K passes, COUT blocks, feature
+buffer sizes, spatial tile counts, and maximum OFM AXIS capture sizes. It should
+match the scheduler dry-run summary printed by the Vitis smoke ELF.
+
 The exporter writes per-layer `manifest.json` files with shape, quant,
 `sat_count`, expected bytes, K/COUT scheduling counts, and PyTorch-reference
 mismatch statistics when a comparable PyTorch layer output exists. The RTL
