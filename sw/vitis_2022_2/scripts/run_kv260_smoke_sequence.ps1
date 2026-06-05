@@ -4,6 +4,7 @@ param(
     [int]$CaptureSeconds = 90,
     [switch]$SkipBit,
     [switch]$FastRun,
+    [switch]$RunConv0Tiles,
     [switch]$RunDeterministic
 )
 
@@ -18,6 +19,7 @@ $LogDir = Join-Path $BuildDir "board_smoke_logs"
 $BitFile = Join-Path $BuildDir "conv_accel_ps_dma_minimal\conv_accel_ps_dma_minimal.runs\impl_1\conv_accel_ps_dma_wrapper.bit"
 $DetElf = Join-Path $Root "build_vitis_2022_2\conv_accel_r18_c16_smoke\manual_build\conv_accel_r18_c8_smoke.elf"
 $Conv0Elf = Join-Path $Root "build_vitis_2022_2\conv_accel_r18_c16_smoke\manual_build\conv_accel_conv0_crop_pool_smoke.elf"
+$Conv0TilesElf = Join-Path $Root "build_vitis_2022_2\conv_accel_r18_c16_smoke\manual_build\conv_accel_conv0_crop_pool_tiles_smoke.elf"
 $DownloadTcl = Join-Path $ScriptDir "download_run_accel_smoke.tcl"
 $ProbeTcl = Join-Path $ScriptDir "probe_pl_regs.tcl"
 $JtagProbeTcl = Join-Path $ScriptDir "probe_jtag_targets.tcl"
@@ -103,8 +105,13 @@ if (!$SkipBit -and !$FastRun) {
 Write-Host "Available COM ports: $([string]::Join(', ', [System.IO.Ports.SerialPort]::getportnames()))"
 Start-HwServer
 & $Xsct $JtagProbeTcl | Tee-Object -FilePath (Join-Path $LogDir "$Stamp`_jtag_probe.log")
-Run-Smoke "conv0_crop_pool" $Conv0Elf (!$SkipBit -and !$FastRun) $FastRun
-& $Xsct $ProbeTcl | Tee-Object -FilePath (Join-Path $LogDir "$Stamp`_pl_probe_after_conv0.log")
+if ($RunConv0Tiles) {
+    Run-Smoke "conv0_crop_pool_tiles" $Conv0TilesElf (!$SkipBit -and !$FastRun) $FastRun
+    & $Xsct $ProbeTcl | Tee-Object -FilePath (Join-Path $LogDir "$Stamp`_pl_probe_after_conv0_tiles.log")
+} else {
+    Run-Smoke "conv0_crop_pool" $Conv0Elf (!$SkipBit -and !$FastRun) $FastRun
+    & $Xsct $ProbeTcl | Tee-Object -FilePath (Join-Path $LogDir "$Stamp`_pl_probe_after_conv0.log")
+}
 
 if ($RunDeterministic) {
     Run-Smoke "r18_c8" $DetElf $false $FastRun

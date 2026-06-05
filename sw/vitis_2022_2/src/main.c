@@ -82,6 +82,26 @@ static const accel_layer_runtime_t active_runtime = {
     .ofm_axis_bytes = OFM_AXIS_BYTES,
 };
 
+typedef struct {
+    const char *name;
+    uint32_t tile_oy_base;
+    uint32_t tile_ofm_h;
+    uint32_t tile_pixel_base;
+    uint32_t tile_pixels;
+    uint32_t expected_output_pixels;
+    uint32_t expected_ofm_bytes;
+} smoke_tile_desc_t;
+
+static const smoke_tile_desc_t smoke_tiles[SMOKE_TILE_COUNT] = {
+#if ACCEL_SMOKE_CONV0_CROP_POOL_TILES
+    {"tile0", 0U, 4U, 0U, 16U * 4U, 8U * 2U, 8U * 2U * 16U},
+    {"tile1", 4U, 4U, 16U, 16U * 4U, 8U * 2U, 8U * 2U * 16U},
+#else
+    {"tile0", TILE_OY_BASE, TILE_OFM_H, TILE_PIXEL_BASE,
+     TILE_PIXELS, EXPECTED_OUTPUT_PIXELS, EXPECTED_OFM_BYTES},
+#endif
+};
+
 static void uart_putc_one(uint32_t base, char c)
 {
     for (uint32_t i = 0; i < 100000U; ++i) {
@@ -465,6 +485,26 @@ static int wait_ifm_request_advance(uint32_t serviced_status)
     return -1;
 }
 
+#if ACCEL_SMOKE_REAL_CONV0_CROP_POOL
+static uint32_t expected_ifm_services_for_tile(const smoke_tile_desc_t *tile)
+{
+    int first_fy = (int)tile->tile_oy_base * CONV_STRIDE - CONV_PAD;
+    int last_fy = ((int)tile->tile_oy_base + (int)tile->tile_ofm_h - 1) * CONV_STRIDE +
+                  (KH - 1) - CONV_PAD;
+
+    if (first_fy < 0) {
+        first_fy = 0;
+    }
+    if (last_fy >= FM_H) {
+        last_fy = FM_H - 1;
+    }
+    if (last_fy < first_fy) {
+        return 0U;
+    }
+    return (uint32_t)(last_fy - first_fy + 1) * K_PASSES * COUT_BLOCKS;
+}
+#endif
+
 static int service_bias(void)
 {
     pack_bias();
@@ -519,63 +559,75 @@ static int service_ifm(uint32_t status, int active_k_base, int *ifm_row_phase)
     return 0;
 }
 
-static int parse_ofm(void)
+static void clear_ofm_mem(void)
 {
     for (int i = 0; i < FULL_PIXELS * COUT_TOTAL; ++i) {
         ofm_mem[i] = 0xeeU;
     }
+}
 
-    Xil_DCacheInvalidateRange((UINTPTR)ofm_axis_buf, OFM_AXIS_BYTES);
-    for (int i = 0; i < 8; ++i) {
+static int parse_ofm_tile(const smoke_tile_desc_t *tile)
+{
+    Xil_DCacheInvalidateRange((UINTPTR)ofm_axis_buf,
+                              tile->expected_ofm_bytes * OFM_AXIS_BEAT_BYTES);
+    for (uint32_t i = 0U; i < 8U && i < tile->expected_ofm_bytes; ++i) {
         uint64_t beat = ofm_axis_buf[i];
         uint32_t raw = (uint32_t)(beat & 0xffffffffULL);
-        xil_printf("ofm raw[%d]=hi=0x%08lx lo=0x%08lx addr=%lu data=%u\r\n",
-                   i,
+        xil_printf("%s ofm raw[%lu]=hi=0x%08lx lo=0x%08lx addr=%lu data=%u\r\n",
+                   tile->name,
+                   (unsigned long)i,
                    (unsigned long)(uint32_t)(beat >> 32),
                    (unsigned long)raw,
                    (unsigned long)(raw & 0x00ffffffU),
                    (unsigned)((raw >> 24) & 0xffU));
     }
-    int parsed = 0;
-    for (int i = 0; i < EXPECTED_OFM_BYTES; ++i) {
+    uint32_t parsed = 0U;
+    for (uint32_t i = 0U; i < tile->expected_ofm_bytes; ++i) {
         uint32_t raw = (uint32_t)(ofm_axis_buf[i] & 0xffffffffULL);
         uint32_t addr = raw & 0x00ffffffU;
         uint8_t data = (uint8_t)((raw >> 24) & 0xffU);
         if (addr >= (FULL_PIXELS * COUT_TOTAL)) {
-            xil_printf("Bad OFM packet %d addr=%lu data=%u\r\n",
-                       i, (unsigned long)addr, data);
+            xil_printf("Bad OFM packet %s index=%lu addr=%lu data=%u\r\n",
+                       tile->name, (unsigned long)i, (unsigned long)addr, data);
             return -1;
         }
         ofm_mem[addr] = data;
         ++parsed;
     }
-    xil_printf("ofm parsed=%d expected=%d\r\n", parsed, EXPECTED_OFM_BYTES);
+    xil_printf("%s ofm parsed=%lu expected=%lu\r\n",
+               tile->name, (unsigned long)parsed, (unsigned long)tile->expected_ofm_bytes);
+    return 0;
+}
 
-    for (int idx = 0; idx < EXPECTED_OUTPUT_PIXELS; ++idx) {
-        int global_pixel = TILE_PIXEL_BASE + idx;
+static int compare_ofm(void)
+{
+    for (int idx = 0; idx < TOTAL_OUTPUT_PIXELS; ++idx) {
         for (int co = 0; co < COUT_TOTAL; ++co) {
-            uint8_t got = ofm_mem[global_pixel * COUT_TOTAL + co];
+            uint8_t got = ofm_mem[idx * COUT_TOTAL + co];
 #if ACCEL_SMOKE_REAL_CONV0_CROP_POOL
             uint8_t exp = active_layer.golden_ofm_u8[idx * COUT_TOTAL + co];
 #else
-            uint8_t exp = clamp8(golden[global_pixel][co]);
+            uint8_t exp = clamp8(golden[idx][co]);
 #endif
             if (got != exp) {
                 xil_printf("Mismatch pixel=%d cout=%d got=%u exp=%u raw=%ld\r\n",
-                           global_pixel, co, got, exp,
+                           idx, co, got, exp,
 #if ACCEL_SMOKE_REAL_CONV0_CROP_POOL
                            (long)exp);
 #else
-                           (long)golden[global_pixel][co]);
+                           (long)golden[idx][co]);
 #endif
                 return -1;
             }
         }
     }
+    xil_printf("ofm full compare=%lu bytes\r\n", (unsigned long)TOTAL_EXPECTED_OFM_BYTES);
     return 0;
 }
 
-static int run_smoke(void)
+static int run_one_tile(const smoke_tile_desc_t *tile, uint32_t tile_index,
+                        int *total_bias_services, int *total_weight_services,
+                        int *total_ifm_services)
 {
     int k_pass = 0;
     int active_k_base = 0;
@@ -597,52 +649,36 @@ static int run_smoke(void)
     uint32_t dbg_tlast_delta;
     uint32_t dbg_last_delta;
 
-    debug_stage = 0x10000000U;
-    xil_printf("stage: dma reset\r\n");
-    dma_reset_named("bias", DMA_BIAS_BASE_ADDR, DMA_MM2S_DMACR, DMA_MM2S_DMASR);
-    dma_reset_named("weight", DMA_WEIGHT_BASE_ADDR, DMA_MM2S_DMACR, DMA_MM2S_DMASR);
-    dma_reset_named("ifm", DMA_IFM_BASE_ADDR, DMA_MM2S_DMACR, DMA_MM2S_DMASR);
-    dma_reset_named("ofm", DMA_OFM_BASE_ADDR, DMA_S2MM_DMACR, DMA_S2MM_DMASR);
-    xil_printf("stage: dma reset done\r\n");
+    debug_stage = 0x30000000U | tile_index;
+    xil_printf("tile[%lu] %s config oy=%lu h=%lu pixel_base=%lu pixels=%lu expected=%lu\r\n",
+               (unsigned long)tile_index,
+               tile->name,
+               (unsigned long)tile->tile_oy_base,
+               (unsigned long)tile->tile_ofm_h,
+               (unsigned long)tile->tile_pixel_base,
+               (unsigned long)tile->tile_pixels,
+               (unsigned long)tile->expected_ofm_bytes);
 
-    wr32(GPIO_BASE_ADDR, GPIO_TRI, 0x00000000U);
-    wr32(GPIO_BASE_ADDR, GPIO2_TRI, 0x0000ffffU);
-    wr32(GPIO_BASE_ADDR, GPIO_DATA, FM_W);
-
-    debug_stage = 0x20000000U;
-    xil_printf("stage: config regs\r\n");
-    wr32(ACCEL_BASE_ADDR, ACCEL_FM_SIZE, (active_layer.fm_w << 16) | active_layer.fm_h);
-    wr32(ACCEL_BASE_ADDR, ACCEL_OFM_SIZE, (active_layer.ofm_w << 16) | active_layer.ofm_h);
-    wr32(ACCEL_BASE_ADDR, ACCEL_CONV, (active_layer.conv_pad << 8) | active_layer.conv_stride);
-    wr32(ACCEL_BASE_ADDR, ACCEL_K_TOTAL, active_layer.k_total);
-    wr32(ACCEL_BASE_ADDR, ACCEL_COUT_TOTAL, active_layer.cout_total);
-    wr32(ACCEL_BASE_ADDR, ACCEL_ACT_CFG, active_layer.act_mode);
-    wr32(ACCEL_BASE_ADDR, ACCEL_IFM_ZP, active_layer.input_zero_point);
-    wr32(ACCEL_BASE_ADDR, ACCEL_POOL_CFG, (active_layer.pool_stride << 2) | active_layer.pool_enable);
-    wr32(ACCEL_BASE_ADDR, ACCEL_NUM_PIXELS, active_layer.tile_pixels);
-    wr32(ACCEL_BASE_ADDR, ACCEL_TILE_ROWS, (active_layer.tile_ofm_h << 16) | active_layer.tile_oy_base);
-    wr32(ACCEL_BASE_ADDR, ACCEL_PIXEL_BASE, active_layer.tile_pixel_base);
-    wr32(ACCEL_BASE_ADDR, ACCEL_EXPECTED_BYTES, active_layer.expected_ofm_bytes);
-    if (program_quant_tile(active_layer.quant_mult, active_layer.quant_shift, active_layer.quant_zp) != 0) {
-        return -1;
-    }
-    if (program_activation_lut(active_layer.activation_lut) != 0) {
-        return -1;
-    }
-    xil_printf("cfg readback: cout=%lu pixels=%lu tile_rows=0x%08lx pixel_base=%lu\r\n",
+    wr32(ACCEL_BASE_ADDR, ACCEL_NUM_PIXELS, tile->tile_pixels);
+    wr32(ACCEL_BASE_ADDR, ACCEL_TILE_ROWS, (tile->tile_ofm_h << 16) | tile->tile_oy_base);
+    wr32(ACCEL_BASE_ADDR, ACCEL_PIXEL_BASE, tile->tile_pixel_base);
+    wr32(ACCEL_BASE_ADDR, ACCEL_EXPECTED_BYTES, tile->expected_ofm_bytes);
+    xil_printf("tile[%lu] cfg readback: cout=%lu pixels=%lu tile_rows=0x%08lx pixel_base=%lu expected=%lu\r\n",
+               (unsigned long)tile_index,
                (unsigned long)rd32(ACCEL_BASE_ADDR, ACCEL_COUT_TOTAL),
                (unsigned long)rd32(ACCEL_BASE_ADDR, ACCEL_NUM_PIXELS),
                (unsigned long)rd32(ACCEL_BASE_ADDR, ACCEL_TILE_ROWS),
-               (unsigned long)rd32(ACCEL_BASE_ADDR, ACCEL_PIXEL_BASE));
+               (unsigned long)rd32(ACCEL_BASE_ADDR, ACCEL_PIXEL_BASE),
+               (unsigned long)rd32(ACCEL_BASE_ADDR, ACCEL_EXPECTED_BYTES));
 
     dbg_core_base = rd32(ACCEL_BASE_ADDR, ACCEL_DBG_CORE_WR);
     dbg_axis_base = rd32(ACCEL_BASE_ADDR, ACCEL_DBG_AXIS_WR);
     dbg_tlast_base = rd32(ACCEL_BASE_ADDR, ACCEL_DBG_TLASTS);
     dbg_last_base = rd32(ACCEL_BASE_ADDR, ACCEL_DBG_LAST_END);
 
-    dma_start_s2mm(DMA_OFM_BASE_ADDR, active_runtime.ofm_axis_buf, active_runtime.ofm_axis_bytes);
-    debug_stage = 0x30000000U;
-    xil_printf("stage: start accel\r\n");
+    dma_start_s2mm(DMA_OFM_BASE_ADDR, active_runtime.ofm_axis_buf,
+                   tile->expected_ofm_bytes * OFM_AXIS_BEAT_BYTES);
+    xil_printf("tile[%lu] stage: start accel\r\n", (unsigned long)tile_index);
     wr32(ACCEL_BASE_ADDR, ACCEL_CTRL, 1U);
 
     for (uint32_t loops = 0; loops < 50000000U; ++loops) {
@@ -657,8 +693,8 @@ static int run_smoke(void)
         }
 
         if ((st & ST_BIAS_REQ) != 0U) {
-            debug_stage = 0x41000000U | (uint32_t)bias_services;
-            xil_printf("service: bias %d\r\n", bias_services);
+            debug_stage = 0x41000000U | (tile_index << 12) | (uint32_t)bias_services;
+            xil_printf("tile[%lu] service: bias %d\r\n", (unsigned long)tile_index, bias_services);
             if (service_bias() != 0) {
                 return -1;
             }
@@ -667,8 +703,9 @@ static int run_smoke(void)
         }
 
         if ((st & ST_WEIGHT_REQ) != 0U) {
-            debug_stage = 0x42000000U | (uint32_t)weight_services;
-            xil_printf("service: weight %d k_base=%d\r\n", weight_services, k_pass * ROWS);
+            debug_stage = 0x42000000U | (tile_index << 12) | (uint32_t)weight_services;
+            xil_printf("tile[%lu] service: weight %d k_base=%d\r\n",
+                       (unsigned long)tile_index, weight_services, k_pass * ROWS);
             if (service_weight(&k_pass, &active_k_base) != 0) {
                 return -1;
             }
@@ -677,9 +714,10 @@ static int run_smoke(void)
         }
 
         if ((st & ST_IFM_REQ) != 0U) {
-            debug_stage = 0x43000000U | (uint32_t)ifm_services;
-            xil_printf("service: ifm %d fy=%d k_base=%d status=0x%08lx\r\n",
-                       ifm_services, status_fill_fy(st), active_k_base, (unsigned long)st);
+            debug_stage = 0x43000000U | (tile_index << 12) | (uint32_t)ifm_services;
+            xil_printf("tile[%lu] service: ifm %d fy=%d k_base=%d status=0x%08lx\r\n",
+                       (unsigned long)tile_index, ifm_services, status_fill_fy(st),
+                       active_k_base, (unsigned long)st);
             if (service_ifm(st, active_k_base, &ifm_row_phase) != 0) {
                 return -1;
             }
@@ -698,7 +736,8 @@ static int run_smoke(void)
 
     if (!done_seen) {
         debug_stage = 0xe3000000U;
-        xil_printf("Accelerator timeout, ctrl=0x%08lx gpio2=0x%08lx\r\n",
+        xil_printf("Accelerator timeout tile=%lu ctrl=0x%08lx gpio2=0x%08lx\r\n",
+                   (unsigned long)tile_index,
                    (unsigned long)rd32(ACCEL_BASE_ADDR, ACCEL_CTRL),
                    (unsigned long)rd32(GPIO_BASE_ADDR, GPIO2_DATA));
         return -1;
@@ -716,21 +755,23 @@ static int run_smoke(void)
     dbg_tlast_delta = dbg_tlast_now - dbg_tlast_base;
     dbg_last_delta = dbg_last_now - dbg_last_base;
 
-    xil_printf("ofm debug: expected=%lu core_wr=%lu axis_wr=%lu tlast=%lu last_end=%lu\r\n",
+    xil_printf("tile[%lu] ofm debug: expected=%lu core_wr=%lu axis_wr=%lu tlast=%lu last_end=%lu\r\n",
+               (unsigned long)tile_index,
                (unsigned long)rd32(ACCEL_BASE_ADDR, ACCEL_DBG_EXPECTED),
                (unsigned long)dbg_core_now,
                (unsigned long)dbg_axis_now,
                (unsigned long)dbg_tlast_now,
                (unsigned long)dbg_last_now);
-    xil_printf("ofm debug delta: core_wr=%lu axis_wr=%lu tlast=%lu last_end=%lu\r\n",
+    xil_printf("tile[%lu] ofm debug delta: core_wr=%lu axis_wr=%lu tlast=%lu last_end=%lu\r\n",
+               (unsigned long)tile_index,
                (unsigned long)dbg_core_delta,
                (unsigned long)dbg_axis_delta,
                (unsigned long)dbg_tlast_delta,
                (unsigned long)dbg_last_delta);
-    if (dbg_core_delta != active_layer.expected_ofm_bytes ||
-        dbg_axis_delta != active_layer.expected_ofm_bytes ||
+    if (dbg_core_delta != tile->expected_ofm_bytes ||
+        dbg_axis_delta != tile->expected_ofm_bytes ||
         dbg_tlast_delta != 1U ||
-        dbg_last_delta != active_layer.expected_ofm_bytes) {
+        dbg_last_delta != tile->expected_ofm_bytes) {
         xil_printf("Unexpected OFM debug delta\r\n");
         debug_stage = 0xe6000000U;
         debug_value = dbg_axis_delta;
@@ -739,8 +780,8 @@ static int run_smoke(void)
     debug_stage = 0x50000000U;
     wr32(ACCEL_BASE_ADDR, ACCEL_CTRL, 2U);
 
-    xil_printf("services: bias=%d weight=%d ifm=%d\r\n",
-               bias_services, weight_services, ifm_services);
+    xil_printf("tile[%lu] services: bias=%d weight=%d ifm=%d\r\n",
+               (unsigned long)tile_index, bias_services, weight_services, ifm_services);
     if (bias_services != COUT_BLOCKS || weight_services != (COUT_BLOCKS * K_PASSES) ||
         ifm_services <= 0) {
         xil_printf("Unexpected service counts\r\n");
@@ -750,8 +791,90 @@ static int run_smoke(void)
                       (uint32_t)ifm_services;
         return -1;
     }
+#if ACCEL_SMOKE_REAL_CONV0_CROP_POOL
+    uint32_t expected_ifm_services = expected_ifm_services_for_tile(tile);
+    if ((uint32_t)ifm_services != expected_ifm_services) {
+        xil_printf("Unexpected IFM service count got=%d exp=%lu\r\n",
+                   ifm_services, (unsigned long)expected_ifm_services);
+        debug_stage = 0xe7000000U;
+        debug_value = (uint32_t)ifm_services;
+        return -1;
+    }
+#endif
 
-    int rc = parse_ofm();
+    *total_bias_services += bias_services;
+    *total_weight_services += weight_services;
+    *total_ifm_services += ifm_services;
+
+    return parse_ofm_tile(tile);
+}
+
+static int run_smoke(void)
+{
+    int total_bias_services = 0;
+    int total_weight_services = 0;
+    int total_ifm_services = 0;
+
+    debug_stage = 0x10000000U;
+    xil_printf("stage: dma reset\r\n");
+    dma_reset_named("bias", DMA_BIAS_BASE_ADDR, DMA_MM2S_DMACR, DMA_MM2S_DMASR);
+    dma_reset_named("weight", DMA_WEIGHT_BASE_ADDR, DMA_MM2S_DMACR, DMA_MM2S_DMASR);
+    dma_reset_named("ifm", DMA_IFM_BASE_ADDR, DMA_MM2S_DMACR, DMA_MM2S_DMASR);
+    dma_reset_named("ofm", DMA_OFM_BASE_ADDR, DMA_S2MM_DMACR, DMA_S2MM_DMASR);
+    xil_printf("stage: dma reset done\r\n");
+
+    wr32(GPIO_BASE_ADDR, GPIO_TRI, 0x00000000U);
+    wr32(GPIO_BASE_ADDR, GPIO2_TRI, 0x0000ffffU);
+    wr32(GPIO_BASE_ADDR, GPIO_DATA, FM_W);
+
+    debug_stage = 0x20000000U;
+    xil_printf("stage: config common regs\r\n");
+    wr32(ACCEL_BASE_ADDR, ACCEL_FM_SIZE, (active_layer.fm_w << 16) | active_layer.fm_h);
+    wr32(ACCEL_BASE_ADDR, ACCEL_OFM_SIZE, (active_layer.ofm_w << 16) | active_layer.ofm_h);
+    wr32(ACCEL_BASE_ADDR, ACCEL_CONV, (active_layer.conv_pad << 8) | active_layer.conv_stride);
+    wr32(ACCEL_BASE_ADDR, ACCEL_K_TOTAL, active_layer.k_total);
+    wr32(ACCEL_BASE_ADDR, ACCEL_COUT_TOTAL, active_layer.cout_total);
+    wr32(ACCEL_BASE_ADDR, ACCEL_ACT_CFG, active_layer.act_mode);
+    wr32(ACCEL_BASE_ADDR, ACCEL_IFM_ZP, active_layer.input_zero_point);
+    wr32(ACCEL_BASE_ADDR, ACCEL_POOL_CFG, (active_layer.pool_stride << 2) | active_layer.pool_enable);
+    if (program_quant_tile(active_layer.quant_mult, active_layer.quant_shift, active_layer.quant_zp) != 0) {
+        return -1;
+    }
+    if (program_activation_lut(active_layer.activation_lut) != 0) {
+        return -1;
+    }
+
+    clear_ofm_mem();
+    for (uint32_t tile_idx = 0U; tile_idx < SMOKE_TILE_COUNT; ++tile_idx) {
+        if (run_one_tile(&smoke_tiles[tile_idx], tile_idx,
+                         &total_bias_services,
+                         &total_weight_services,
+                         &total_ifm_services) != 0) {
+            debug_stage = 0xe5000000U | tile_idx;
+            return -1;
+        }
+    }
+
+    xil_printf("total services: bias=%d weight=%d ifm=%d\r\n",
+               total_bias_services, total_weight_services, total_ifm_services);
+#if ACCEL_SMOKE_REAL_CONV0_CROP_POOL
+    uint32_t expected_total_ifm_services = 0U;
+    for (uint32_t tile_idx = 0U; tile_idx < SMOKE_TILE_COUNT; ++tile_idx) {
+        expected_total_ifm_services += expected_ifm_services_for_tile(&smoke_tiles[tile_idx]);
+    }
+    if (total_bias_services != (SMOKE_TILE_COUNT * COUT_BLOCKS) ||
+        total_weight_services != (SMOKE_TILE_COUNT * COUT_BLOCKS * K_PASSES) ||
+        (uint32_t)total_ifm_services != expected_total_ifm_services) {
+        xil_printf("Unexpected total service counts\r\n");
+        debug_stage = 0xe8000000U;
+        debug_value = ((uint32_t)total_bias_services << 24) |
+                      ((uint32_t)total_weight_services << 12) |
+                      (uint32_t)total_ifm_services;
+        return -1;
+    }
+#endif
+
+    int rc = compare_ofm();
     debug_stage = (rc == 0) ? 0x60000000U : 0xe5000000U;
     return rc;
 }

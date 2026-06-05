@@ -65,6 +65,14 @@ The same source can build a small real-data Conv0 crop + pool smoke:
 powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/manual_build_accel_smoke.ps1 -Mode conv0_crop_pool
 ```
 
+It can also build a two-spatial-tile Conv0 crop + pool smoke. This mode splits
+the same `16x8` conv output into two `tile_ofm_h=4` runs and checks the
+reassembled pooled `8x4x16` output against the same embedded golden:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/manual_build_accel_smoke.ps1 -Mode conv0_crop_pool_tiles
+```
+
 The Conv0 mode embeds the fixture from:
 
 ```text
@@ -82,6 +90,12 @@ Its output path is:
 
 ```text
 build_vitis_2022_2/conv_accel_r18_c16_smoke/manual_build/conv_accel_conv0_crop_pool_smoke.elf
+```
+
+The tiled mode writes:
+
+```text
+build_vitis_2022_2/conv_accel_r18_c16_smoke/manual_build/conv_accel_conv0_crop_pool_tiles_smoke.elf
 ```
 
 This script uses the carrier-based hardware export:
@@ -129,6 +143,12 @@ To append the deterministic r18_c8 control-path smoke after Conv0:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/run_kv260_smoke_sequence.ps1 -PortName COM8 -RunDeterministic
+```
+
+To run the two-spatial-tile Conv0 smoke instead of the single-tile Conv0 smoke:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/run_kv260_smoke_sequence.ps1 -PortName COM8 -RunConv0Tiles
 ```
 
 The script starts `hw_server` if needed, probes JTAG, captures serial logs,

@@ -77,6 +77,10 @@
 #define ACCEL_SMOKE_REAL_CONV0_CROP_POOL 0
 #endif
 
+#ifndef ACCEL_SMOKE_CONV0_CROP_POOL_TILES
+#define ACCEL_SMOKE_CONV0_CROP_POOL_TILES 0
+#endif
+
 #if ACCEL_SMOKE_REAL_CONV0_CROP_POOL
 
 #define ROWS                  18
@@ -95,7 +99,15 @@
 #define CONV_PAD              1
 #define CONV_STRIDE           1
 #define TILE_OY_BASE          0
+#if ACCEL_SMOKE_CONV0_CROP_POOL_TILES
+#define TILE_OFM_H            4
+#define SMOKE_TILE_COUNT      2
+#define SMOKE_NAME            "conv0 crop pool tiles"
+#else
 #define TILE_OFM_H            8
+#define SMOKE_TILE_COUNT      1
+#define SMOKE_NAME            "conv0 crop pool"
+#endif
 #define TILE_PIXEL_BASE       0
 #define TILE_PIXELS           (OFM_W * TILE_OFM_H)
 #define FULL_PIXELS           (OFM_W * OFM_H)
@@ -110,8 +122,9 @@
 #define QUANT_ZP              69U
 #define EXPECTED_OUTPUT_PIXELS ((OFM_W / 2) * (TILE_OFM_H / 2))
 #define EXPECTED_OFM_BYTES    (EXPECTED_OUTPUT_PIXELS * COUT_TOTAL)
+#define TOTAL_OUTPUT_PIXELS   ((OFM_W / 2) * (OFM_H / 2))
+#define TOTAL_EXPECTED_OFM_BYTES (TOTAL_OUTPUT_PIXELS * COUT_TOTAL)
 #define OFM_AXIS_BYTES        (EXPECTED_OFM_BYTES * OFM_AXIS_BEAT_BYTES)
-#define SMOKE_NAME            "conv0 crop pool"
 
 #else
 
@@ -132,6 +145,7 @@
 #define CONV_STRIDE           1
 #define TILE_OY_BASE          0
 #define TILE_OFM_H            2
+#define SMOKE_TILE_COUNT      1
 #define TILE_PIXEL_BASE       0
 #define TILE_PIXELS           (OFM_W * TILE_OFM_H)
 #define FULL_PIXELS           (OFM_W * OFM_H)
@@ -146,6 +160,8 @@
 #define QUANT_ZP              0U
 #define EXPECTED_OUTPUT_PIXELS TILE_PIXELS
 #define EXPECTED_OFM_BYTES    (TILE_PIXELS * COUT_TOTAL)
+#define TOTAL_OUTPUT_PIXELS   EXPECTED_OUTPUT_PIXELS
+#define TOTAL_EXPECTED_OFM_BYTES EXPECTED_OFM_BYTES
 #define OFM_AXIS_BYTES        (EXPECTED_OFM_BYTES * OFM_AXIS_BEAT_BYTES)
 #define SMOKE_NAME            "r18_c8"
 

@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("r18_c8", "conv0_crop_pool")]
+    [ValidateSet("r18_c8", "conv0_crop_pool", "conv0_crop_pool_tiles")]
     [string]$Mode = "r18_c8"
 )
 
@@ -42,8 +42,11 @@ $Obj = Join-Path $ManualBuildDir "main_$Mode.o"
 $Elf = Join-Path $ManualBuildDir "conv_accel_${Mode}_smoke.elf"
 $LinkerScript = Join-Path $AppSrcDir "lscript.ld"
 $Defines = @()
-if ($Mode -eq "conv0_crop_pool") {
+if ($Mode -eq "conv0_crop_pool" -or $Mode -eq "conv0_crop_pool_tiles") {
     $Defines += "-DACCEL_SMOKE_REAL_CONV0_CROP_POOL=1"
+}
+if ($Mode -eq "conv0_crop_pool_tiles") {
+    $Defines += "-DACCEL_SMOKE_CONV0_CROP_POOL_TILES=1"
 }
 
 & $Gcc -Wall -O0 -g3 -c -DARMA53_64 @Defines -I $BspInclude -I $AppSrcDir (Join-Path $AppSrcDir "main.c") -o $Obj
