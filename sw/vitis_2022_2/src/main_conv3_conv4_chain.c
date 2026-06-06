@@ -19,6 +19,7 @@
 #endif
 #if ACCEL_CHAIN_CONV0_CONV9
 #include "conv9_data.h"
+#include "yolo_decode.h"
 #endif
 #else
 #include "conv4_pool_data.h"
@@ -129,6 +130,9 @@ static uint64_t ofm_axis_buf[MAX_TILE_OFM_BYTES] __attribute__((aligned(64)));
 #if ACCEL_CHAIN_CONV0_CONV4 || ACCEL_CHAIN_CONV0_CONV5 || ACCEL_CHAIN_CONV0_CONV6 || ACCEL_CHAIN_CONV0_CONV7 || ACCEL_CHAIN_CONV0_CONV8 || ACCEL_CHAIN_CONV0_CONV9
 static uint8_t feature_buffer0[208U * 208U * 16U] __attribute__((aligned(64)));
 static uint8_t feature_buffer1[104U * 104U * 32U] __attribute__((aligned(64)));
+#if ACCEL_CHAIN_CONV0_CONV9
+static yolo_detection_t yolo_detections[YOLO_MAX_CANDIDATES];
+#endif
 #elif ACCEL_CHAIN_CONV4_CONV5
 static uint8_t conv4_ofm[13U * 13U * 256U] __attribute__((aligned(64)));
 static uint8_t conv5_ofm[13U * 13U * 512U] __attribute__((aligned(64)));
@@ -1076,6 +1080,71 @@ static int run_layer(chain_layer_t *layer)
     return 0;
 }
 
+#if ACCEL_CHAIN_CONV0_CONV9
+static int decode_and_print_conv9(void)
+{
+    int detection_count = yolo_decode_single_scale(
+        feature_buffer1,
+        0.25f,
+        0.45f,
+        yolo_detections,
+        YOLO_MAX_CANDIDATES);
+    if (detection_count < 0) {
+        xil_printf("YOLO decode error=%d\r\n", detection_count);
+        return -1;
+    }
+
+    xil_printf("DECODE count=%d\r\n", detection_count);
+    for (int i = 0; i < detection_count; ++i) {
+        yolo_detection_t original_detection;
+        char score[24];
+        char model_x1[24];
+        char model_y1[24];
+        char model_x2[24];
+        char model_y2[24];
+        char original_x1[24];
+        char original_y1[24];
+        char original_x2[24];
+        char original_y2[24];
+
+        yolo_inverse_letterbox(
+            &yolo_detections[i],
+            512.0f,
+            366.0f,
+            0.8125f,
+            0.0f,
+            59.0f,
+            &original_detection);
+        yolo_format_fixed6(yolo_detections[i].score, score, sizeof(score));
+        yolo_format_fixed6(yolo_detections[i].x1, model_x1, sizeof(model_x1));
+        yolo_format_fixed6(yolo_detections[i].y1, model_y1, sizeof(model_y1));
+        yolo_format_fixed6(yolo_detections[i].x2, model_x2, sizeof(model_x2));
+        yolo_format_fixed6(yolo_detections[i].y2, model_y2, sizeof(model_y2));
+        yolo_format_fixed6(original_detection.x1, original_x1, sizeof(original_x1));
+        yolo_format_fixed6(original_detection.y1, original_y1, sizeof(original_y1));
+        yolo_format_fixed6(original_detection.x2, original_x2, sizeof(original_x2));
+        yolo_format_fixed6(original_detection.y2, original_y2, sizeof(original_y2));
+        xil_printf(
+            "DET index=%d class=%lu name=%s score=%s "
+            "model_x1=%s model_y1=%s model_x2=%s model_y2=%s "
+            "orig_x1=%s orig_y1=%s orig_x2=%s orig_y2=%s\r\n",
+            i,
+            (unsigned long)yolo_detections[i].class_id,
+            yolo_class_name(yolo_detections[i].class_id),
+            score,
+            model_x1,
+            model_y1,
+            model_x2,
+            model_y2,
+            original_x1,
+            original_y1,
+            original_x2,
+            original_y2);
+    }
+    return 0;
+}
+#endif
+
 int main(void)
 {
     xil_printf("\r\n%s\r\n", CHAIN_SMOKE_NAME);
@@ -1088,6 +1157,12 @@ int main(void)
             return -1;
         }
     }
+#if ACCEL_CHAIN_CONV0_CONV9
+    if (decode_and_print_conv9() != 0) {
+        xil_printf("FAIL: Conv9 YOLO decode failed\r\n");
+        return -1;
+    }
+#endif
     xil_printf("PASS: %s matches RTL golden\r\n", CHAIN_SMOKE_NAME);
     return 0;
 }

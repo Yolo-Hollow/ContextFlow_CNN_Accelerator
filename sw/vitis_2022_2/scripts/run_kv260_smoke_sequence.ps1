@@ -48,6 +48,11 @@ $Conv0Conv9ChainElf = Join-Path $Root "build_vitis_2022_2\conv_accel_r18_c16_smo
 $DownloadTcl = Join-Path $ScriptDir "download_run_accel_smoke.tcl"
 $ProbeTcl = Join-Path $ScriptDir "probe_pl_regs.tcl"
 $JtagProbeTcl = Join-Path $ScriptDir "probe_jtag_targets.tcl"
+$Python = "python"
+$YoloDecodeScript = Join-Path $Root "tools\golden\yolo_single_scale_decode.py"
+$YoloCompareScript = Join-Path $Root "tools\golden\compare_yolo_uart.py"
+$Conv9Tensor = "D:\MPSoC\python_prj\rtl_golden\facemask_chain_conv0_conv9_rtl\09_head_detect_conv9_1x1\golden_ofm_u8_hwc.bin"
+$YoloDecodeGolden = "D:\MPSoC\python_prj\rtl_golden\facemask_chain_conv0_conv9_rtl\09_head_detect_conv9_1x1\decode_golden.json"
 
 New-Item -ItemType Directory -Force $LogDir | Out-Null
 $Stamp = Get-Date -Format "yyyyMMdd_HHmmss"
@@ -126,6 +131,7 @@ function Run-Smoke($Name, $Elf, [bool]$ProgramBit, [bool]$UseFastRun) {
     if ($xsctExit -ne 0) {
         throw "$Name XSCT failed with exit code $xsctExit. Serial log: $($capture.Log)"
     }
+    $script:LastSmokeLog = $capture.Log
     Write-Host "$Name serial log: $($capture.Log)"
 }
 
@@ -142,7 +148,18 @@ Write-Host "Available COM ports: $([string]::Join(', ', [System.IO.Ports.SerialP
 Start-HwServer
 & $Xsct $JtagProbeTcl | Tee-Object -FilePath (Join-Path $LogDir "$Stamp`_jtag_probe.log")
 if ($RunConv0Conv9Chain) {
+    Ensure-Tool $YoloDecodeScript "YOLO decode reference"
+    Ensure-Tool $YoloCompareScript "YOLO UART comparator"
+    Ensure-Tool $Conv9Tensor "Conv9 RTL-chain tensor"
+    & $Python $YoloDecodeScript --input $Conv9Tensor --output $YoloDecodeGolden | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to generate Conv9 decode golden"
+    }
     Run-Smoke "conv0_conv9_chain" $Conv0Conv9ChainElf (!$SkipBit -and !$FastRun) $FastRun
+    & $Python $YoloCompareScript $script:LastSmokeLog $YoloDecodeGolden
+    if ($LASTEXITCODE -ne 0) {
+        throw "Conv9 UART detections do not match the RTL-chain decode golden"
+    }
     & $Xsct $ProbeTcl | Tee-Object -FilePath (Join-Path $LogDir "$Stamp`_pl_probe_after_conv0_conv9_chain.log")
 } elseif ($RunConv0Conv8Chain) {
     Run-Smoke "conv0_conv8_chain" $Conv0Conv8ChainElf (!$SkipBit -and !$FastRun) $FastRun

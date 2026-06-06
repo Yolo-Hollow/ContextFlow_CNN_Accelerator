@@ -228,8 +228,8 @@ Layer06 系列 ELF 使用 `sw/vitis_2022_2/scripts/generate_layer06_tile4_header
 - 当前 RTL 还不是完整 YOLOv3-tiny 推理系统。
 - pooling 第一版已经作为 activation 后、OFM writer 前的可选输出侧后处理模块接入，当前支持 bypass 和 `2x2` uint8 maxpool stride-2。
 - pool 打开时，`OFM_SIZE/NUM_PIXELS/TILE_OFM_H` 描述 pool 前 conv output tile，`TILE_PIXEL_BASE` 按最终 pool 后 OFM 地址空间配置。
-- 当前验证重点是卷积数据流、量化语义和写回正确性，不覆盖 YOLO decode/NMS。
-- Vitis runtime 已覆盖 Conv0 到 Conv9 的完整 10 层单尺度卷积链，最终输出为 `13x13x24` 检测张量。YOLO decode、置信度筛选和 NMS 尚未接入该 bare-metal smoke。
+- 当前验证重点已从卷积数据流、量化语义和写回正确性推进到单尺度检测后处理。
+- Vitis runtime 已覆盖 Conv0 到 Conv9 的完整 10 层单尺度卷积链，并在 Conv9 bit-exact 比较通过后，对 `13x13x24` 检测张量执行 YOLO decode、置信度筛选、class-aware NMS 和逆 letterbox。
 - 当前 OFM AXIS 仍输出 `{addr[23:0], data[7:0]}` debug packet。它适合验证和软件重排，但不是长期高效的连续 HWC DMA 写回格式。
 - 当前 IFM 行填充仍由 PS 轮询 GPIO request 后启动 IFM DMA 服务，尚未实现硬件 DDR reader。
 - RTL semantic golden 是硬件 bit-exact 仿真的标准；PyTorch reference 只能作为模型级参考。
@@ -267,10 +267,10 @@ D:/MPSoC/python_prj
 
 ### 网络验证主线
 
-1. 固化完整 10 层链式回归，并检查最终 `13x13x24` 张量的通道/anchor 布局。
-2. 接入软件 YOLO decode、置信度筛选和 NMS。
-3. 使用真实图像输入完成端到端检测结果对照。
-4. YOLO box decode、threshold 和 NMS 继续保留在软件端。
+1. 保持完整 10 层链式回归及 `13x13x24` HWC/anchor 布局检查。
+2. 保持软件 YOLO decode、置信度筛选和 class-aware NMS 回归。
+3. 使用更多真实图像输入完成端到端检测结果对照。
+4. 评估真实图片加载、批量验证和后处理性能优化。
 
 ### 系统集成主线
 
@@ -352,4 +352,8 @@ D:/MPSoC/python_prj
 - 2026-06-06 `conv0_pool -> conv8` 九层连续完整烧录上板通过，日志为 `build_system_xck26_kv260_linebuffix/board_smoke_logs/20260606_213159_conv0_conv8_chain_COM8.log`。Conv8 四个 spatial tile 的总服务计数为 `bias=128, weight=16384, ifm=77824`，最后一个 `oy=12, h=1` tail 输出 `6656` bytes，最终 `conv8 full compare=86528 bytes`，全链逐层 bit-exact。
 - 2026-06-06 已使用同链 Conv8 输出生成 Conv9 原生 1x1 RTL semantic golden，并通过 `--emulate-1x1-as-3x3` 生成中心稀疏 3x3 权重。硬件映射为 `K_TOTAL=4608`、`256` 个 K pass、`2` 个 COUT block，最终张量为 `13x13x24 = 4056` bytes，`sat_count=0`。
 - 2026-06-06 `conv0_pool -> conv9` 完整 10 层链在 KV260 上完整烧录通过，日志为 `build_system_xck26_kv260_linebuffix/board_smoke_logs/20260606_214226_conv0_conv9_chain_COM8.log`。Conv9 四个 spatial tile 的总服务计数为 `bias=8, weight=2048, ifm=9728`；第二个 COUT block 仅含 8 个有效通道，最后一个 `oy=12, h=1` tail 输出 `312` bytes，最终 `conv9_detect_sparse3x3 full compare=4056 bytes`，完整 10 层逐层 bit-exact。
-- 当前可靠板级边界是完整 Conv0->Conv9 单尺度卷积链。下一步进入最终检测张量布局确认与软件 YOLO decode/NMS 集成。
+- 2026-06-06 已新增 `tools/golden/yolo_single_scale_decode.py`，直接读取同链 Conv9 `golden_ofm_u8_hwc.bin`，按 `channel=anchor*8+value`、P5/32 anchors、Conv9 反量化参数完成 decode，并输出独立的 RTL-chain `decode_golden.json`。默认阈值为 confidence `0.25`、class-aware NMS IoU `0.45`。
+- 2026-06-06 已新增无 Xilinx 依赖的 `yolo_decode.c/.h`，使用固定 507 项候选区和单精度 `expf`，支持模型坐标裁剪、固定图像 `512x366` 的逆 letterbox、稳定 UART 数值格式。`tb/test_yolo_decode.py` 同时覆盖 Python 映射/NMS、C 边界测试和 Python/C 同张量一致性，测试通过。
+- 2026-06-06 Conv8 与带后处理的 Conv9 ELF 均重新构建通过，调度 cross-check 保持 `layers=10` 且 Conv9 输出 `4056` bytes。
+- 2026-06-06 使用 `build_system_xck26_kv260_linebuffix` 完整重新烧录并完成 Conv0->Conv9 + 后处理验收，最终日志为 `build_system_xck26_kv260_linebuffix/board_smoke_logs/20260606_222542_conv0_conv9_chain_COM8.log`。十层仍逐层 bit-exact，Conv9 `full compare=4056 bytes`；UART 输出 1 个 `with_mask`，score `0.357321`，原图坐标约为 `(193.435638,112.213531)-(228.543060,164.534409)`，自动比对在 `0.1` pixel / `1e-4` score 容差内通过。
+- 当前可靠板级边界是完整 Conv0->Conv9 单尺度卷积链加 A53 decode/NMS。下一步进入更多真实图片加载、批量端到端验证和性能测量。

@@ -41,7 +41,7 @@ ROWS=18, COLS=8, IFM_BANKS=2, COUT_TILE=16
 
 The layer list covers the single low-resolution YOLOv3-tiny path from Conv0
 through the 13x13 detection head. COUT values above 16 are expected to run as
-multiple COUT blocks. Decode, threshold, and NMS remain software-side.
+multiple COUT blocks. Decode, threshold, and NMS run software-side.
 
 Generate RTL semantic metadata and binaries for all listed layers:
 
@@ -70,6 +70,26 @@ python tools\golden\verify_single_scale_schedule.py
 The verifier recalculates shape transitions, K passes, COUT blocks, feature
 buffer sizes, spatial tile counts, and maximum OFM AXIS capture sizes. It should
 match the scheduler dry-run summary printed by the Vitis smoke ELF.
+
+## Single-scale YOLO decode
+
+Generate the decode golden directly from the RTL-semantic Conv9 HWC tensor:
+
+```powershell
+python tools\golden\yolo_single_scale_decode.py
+```
+
+The decoder uses P5/32 anchors, the Conv9 output quantization, confidence
+threshold `0.25`, and class-aware NMS IoU `0.45`. It writes
+`decode_golden.json` beside the external Conv9 tensor. Run the Python/C host
+regression with:
+
+```powershell
+python tb\test_yolo_decode.py
+```
+
+The board smoke script regenerates this golden and compares the machine-readable
+UART `DECODE`/`DET` lines automatically.
 
 The exporter writes per-layer `manifest.json` files with shape, quant,
 `sat_count`, expected bytes, K/COUT scheduling counts, and PyTorch-reference

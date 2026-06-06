@@ -350,8 +350,21 @@ build_system_xck26_kv260_linebuffix/board_smoke_logs/20260606_214226_conv0_conv9
 ```
 
 Conv9 compared all `4056` bytes bit-exactly against its native 1x1 golden.
-The hardware convolution chain is complete; the next integration task is
-software decode, confidence filtering, and NMS for the `13x13x24` tensor.
+The A53 smoke now decodes the bit-exact tensor only after that comparison,
+applies confidence filtering and class-aware NMS, reverses the fixed-image
+letterbox, and prints machine-readable `DECODE`/`DET` UART records. The board
+script regenerates the RTL-chain decode golden and compares those records
+automatically.
+
+The full reprogram-and-run acceptance passed on June 6, 2026:
+
+```text
+build_system_xck26_kv260_linebuffix/board_smoke_logs/20260606_222542_conv0_conv9_chain_COM8.log
+```
+
+It reported one `with_mask` detection with score `0.357321`; Conv9 remained
+bit-exact for all `4056` bytes and the UART comparison passed within `0.1`
+pixel and `1e-4` score tolerance.
 
 Use the full sequence after a board power cycle. `-FastRun` is only appropriate
 when the same bitstream is still programmed and the prior accelerator run left

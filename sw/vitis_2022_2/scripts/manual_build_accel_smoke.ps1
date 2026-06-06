@@ -37,10 +37,13 @@ Copy-Item -Path `
     (Join-Path $SwDir "src\accel_layer_desc.h"), `
     (Join-Path $SwDir "src\accel_single_scale_plan.h"), `
     (Join-Path $SwDir "src\accel_single_scale_scheduler.h"), `
+    (Join-Path $SwDir "src\yolo_decode.c"), `
+    (Join-Path $SwDir "src\yolo_decode.h"), `
     (Join-Path $SwDir "src\conv0_crop_pool_data.h") `
     -Destination $AppSrcDir -Force
 
 $Obj = Join-Path $ManualBuildDir "main_$Mode.o"
+$DecodeObj = Join-Path $ManualBuildDir "yolo_decode_$Mode.o"
 $Elf = Join-Path $ManualBuildDir "conv_accel_${Mode}_smoke.elf"
 $LinkerScript = Join-Path $AppSrcDir "lscript.ld"
 $Defines = @()
@@ -275,6 +278,23 @@ if ($Mode -eq "conv0_conv9_chain") {
 }
 
 & $Gcc -Wall -O0 -g3 -c -DARMA53_64 @Defines -I $BspInclude -I $AppSrcDir $Source -o $Obj
-& $Gcc -o $Elf $Obj "-Wl,--start-group,-lxil,-lgcc,-lc,--end-group" -n "-Wl,--gc-sections" -L $BspLib -T $LinkerScript
+if ($LASTEXITCODE -ne 0) {
+    throw "Failed to compile $Source"
+}
+$Objects = @($Obj)
+$Libraries = "-Wl,--start-group,-lxil,-lgcc,-lc,--end-group"
+if ($Mode -eq "conv0_conv9_chain") {
+    & $Gcc -Wall -O0 -g3 -c -DARMA53_64 -I $BspInclude -I $AppSrcDir `
+        (Join-Path $AppSrcDir "yolo_decode.c") -o $DecodeObj
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to compile yolo_decode.c"
+    }
+    $Objects += $DecodeObj
+    $Libraries = "-Wl,--start-group,-lxil,-lm,-lgcc,-lc,--end-group"
+}
+& $Gcc -o $Elf @Objects $Libraries -n "-Wl,--gc-sections" -L $BspLib -T $LinkerScript
+if ($LASTEXITCODE -ne 0) {
+    throw "Failed to link $Elf"
+}
 
 Write-Host "Built $Elf"
