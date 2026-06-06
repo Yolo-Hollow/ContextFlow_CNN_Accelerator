@@ -12,6 +12,15 @@ CIN = 64
 COUT = 128
 
 
+def maxpool2x2s2_hwc(values, h, w, c):
+    src = values.reshape(h, w, c)
+    pooled = np.empty((h // 2, w // 2, c), dtype=np.uint8)
+    for y in range(h // 2):
+        for x in range(w // 2):
+            pooled[y, x, :] = src[y * 2 : y * 2 + 2, x * 2 : x * 2 + 2, :].max(axis=(0, 1))
+    return pooled.reshape(-1)
+
+
 def write_hex(path, values, width):
     path.parent.mkdir(parents=True, exist_ok=True)
     mask = (1 << (width * 4)) - 1
@@ -49,6 +58,9 @@ def main():
     write_hex(OUT_DIR / "bias_i32.mem", bias.view(np.uint32), 8)
     write_hex(OUT_DIR / "activation_lut_u8.mem", lut, 2)
     write_hex(OUT_DIR / "golden_ofm_u8_hwc.mem", golden, 2)
+    pooled = maxpool2x2s2_hwc(golden, H, W, COUT)
+    pooled.tofile(SRC_DIR / "golden_pool2x2s2_u8_hwc.bin")
+    write_hex(OUT_DIR / "golden_pool2x2s2_u8_hwc.mem", pooled, 2)
 
     print(f"Wrote xsim mem files to {OUT_DIR}")
 

@@ -15,7 +15,7 @@
 #include "conv0_crop_pool_data.h"
 #endif
 
-#if ACCEL_SMOKE_LAYER06_TILE4 || ACCEL_SMOKE_LAYER06_TILES
+#if ACCEL_SMOKE_LAYER06_ANY
 #include "layer06_tile4_data.h"
 #endif
 
@@ -29,7 +29,7 @@
 static int8_t feat[CIN][FM_H][FM_W];
 static int8_t weight[K_TOTAL][COUT_TOTAL];
 static int32_t bias[COUT_TOTAL];
-#if !ACCEL_SMOKE_REAL_CONV0_CROP_POOL
+#if !ACCEL_SMOKE_REAL_CONV0_CROP_POOL && !ACCEL_SMOKE_LAYER06_ANY
 static int32_t golden[FULL_PIXELS][COUT_TOTAL];
 #endif
 static uint8_t ofm_mem[FULL_PIXELS * COUT_TOTAL];
@@ -68,7 +68,10 @@ static const accel_layer_desc_t active_layer = {
 #if ACCEL_SMOKE_REAL_CONV0_CROP_POOL
     .activation_lut = conv0_crop_activation_lut_u8,
     .golden_ofm_u8 = conv0_crop_golden_pool_u8,
-#elif ACCEL_SMOKE_LAYER06_TILE4 || ACCEL_SMOKE_LAYER06_TILES
+#elif ACCEL_SMOKE_LAYER06_POOL_TILES
+    .activation_lut = layer06_tile4_activation_lut_u8,
+    .golden_ofm_u8 = layer06_pool_golden_ofm_u8,
+#elif ACCEL_SMOKE_LAYER06_ANY
     .activation_lut = layer06_tile4_activation_lut_u8,
     .golden_ofm_u8 = layer06_tile4_golden_ofm_u8,
 #else
@@ -103,6 +106,20 @@ static const smoke_tile_desc_t smoke_tiles[SMOKE_TILE_COUNT] = {
 #if ACCEL_SMOKE_CONV0_CROP_POOL_TILES
     {"tile0", 0U, 4U, 0U, 16U * 4U, 8U * 2U, 8U * 2U * 16U},
     {"tile1", 4U, 4U, 16U, 16U * 4U, 8U * 2U, 8U * 2U * 16U},
+#elif ACCEL_SMOKE_LAYER06_POOL_TILES
+    {"tile0", 0U, 4U, 0U * 52U, 52U * 4U, 26U * 2U, 26U * 2U * 128U},
+    {"tile1", 4U, 4U, 1U * 52U, 52U * 4U, 26U * 2U, 26U * 2U * 128U},
+    {"tile2", 8U, 4U, 2U * 52U, 52U * 4U, 26U * 2U, 26U * 2U * 128U},
+    {"tile3", 12U, 4U, 3U * 52U, 52U * 4U, 26U * 2U, 26U * 2U * 128U},
+    {"tile4", 16U, 4U, 4U * 52U, 52U * 4U, 26U * 2U, 26U * 2U * 128U},
+    {"tile5", 20U, 4U, 5U * 52U, 52U * 4U, 26U * 2U, 26U * 2U * 128U},
+    {"tile6", 24U, 4U, 6U * 52U, 52U * 4U, 26U * 2U, 26U * 2U * 128U},
+    {"tile7", 28U, 4U, 7U * 52U, 52U * 4U, 26U * 2U, 26U * 2U * 128U},
+    {"tile8", 32U, 4U, 8U * 52U, 52U * 4U, 26U * 2U, 26U * 2U * 128U},
+    {"tile9", 36U, 4U, 9U * 52U, 52U * 4U, 26U * 2U, 26U * 2U * 128U},
+    {"tile10", 40U, 4U, 10U * 52U, 52U * 4U, 26U * 2U, 26U * 2U * 128U},
+    {"tile11", 44U, 4U, 11U * 52U, 52U * 4U, 26U * 2U, 26U * 2U * 128U},
+    {"tile12", 48U, 4U, 12U * 52U, 52U * 4U, 26U * 2U, 26U * 2U * 128U},
 #elif ACCEL_SMOKE_LAYER06_TILES
     {"tile0", 0U, 4U, 0U * 52U, 52U * 4U, 52U * 4U, 52U * 4U * 128U},
     {"tile1", 4U, 4U, 4U * 52U, 52U * 4U, 52U * 4U, 52U * 4U * 128U},
@@ -276,7 +293,7 @@ static int program_activation_lut(const uint8_t *lut)
     return 0;
 }
 
-#if !ACCEL_SMOKE_REAL_CONV0_CROP_POOL && !ACCEL_SMOKE_LAYER06_TILE4 && !ACCEL_SMOKE_LAYER06_TILES
+#if !ACCEL_SMOKE_REAL_CONV0_CROP_POOL && !ACCEL_SMOKE_LAYER06_ANY
 static uint8_t clamp8(int32_t v)
 {
     if (v > 127) {
@@ -325,7 +342,7 @@ static void make_vectors(void)
     for (int co = 0; co < COUT_TOTAL; ++co) {
         bias[co] = conv0_crop_bias_i32[co];
     }
-#elif ACCEL_SMOKE_LAYER06_TILE4 || ACCEL_SMOKE_LAYER06_TILES
+#elif ACCEL_SMOKE_LAYER06_ANY
     for (int ch = 0; ch < CIN; ++ch) {
         for (int y = 0; y < FM_H; ++y) {
             for (int x = 0; x < FM_W; ++x) {
@@ -528,7 +545,7 @@ static int wait_ifm_request_advance(uint32_t serviced_status)
     return -1;
 }
 
-#if ACCEL_SMOKE_REAL_CONV0_CROP_POOL || ACCEL_SMOKE_LAYER06_TILE4 || ACCEL_SMOKE_LAYER06_TILES
+#if ACCEL_SMOKE_REAL_CONV0_CROP_POOL || ACCEL_SMOKE_LAYER06_ANY
 static uint32_t expected_ifm_services_for_tile(const smoke_tile_desc_t *tile)
 {
     int first_fy = (int)tile->tile_oy_base * CONV_STRIDE - CONV_PAD;
@@ -647,7 +664,7 @@ static int compare_ofm(void)
     for (int idx = 0; idx < TOTAL_OUTPUT_PIXELS; ++idx) {
         for (int co = 0; co < COUT_TOTAL; ++co) {
             uint8_t got = ofm_mem[idx * COUT_TOTAL + co];
-#if ACCEL_SMOKE_REAL_CONV0_CROP_POOL || ACCEL_SMOKE_LAYER06_TILE4 || ACCEL_SMOKE_LAYER06_TILES
+#if ACCEL_SMOKE_REAL_CONV0_CROP_POOL || ACCEL_SMOKE_LAYER06_ANY
             uint8_t exp = active_layer.golden_ofm_u8[idx * COUT_TOTAL + co];
 #else
             uint8_t exp = clamp8(golden[idx][co]);
@@ -655,7 +672,7 @@ static int compare_ofm(void)
             if (got != exp) {
                 xil_printf("Mismatch pixel=%d cout=%d got=%u exp=%u raw=%ld\r\n",
                            idx, co, got, exp,
-#if ACCEL_SMOKE_REAL_CONV0_CROP_POOL
+#if ACCEL_SMOKE_REAL_CONV0_CROP_POOL || ACCEL_SMOKE_LAYER06_ANY
                            (long)exp);
 #else
                            (long)golden[idx][co]);
@@ -750,7 +767,7 @@ static int run_one_tile(const smoke_tile_desc_t *tile, uint32_t tile_index,
         if ((st & ST_WEIGHT_REQ) != 0U) {
             int cout_base = ((weight_services / K_PASSES) % COUT_BLOCKS) * COUT_TILE;
             debug_stage = 0x42000000U | (tile_index << 12) | (uint32_t)weight_services;
-#if ACCEL_SMOKE_LAYER06_TILES
+#if ACCEL_SMOKE_LAYER06_TILES || ACCEL_SMOKE_LAYER06_POOL_TILES
             if ((weight_services % K_PASSES) == 0) {
                 xil_printf("tile[%lu] service: weight block=%d cout_base=%d\r\n",
                            (unsigned long)tile_index, weight_services / K_PASSES, cout_base);
@@ -768,7 +785,7 @@ static int run_one_tile(const smoke_tile_desc_t *tile, uint32_t tile_index,
 
         if ((st & ST_IFM_REQ) != 0U) {
             debug_stage = 0x43000000U | (tile_index << 12) | (uint32_t)ifm_services;
-#if ACCEL_SMOKE_LAYER06_TILES
+#if ACCEL_SMOKE_LAYER06_TILES || ACCEL_SMOKE_LAYER06_POOL_TILES
             if ((ifm_services % (K_PASSES * 5)) == 0) {
                 xil_printf("tile[%lu] service: ifm progress=%d fy=%d k_base=%d status=0x%08lx\r\n",
                            (unsigned long)tile_index, ifm_services, status_fill_fy(st),
@@ -852,7 +869,7 @@ static int run_one_tile(const smoke_tile_desc_t *tile, uint32_t tile_index,
                       (uint32_t)ifm_services;
         return -1;
     }
-#if ACCEL_SMOKE_REAL_CONV0_CROP_POOL || ACCEL_SMOKE_LAYER06_TILE4 || ACCEL_SMOKE_LAYER06_TILES
+#if ACCEL_SMOKE_REAL_CONV0_CROP_POOL || ACCEL_SMOKE_LAYER06_ANY
     uint32_t expected_ifm_services = expected_ifm_services_for_tile(tile);
     if ((uint32_t)ifm_services != expected_ifm_services) {
         xil_printf("Unexpected IFM service count got=%d exp=%lu\r\n",
@@ -928,7 +945,7 @@ static int run_smoke(void)
 
     xil_printf("total services: bias=%d weight=%d ifm=%d\r\n",
                total_bias_services, total_weight_services, total_ifm_services);
-#if ACCEL_SMOKE_REAL_CONV0_CROP_POOL || ACCEL_SMOKE_LAYER06_TILE4 || ACCEL_SMOKE_LAYER06_TILES
+#if ACCEL_SMOKE_REAL_CONV0_CROP_POOL || ACCEL_SMOKE_LAYER06_ANY
     uint32_t expected_total_ifm_services = 0U;
     for (uint32_t tile_idx = 0U; tile_idx < SMOKE_TILE_COUNT; ++tile_idx) {
         expected_total_ifm_services += expected_ifm_services_for_tile(&smoke_tiles[tile_idx]);

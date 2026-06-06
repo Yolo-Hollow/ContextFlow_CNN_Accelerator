@@ -13,6 +13,19 @@ KH = 3
 KW = 3
 
 
+def maxpool2x2s2_hwc(values, h, w, c):
+    pooled = []
+    for y in range(h // 2):
+        for x in range(w // 2):
+            for co in range(c):
+                base0 = ((y * 2) * w + x * 2) * c + co
+                base1 = base0 + c
+                base2 = base0 + w * c
+                base3 = base2 + c
+                pooled.append(max(values[base0], values[base1], values[base2], values[base3]))
+    return pooled
+
+
 def read_exact(path, expected_size):
     data = path.read_bytes()
     if len(data) != expected_size:
@@ -46,6 +59,7 @@ def main():
     bias_raw = read_exact(SRC_DIR / "bias_i32.bin", COUT * 4)
     lut = read_exact(SRC_DIR / "activation_lut_u8.bin", 256)
     golden = read_exact(SRC_DIR / "golden_ofm_u8_hwc.bin", H * W * COUT)
+    golden_pool = maxpool2x2s2_hwc(golden, H, W, COUT)
 
     weight_kco = []
     for ch in range(CIN):
@@ -69,6 +83,7 @@ def main():
         emit_array(f, "int32_t", "layer06_tile4_bias_i32", bias, per_line=8)
         emit_array(f, "uint8_t", "layer06_tile4_activation_lut_u8", list(lut))
         emit_array(f, "uint8_t", "layer06_tile4_golden_ofm_u8", list(golden))
+        emit_array(f, "uint8_t", "layer06_pool_golden_ofm_u8", golden_pool)
         f.write("#endif\n")
 
     print(f"Wrote {out}")

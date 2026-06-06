@@ -477,6 +477,25 @@ Current result:
 
 - `26641 pass, 0 fail`; xsim elapsed about `00:05:36` on 2026-06-06.
 
+### `tb_conv_accel_core_axi_lite_axis_stream_r18_c8_b2_layer06_pool_ext_tile4`
+
+Purpose:
+
+- Verify the real model stage corresponding to single-scale `conv3_pool` under the current KV260 profile.
+- Exercise `52x52x64 -> Conv/LUT 52x52x128 -> 2x2/s2 maxpool 26x26x128` for the first `tile_ofm_h=4` conv tile.
+- Confirm pool-enabled `TILE_PIXEL_BASE` and OFM byte counts use the pooled output address space.
+
+Checks:
+
+- External IFM/weight/bias/LUT import is shared with the Layer06 conv-only tests.
+- Golden is `golden_pool2x2s2_u8_hwc.mem`, generated from the RTL semantic Layer06 activation output.
+- Output count is `26*2*128 = 6656` bytes for the first conv tile.
+- AXIS TLAST and debug counters match the pooled output byte count.
+
+Current result:
+
+- `6673 pass, 0 fail`; xsim elapsed about `00:00:19` on 2026-06-06.
+
 ### `tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_tile4_fifo16_backpressure`
 
 Purpose:

@@ -148,6 +148,8 @@ requant 与输入零点修正后，以下 xsim 回归已经通过：
 - `tb_conv_accel_core_axi_lite_axis_stream_conv0_crop_pool_ext`：真实 Conv0 crop 的 `Conv -> LUT -> Pool -> OFM AXIS` external golden test。
 - `tb_conv_accel_core_axi_lite_axis_stream_conv0_crop_pool_r18_c8_b2_ext`：同一份真实 Conv0 crop + pool golden，在当前 BD 默认阵列配置 `ROWS=18, COLS=8, IFM_BANKS=2` 下通过。
 - `tb_conv_accel_core_axi_lite_quant_lut`：AXI-Lite 间接写读 `QUANT_ADDR/DATA` 和 `LUT_ADDR/DATA`，并检查 legacy quant/LUT 端口兼容性。
+- `tb_conv_accel_core_axi_lite_axis_stream_r18_c8_b2_layer06_ext_tile4`：模型 `layer06_Conv` / 单尺度 `conv3_pool` 的 conv-only 首 tile，在当前 KV260 配置 `ROWS=18, COLS=8, COUT_TILE=16` 下通过。
+- `tb_conv_accel_core_axi_lite_axis_stream_r18_c8_b2_layer06_pool_ext_tile4`：同一真实层打开 activation 后 `2x2/s2` pooling，验证 `52x52x64 -> 52x52x128 -> 26x26x128` 的首个 pooled tile。
 - `tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_ext_tile4`：Layer06 小 tile 真实 golden。
 - `tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_ext_tiles`：Layer06 多 spatial tile。
 - `tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_ext_full`：完整 `52x52x64 -> 52x52x128` 层。
@@ -176,11 +178,15 @@ PS M_AXI_HPM0_FPD
 - `tcl/create_ps_dma_bd_xck26.tcl -generate_targets` 已通过 BD validate 和 wrapper generation。
 - 当前 validate 是结构检查；真正上板仍需要带 KV260 SOM/carrier preset 重新生成 bitstream 和 XSA。
 
-Vitis 侧当前有两个可构建 smoke ELF：
+Vitis 侧当前有多种可构建 smoke ELF：
 
 ```text
 build_vitis_2022_2/conv_accel_r18_c16_smoke/manual_build/conv_accel_r18_c8_smoke.elf
 build_vitis_2022_2/conv_accel_r18_c16_smoke/manual_build/conv_accel_conv0_crop_pool_smoke.elf
+build_vitis_2022_2/conv_accel_r18_c16_smoke/manual_build/conv_accel_conv0_crop_pool_tiles_smoke.elf
+build_vitis_2022_2/conv_accel_r18_c16_smoke/manual_build/conv_accel_layer06_tile4_smoke.elf
+build_vitis_2022_2/conv_accel_r18_c16_smoke/manual_build/conv_accel_layer06_tiles_smoke.elf
+build_vitis_2022_2/conv_accel_r18_c16_smoke/manual_build/conv_accel_layer06_pool_tiles_smoke.elf
 ```
 
 `conv_accel_r18_c8_smoke.elf` 是旧 deterministic smoke 的更新版，会显式通过 AXI-Lite 写入 identity quant、identity LUT 和 `EXPECTED_BYTES`。`conv_accel_conv0_crop_pool_smoke.elf` 使用真实 Conv0 crop + pool fixture，按当前 BD 默认配置调度：
@@ -199,6 +205,8 @@ D:/MPSoC/python_prj/rtl_golden/facemask_conv0_crop16x8_pool/xsim_mem
 ```
 
 小型 fixture 已转为 `sw/vitis_2022_2/src/conv0_crop_pool_data.h`，因此 Vitis smoke 构建不再依赖运行时访问外部 `.mem` 文件。
+
+Layer06 系列 ELF 使用 `sw/vitis_2022_2/scripts/generate_layer06_tile4_header.py` 在 manual build 阶段从外部 `D:/MPSoC/python_prj/rtl_golden/facemask_layer06_rtl` 生成大数组 header。`layer06_tiles` 验证 conv-only 完整 `52x52x128` 输出；`layer06_pool_tiles` 验证单尺度 `conv3_pool`，即 `52x52x64 -> 52x52x128 -> 26x26x128`。
 
 ## 6. 已知限制和风险
 
@@ -301,4 +309,7 @@ D:/MPSoC/python_prj
 - 2026-06-06 新 bitstream 上运行 `conv_accel_layer06_tile4_smoke.elf` 通过，日志为 `build_system_xck26_kv260/board_smoke_logs/20260606_113535_layer06_tile4_COM8.log`；服务计数为 `bias=8, weight=256, ifm=1280`，OFM debug delta 为 `core_wr=26624, axis_wr=26624, tlast=1, last_end=26624`，软件解析 `26624/26624` bytes，golden 对比 `0 mismatch`。
 - 2026-06-06 新 bitstream 下用 `-FastRun -RunConv0Tiles` 复测 Conv0 multi-tile 仍通过，日志为 `build_system_xck26_kv260/board_smoke_logs/20260606_114612_conv0_crop_pool_tiles_COM8.log`，说明 DMA length width 改动未破坏既有 Conv0 上板基线。
 - 2026-06-06 已实现并上板通过 `conv_accel_layer06_tiles_smoke.elf`，把真实 Layer06 `52x52x64 -> 52x52x128` 拆成 13 个 `tile_ofm_h=4` spatial tile 完整拼回；日志为 `build_system_xck26_kv260/board_smoke_logs/20260606_125905_layer06_tiles_COM8.log`，13 个 tile 均为 `core_wr=26624, axis_wr=26624, tlast=1, last_end=26624` delta，总服务计数为 `bias=104, weight=3328, ifm=19456`，最终 `ofm full compare=346112 bytes` 且 golden 对比 `0 mismatch`。
+- 2026-06-06 已补齐单尺度 `conv3_pool` 的离线验证入口：`tb_conv_accel_core_axi_lite_axis_stream_r18_c8_b2_layer06_pool_ext_tile4` 通过，结果为 `6673 pass, 0 fail`；该测试使用同一份真实 Layer06 conv/LUT 输出生成 `golden_pool2x2s2_u8_hwc.mem`，检查首个 `tile_ofm_h=4` conv tile 的 pooled 输出 `26*2*128=6656` bytes。
+- 2026-06-06 已新增 `conv_accel_layer06_pool_tiles_smoke.elf` 构建模式，用于在不改 RTL 的前提下上板验证完整 `52x52x64 -> 52x52x128 -> 26x26x128`，13 个 conv spatial tile 的 pool 后完整输出应为 `86528` bytes。
+- 2026-06-06 KV260 完整烧录后运行 `conv_accel_layer06_pool_tiles_smoke.elf` 通过，日志为 `build_system_xck26_kv260/board_smoke_logs/20260606_134340_layer06_pool_tiles_COM8.log`；最后一个 tile delta 为 `core_wr=6656, axis_wr=6656, tlast=1, last_end=6656`，总服务计数为 `bias=104, weight=3328, ifm=19456`，最终 `ofm full compare=86528 bytes` 且 golden 对比 `0 mismatch`。
 - 2026-06-06 `run_kv260_smoke_sequence.ps1` 已改为串口捕获看到 `PASS:` 或 `FAIL:` 后提前收尾，避免长测试失败后仍等待整个 `CaptureSeconds`；Vitis runtime 也已在配置前检查 `CTRL.bit0`，若上一次失败残留 busy 状态则直接要求重新烧录/复位 PL，避免 stale register 导致误判。
