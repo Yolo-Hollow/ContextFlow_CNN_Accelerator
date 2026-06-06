@@ -195,18 +195,24 @@ The generated ELF is:
 build_vitis_2022_2/conv_accel_r18_c16_smoke/manual_build/conv_accel_conv3_conv4_chain_smoke.elf
 ```
 
-Additional chain modes extend the same runtime through Conv5:
+Additional chain modes extend the same runtime through Conv7:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/manual_build_accel_smoke.ps1 -Mode conv4_conv5_chain
 powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/manual_build_accel_smoke.ps1 -Mode conv0_conv4_chain
 powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/manual_build_accel_smoke.ps1 -Mode conv0_conv5_chain
+powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/manual_build_accel_smoke.ps1 -Mode conv0_conv6_chain
+powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/manual_build_accel_smoke.ps1 -Mode conv0_conv7_chain
 ```
 
-The Conv0-to-Conv5 mode executes six consecutive hardware layers and compares
-every layer against a chain-specific RTL semantic golden. Conv5 must be
-generated from the Conv4 output of the same chain; a standalone Conv4 golden is
-not interchangeable because earlier RTL-semantic differences propagate.
+The Conv0-to-Conv7 mode executes eight consecutive hardware layers and compares
+every layer against a chain-specific RTL semantic golden. Conv5 and Conv6 must
+be generated from the preceding output of the same chain; standalone golden
+inputs are not interchangeable because earlier RTL-semantic differences
+propagate. Conv6 runs `13x13x512 -> 13x13x1024` with `K_TOTAL=4608`,
+`K_PASSES=256`, and `COUT_BLOCKS=64`. Conv7 keeps its native 1x1 golden
+semantics but runs on hardware as center-only sparse 3x3 with `K_TOTAL=9216`,
+`K_PASSES=512`, and `COUT_BLOCKS=16`.
 
 The current board-validated hardware export is:
 
@@ -299,7 +305,27 @@ To run the validated chain modes with the current line-buffer-fix bitstream:
 powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/run_kv260_smoke_sequence.ps1 -PortName COM8 -BuildDirName build_system_xck26_kv260_linebuffix -RunConv4Conv5Chain -CaptureSeconds 3600
 powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/run_kv260_smoke_sequence.ps1 -PortName COM8 -BuildDirName build_system_xck26_kv260_linebuffix -RunConv0Conv4Chain -CaptureSeconds 3600
 powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/run_kv260_smoke_sequence.ps1 -PortName COM8 -BuildDirName build_system_xck26_kv260_linebuffix -RunConv0Conv5Chain -CaptureSeconds 5400
+powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/run_kv260_smoke_sequence.ps1 -PortName COM8 -BuildDirName build_system_xck26_kv260_linebuffix -RunConv0Conv6Chain -CaptureSeconds 7200
+powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/run_kv260_smoke_sequence.ps1 -PortName COM8 -BuildDirName build_system_xck26_kv260_linebuffix -RunConv0Conv7Chain -CaptureSeconds 9000
 ```
+
+The Conv0-to-Conv6 chain passed on the line-buffer-fix bitstream on
+June 6, 2026. Its UART log is:
+
+```text
+build_system_xck26_kv260_linebuffix/board_smoke_logs/20260606_211220_conv0_conv6_chain_COM8.log
+```
+
+Conv6 compared all `173056` output bytes bit-exactly.
+
+The Conv0-to-Conv7 sparse-3x3 chain also passed on June 6, 2026:
+
+```text
+build_system_xck26_kv260_linebuffix/board_smoke_logs/20260606_212154_conv0_conv7_chain_COM8.log
+```
+
+Conv7 compared all `43264` bytes bit-exactly against its native 1x1 golden.
+The next runtime stage is Conv8.
 
 Use the full sequence after a board power cycle. `-FastRun` is only appropriate
 when the same bitstream is still programmed and the prior accelerator run left

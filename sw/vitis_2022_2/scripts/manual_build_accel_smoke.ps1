@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("r18_c8", "conv0_crop_pool", "conv0_crop_pool_tiles", "layer06_tile4", "layer06_tiles", "layer06_pool_tiles", "conv4_pool_tiles", "conv3_conv4_chain", "conv4_conv5_chain", "conv0_conv4_chain", "conv0_conv5_chain")]
+    [ValidateSet("r18_c8", "conv0_crop_pool", "conv0_crop_pool_tiles", "layer06_tile4", "layer06_tiles", "layer06_pool_tiles", "conv4_pool_tiles", "conv3_conv4_chain", "conv4_conv5_chain", "conv0_conv4_chain", "conv0_conv5_chain", "conv0_conv6_chain", "conv0_conv7_chain")]
     [string]$Mode = "r18_c8"
 )
 
@@ -149,6 +149,64 @@ if ($Mode -eq "conv0_conv5_chain") {
         (Join-Path $AppSrcDir "conv5_pool_data.h") `
         --prefix conv5_pool `
         --omit-ifm
+}
+if ($Mode -eq "conv0_conv6_chain") {
+    $Source = Join-Path $AppSrcDir "main_conv3_conv4_chain.c"
+    $Defines += "-DACCEL_CHAIN_CONV0_CONV6=1"
+    $BackboneRoot = "D:\MPSoC\python_prj\rtl_golden\facemask_chain_conv0_conv4_rtl"
+    $Layers = @(
+        @{ Root = $BackboneRoot; Dir = "00_conv0_pool"; Prefix = "conv0_pool"; OmitIfm = $false },
+        @{ Root = $BackboneRoot; Dir = "01_conv1_pool"; Prefix = "conv1_pool"; OmitIfm = $true },
+        @{ Root = $BackboneRoot; Dir = "02_conv2_pool"; Prefix = "conv2_pool"; OmitIfm = $true },
+        @{ Root = $BackboneRoot; Dir = "03_conv3_pool"; Prefix = "conv3_pool"; OmitIfm = $true },
+        @{ Root = $BackboneRoot; Dir = "04_conv4_pool"; Prefix = "conv4_pool"; OmitIfm = $true },
+        @{ Root = "D:\MPSoC\python_prj\rtl_golden\facemask_chain_conv0_conv5_rtl"; Dir = "05_conv5_pool_like_tiny"; Prefix = "conv5_pool"; OmitIfm = $true },
+        @{ Root = "D:\MPSoC\python_prj\rtl_golden\facemask_chain_conv0_conv6_rtl"; Dir = "06_head_conv6_3x3"; Prefix = "conv6"; OmitIfm = $true }
+    )
+    foreach ($Layer in $Layers) {
+        $Args = @(
+            (Join-Path $ScriptDir "generate_single_scale_layer_header.py"),
+            (Join-Path $Layer.Root $Layer.Dir),
+            (Join-Path $AppSrcDir "$($Layer.Prefix)_data.h"),
+            "--prefix",
+            $Layer.Prefix
+        )
+        if ($Layer.OmitIfm) {
+            $Args += "--omit-ifm"
+        }
+        & $Python @Args
+    }
+}
+if ($Mode -eq "conv0_conv7_chain") {
+    $Source = Join-Path $AppSrcDir "main_conv3_conv4_chain.c"
+    $Defines += "-DACCEL_CHAIN_CONV0_CONV7=1"
+    $BackboneRoot = "D:\MPSoC\python_prj\rtl_golden\facemask_chain_conv0_conv4_rtl"
+    $Layers = @(
+        @{ Root = $BackboneRoot; Dir = "00_conv0_pool"; Prefix = "conv0_pool"; OmitIfm = $false; Emulate1x1 = $false },
+        @{ Root = $BackboneRoot; Dir = "01_conv1_pool"; Prefix = "conv1_pool"; OmitIfm = $true; Emulate1x1 = $false },
+        @{ Root = $BackboneRoot; Dir = "02_conv2_pool"; Prefix = "conv2_pool"; OmitIfm = $true; Emulate1x1 = $false },
+        @{ Root = $BackboneRoot; Dir = "03_conv3_pool"; Prefix = "conv3_pool"; OmitIfm = $true; Emulate1x1 = $false },
+        @{ Root = $BackboneRoot; Dir = "04_conv4_pool"; Prefix = "conv4_pool"; OmitIfm = $true; Emulate1x1 = $false },
+        @{ Root = "D:\MPSoC\python_prj\rtl_golden\facemask_chain_conv0_conv5_rtl"; Dir = "05_conv5_pool_like_tiny"; Prefix = "conv5_pool"; OmitIfm = $true; Emulate1x1 = $false },
+        @{ Root = "D:\MPSoC\python_prj\rtl_golden\facemask_chain_conv0_conv6_rtl"; Dir = "06_head_conv6_3x3"; Prefix = "conv6"; OmitIfm = $true; Emulate1x1 = $false },
+        @{ Root = "D:\MPSoC\python_prj\rtl_golden\facemask_chain_conv0_conv7_rtl"; Dir = "07_head_conv7_1x1"; Prefix = "conv7"; OmitIfm = $true; Emulate1x1 = $true }
+    )
+    foreach ($Layer in $Layers) {
+        $Args = @(
+            (Join-Path $ScriptDir "generate_single_scale_layer_header.py"),
+            (Join-Path $Layer.Root $Layer.Dir),
+            (Join-Path $AppSrcDir "$($Layer.Prefix)_data.h"),
+            "--prefix",
+            $Layer.Prefix
+        )
+        if ($Layer.OmitIfm) {
+            $Args += "--omit-ifm"
+        }
+        if ($Layer.Emulate1x1) {
+            $Args += "--emulate-1x1-as-3x3"
+        }
+        & $Python @Args
+    }
 }
 
 & $Gcc -Wall -O0 -g3 -c -DARMA53_64 @Defines -I $BspInclude -I $AppSrcDir $Source -o $Obj

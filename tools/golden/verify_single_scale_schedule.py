@@ -79,6 +79,8 @@ def expected_from_spec_layer(layer, rows, cout_tile, max_tile_ofm_h):
     kernel = int(layer["kernel"])
     stride = int(layer["stride"])
     pad = int(layer["pad"])
+    hardware_kernel = int(layer.get("hardware_kernel", kernel))
+    hardware_pad = int(layer.get("hardware_pad", pad))
     pool_enable = 0 if layer["pool"] == "bypass" else 1
     pool_stride = 2 if layer["pool"] == "maxpool2x2s2" else 0
 
@@ -86,6 +88,10 @@ def expected_from_spec_layer(layer, rows, cout_tile, max_tile_ofm_h):
     calc_conv_h = ((in_h + 2 * pad - kernel) // stride) + 1
     if calc_conv_w != conv_w or calc_conv_h != conv_h:
         raise RuntimeError(f"{layer['name']}: conv shape does not match kernel/stride/pad")
+    hardware_conv_w = ((in_w + 2 * hardware_pad - hardware_kernel) // stride) + 1
+    hardware_conv_h = ((in_h + 2 * hardware_pad - hardware_kernel) // stride) + 1
+    if hardware_conv_w != conv_w or hardware_conv_h != conv_h:
+        raise RuntimeError(f"{layer['name']}: hardware conv mapping changes the output shape")
 
     final_w = conv_w
     final_h = conv_h
@@ -117,16 +123,16 @@ def expected_from_spec_layer(layer, rows, cout_tile, max_tile_ofm_h):
         "fm_h": in_h,
         "cin": cin,
         "cout_total": cout,
-        "kernel": kernel,
+        "kernel": hardware_kernel,
         "stride": stride,
-        "pad": pad,
+        "pad": hardware_pad,
         "pool_enable": pool_enable,
         "pool_stride": pool_stride,
         "conv_pixels": conv_w * conv_h,
         "final_pixels": out_w * out_h,
         "expected_ofm_bytes": out_w * out_h * cout,
-        "k_total": cin * kernel * kernel,
-        "k_passes": ceil_div(cin * kernel * kernel, rows),
+        "k_total": cin * hardware_kernel * hardware_kernel,
+        "k_passes": ceil_div(cin * hardware_kernel * hardware_kernel, rows),
         "cout_blocks": ceil_div(cout, cout_tile),
         "conv_w": conv_w,
         "conv_h": conv_h,

@@ -13,6 +13,8 @@ param(
     [switch]$RunConv4Conv5Chain,
     [switch]$RunConv0Conv4Chain,
     [switch]$RunConv0Conv5Chain,
+    [switch]$RunConv0Conv6Chain,
+    [switch]$RunConv0Conv7Chain,
     [switch]$RunDeterministic,
     [string]$BuildDirName = "build_system_xck26_kv260"
 )
@@ -37,6 +39,8 @@ $Conv3Conv4ChainElf = Join-Path $Root "build_vitis_2022_2\conv_accel_r18_c16_smo
 $Conv4Conv5ChainElf = Join-Path $Root "build_vitis_2022_2\conv_accel_r18_c16_smoke\manual_build\conv_accel_conv4_conv5_chain_smoke.elf"
 $Conv0Conv4ChainElf = Join-Path $Root "build_vitis_2022_2\conv_accel_r18_c16_smoke\manual_build\conv_accel_conv0_conv4_chain_smoke.elf"
 $Conv0Conv5ChainElf = Join-Path $Root "build_vitis_2022_2\conv_accel_r18_c16_smoke\manual_build\conv_accel_conv0_conv5_chain_smoke.elf"
+$Conv0Conv6ChainElf = Join-Path $Root "build_vitis_2022_2\conv_accel_r18_c16_smoke\manual_build\conv_accel_conv0_conv6_chain_smoke.elf"
+$Conv0Conv7ChainElf = Join-Path $Root "build_vitis_2022_2\conv_accel_r18_c16_smoke\manual_build\conv_accel_conv0_conv7_chain_smoke.elf"
 $DownloadTcl = Join-Path $ScriptDir "download_run_accel_smoke.tcl"
 $ProbeTcl = Join-Path $ScriptDir "probe_pl_regs.tcl"
 $JtagProbeTcl = Join-Path $ScriptDir "probe_jtag_targets.tcl"
@@ -133,7 +137,13 @@ if (!$SkipBit -and !$FastRun) {
 Write-Host "Available COM ports: $([string]::Join(', ', [System.IO.Ports.SerialPort]::getportnames()))"
 Start-HwServer
 & $Xsct $JtagProbeTcl | Tee-Object -FilePath (Join-Path $LogDir "$Stamp`_jtag_probe.log")
-if ($RunConv0Conv5Chain) {
+if ($RunConv0Conv7Chain) {
+    Run-Smoke "conv0_conv7_chain" $Conv0Conv7ChainElf (!$SkipBit -and !$FastRun) $FastRun
+    & $Xsct $ProbeTcl | Tee-Object -FilePath (Join-Path $LogDir "$Stamp`_pl_probe_after_conv0_conv7_chain.log")
+} elseif ($RunConv0Conv6Chain) {
+    Run-Smoke "conv0_conv6_chain" $Conv0Conv6ChainElf (!$SkipBit -and !$FastRun) $FastRun
+    & $Xsct $ProbeTcl | Tee-Object -FilePath (Join-Path $LogDir "$Stamp`_pl_probe_after_conv0_conv6_chain.log")
+} elseif ($RunConv0Conv5Chain) {
     Run-Smoke "conv0_conv5_chain" $Conv0Conv5ChainElf (!$SkipBit -and !$FastRun) $FastRun
     & $Xsct $ProbeTcl | Tee-Object -FilePath (Join-Path $LogDir "$Stamp`_pl_probe_after_conv0_conv5_chain.log")
 } elseif ($RunConv0Conv4Chain) {
