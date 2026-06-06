@@ -15,6 +15,18 @@ foreach addr {0xA0000000 0xA0010000 0xA0020000 0xA0030000 0xA0040000 0xA0050000}
     }
 }
 
+puts "=== OFM DMA S2MM registers ==="
+foreach {name addr} {
+    s2mm_dmacr  0xA0050030
+    s2mm_dmasr  0xA0050034
+    s2mm_da     0xA0050048
+    s2mm_da_msb 0xA005004C
+    s2mm_length 0xA0050058
+} {
+    puts "$name ($addr)"
+    puts [mrd $addr 1]
+}
+
 puts "=== Accelerator configuration registers ==="
 foreach {name addr} {
     ctrl       0xA0000000

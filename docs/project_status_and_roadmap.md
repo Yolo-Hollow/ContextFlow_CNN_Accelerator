@@ -1,6 +1,6 @@
 # Systolic Accelerator 当前状态与后续计划
 
-> 最后更新：2026-06-03
+> 最后更新：2026-06-06
 
 本文档作为当前项目的主入口。旧版 `accelerator_systolic.md` 保留早期设计记录和阶段性实验过程；本文档只记录当前 RTL 状态、已验证内容、已知限制和后续路线。
 
@@ -295,3 +295,10 @@ D:/MPSoC/python_prj
 - 2026-06-04 KV260 重新上电后完整烧录 bitstream 并运行 `conv_accel_conv0_crop_pool_smoke.elf` 通过，日志为 `build_system_xck26_kv260/board_smoke_logs/20260604_211655_conv0_crop_pool_COM8.log`；OFM debug 计数为 `expected=512, core_wr=512, axis_wr=512, tlast=1, last_end=512`，软件解析 `512/512` bytes，golden 对比 `0 mismatch`。
 - 2026-06-04 `-FastRun` 软件迭代路径已验证通过，日志为 `build_system_xck26_kv260/board_smoke_logs/20260604_213526_conv0_crop_pool_COM8.log`；硬件 debug counter 绝对值会跨 fast run 累加，但软件已打印并校验本次 delta：`core_wr=512, axis_wr=512, tlast=1, last_end=512`。
 - 2026-06-05 KV260 完整烧录后运行 `conv_accel_conv0_crop_pool_tiles_smoke.elf`，随后用 `-FastRun -RunConv0Tiles` 复测通过，日志为 `build_system_xck26_kv260/board_smoke_logs/20260605_230557_conv0_crop_pool_tiles_COM8.log`；两个 tile 均为 `expected=256` bytes，delta 均为 `core_wr=256, axis_wr=256, tlast=1, last_end=256`，OFM packet 地址在第二 tile 从 `addr=256` 开始，最终 `ofm full compare=512 bytes` 且 golden 对比 `0 mismatch`。由于 `pad=1, kernel=3`，两个 `tile_ofm_h=4` tile 分别需要 5 条物理 IFM 行/每 K pass，因此总服务计数为 `bias=2, weight=4, ifm=20`。
+- 2026-06-06 新增并通过 `tb_conv_accel_core_axi_lite_axis_stream_r18_c8_b2_layer06_ext_tile4`，在当前 KV260 参数 `ROWS=18, COLS=8, COUT_TILE=16` 下验证真实 Layer06 `52x52x64 -> 52x52x128` 的首个 `tile_ofm_h=4` tile，xsim 结果为 `26641 pass, 0 fail`。
+- 2026-06-06 首次上板运行 `conv_accel_layer06_tile4_smoke.elf` 时，卷积和前 1 个 COUT block 服务正常，但 OFM FIFO 在 `gpio2=0x208` 处堵塞。根因确认为 AXI DMA 默认 `C_SG_LENGTH_WIDTH=14`，无法承载 Layer06 tile4 所需的 `26624 * 8 = 212992` bytes OFM debug AXIS capture。
+- 2026-06-06 已将 BD 中四个 AXI DMA 的 `c_sg_length_width` 提升为 `23` 并重新生成 KV260 bitstream/XSA；实现报告 `WNS=1.105 ns, TNS=0`，route status 无 routing error，资源为 `CLB LUTs=50764 (43.34%)`, `CLB Registers=44083 (18.82%)`, `BRAM Tile=28.5 (19.79%)`, `DSP=177 (14.18%)`。
+- 2026-06-06 新 bitstream 上运行 `conv_accel_layer06_tile4_smoke.elf` 通过，日志为 `build_system_xck26_kv260/board_smoke_logs/20260606_113535_layer06_tile4_COM8.log`；服务计数为 `bias=8, weight=256, ifm=1280`，OFM debug delta 为 `core_wr=26624, axis_wr=26624, tlast=1, last_end=26624`，软件解析 `26624/26624` bytes，golden 对比 `0 mismatch`。
+- 2026-06-06 新 bitstream 下用 `-FastRun -RunConv0Tiles` 复测 Conv0 multi-tile 仍通过，日志为 `build_system_xck26_kv260/board_smoke_logs/20260606_114612_conv0_crop_pool_tiles_COM8.log`，说明 DMA length width 改动未破坏既有 Conv0 上板基线。
+- 2026-06-06 已实现并上板通过 `conv_accel_layer06_tiles_smoke.elf`，把真实 Layer06 `52x52x64 -> 52x52x128` 拆成 13 个 `tile_ofm_h=4` spatial tile 完整拼回；日志为 `build_system_xck26_kv260/board_smoke_logs/20260606_125905_layer06_tiles_COM8.log`，13 个 tile 均为 `core_wr=26624, axis_wr=26624, tlast=1, last_end=26624` delta，总服务计数为 `bias=104, weight=3328, ifm=19456`，最终 `ofm full compare=346112 bytes` 且 golden 对比 `0 mismatch`。
+- 2026-06-06 `run_kv260_smoke_sequence.ps1` 已改为串口捕获看到 `PASS:` 或 `FAIL:` 后提前收尾，避免长测试失败后仍等待整个 `CaptureSeconds`；Vitis runtime 也已在配置前检查 `CTRL.bit0`，若上一次失败残留 busy 状态则直接要求重新烧录/复位 PL，避免 stale register 导致误判。

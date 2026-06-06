@@ -98,6 +98,43 @@ The tiled mode writes:
 build_vitis_2022_2/conv_accel_r18_c16_smoke/manual_build/conv_accel_conv0_crop_pool_tiles_smoke.elf
 ```
 
+To build the first YOLOv3-tiny real-layer board smoke, use the Layer06 tile4
+mode:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/manual_build_accel_smoke.ps1 -Mode layer06_tile4
+```
+
+This mode targets the current KV260 `ROWS=18, COLS=8, COUT_TILE=16`
+bitstream and verifies the first `tile_ofm_h=4` slice of the real
+`52x52x64 -> 52x52x128` Layer06 fixture. It exercises `K_PASSES=32` and
+`COUT_BLOCKS=8`, so the software services bias and weight requests using the
+inferred `cout_base` for each COUT block. The large IFM/weight/golden arrays
+are generated into the Vitis app source directory at manual-build time from:
+
+```text
+D:/MPSoC/python_prj/rtl_golden/facemask_layer06_rtl
+```
+
+The generated ELF is:
+
+```text
+build_vitis_2022_2/conv_accel_r18_c16_smoke/manual_build/conv_accel_layer06_tile4_smoke.elf
+```
+
+The full Layer06 spatial-tiles mode reuses the same generated data header and
+runs 13 `tile_ofm_h=4` spatial tiles to check the complete `52x52x128` output:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/manual_build_accel_smoke.ps1 -Mode layer06_tiles
+```
+
+The generated ELF is:
+
+```text
+build_vitis_2022_2/conv_accel_r18_c16_smoke/manual_build/conv_accel_layer06_tiles_smoke.elf
+```
+
 This script uses the carrier-based hardware export:
 
 ```text
@@ -151,6 +188,19 @@ To run the two-spatial-tile Conv0 smoke instead of the single-tile Conv0 smoke:
 powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/run_kv260_smoke_sequence.ps1 -PortName COM8 -RunConv0Tiles
 ```
 
+To run the Layer06 tile4 smoke:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/run_kv260_smoke_sequence.ps1 -PortName COM8 -RunLayer06Tile4 -CaptureSeconds 300
+```
+
+To run the complete Layer06 13-tile smoke after a clean bitstream download or a
+known-good tile4 run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/run_kv260_smoke_sequence.ps1 -PortName COM8 -FastRun -RunLayer06Tiles -CaptureSeconds 2400
+```
+
 The script starts `hw_server` if needed, probes JTAG, captures serial logs,
 downloads the bitstream and ELF, then runs `probe_pl_regs.tcl`. Logs are saved
 under:
@@ -171,6 +221,11 @@ powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/run_kv260_smoke
 If the board was power-cycled, the PL indicator suggests no programmed logic, or
 DMA reset stalls at the first MMIO access, rerun the full sequence without
 `-FastRun` or `-SkipBit` so the bitstream is programmed again.
+
+If a previous accelerator run failed while `CTRL.bit0` remained busy, do not use
+`-FastRun` for the next long test. The smoke runtime now checks this condition
+before configuration and asks for a PL reset/bitstream reprogramming instead of
+continuing with stale registers.
 
 The deterministic smoke is kept as a control/DMA/GPIO diagnostic. Core
 correctness should be judged first from the real Conv0 crop + pool fixture,

@@ -81,7 +81,64 @@
 #define ACCEL_SMOKE_CONV0_CROP_POOL_TILES 0
 #endif
 
-#if ACCEL_SMOKE_REAL_CONV0_CROP_POOL
+#ifndef ACCEL_SMOKE_LAYER06_TILE4
+#define ACCEL_SMOKE_LAYER06_TILE4 0
+#endif
+
+#ifndef ACCEL_SMOKE_LAYER06_TILES
+#define ACCEL_SMOKE_LAYER06_TILES 0
+#endif
+
+#if ACCEL_SMOKE_LAYER06_TILE4 || ACCEL_SMOKE_LAYER06_TILES
+
+#define ROWS                  18
+#define COLS                  8
+#define IFM_BANKS             2
+#define FM_W                  52
+#define FM_H                  52
+#define OFM_W                 52
+#define OFM_H                 52
+#define CIN                   64
+#define KH                    3
+#define KW                    3
+#define K_TOTAL               (CIN * KH * KW)
+#define COUT_TILE             (COLS * 2)
+#define COUT_TOTAL            128
+#define CONV_PAD              1
+#define CONV_STRIDE           1
+#define TILE_OY_BASE          0
+#define TILE_OFM_H            4
+#if ACCEL_SMOKE_LAYER06_TILES
+#define SMOKE_TILE_COUNT      13
+#define SMOKE_NAME            "layer06 tiles"
+#else
+#define SMOKE_TILE_COUNT      1
+#define SMOKE_NAME            "layer06 tile4"
+#endif
+#define TILE_PIXEL_BASE       0
+#define TILE_PIXELS           (OFM_W * TILE_OFM_H)
+#define FULL_PIXELS           (OFM_W * OFM_H)
+#define K_PASSES              ((K_TOTAL + ROWS - 1) / ROWS)
+#define COUT_BLOCKS           ((COUT_TOTAL + COUT_TILE - 1) / COUT_TILE)
+#define INPUT_ZERO_POINT      36
+#define ACT_MODE              2
+#define POOL_ENABLE           0
+#define POOL_STRIDE           0
+#define QUANT_MULT            18055U
+#define QUANT_SHIFT           7U
+#define QUANT_ZP              75U
+#define EXPECTED_OUTPUT_PIXELS TILE_PIXELS
+#define EXPECTED_OFM_BYTES    (EXPECTED_OUTPUT_PIXELS * COUT_TOTAL)
+#if ACCEL_SMOKE_LAYER06_TILES
+#define TOTAL_OUTPUT_PIXELS   FULL_PIXELS
+#define TOTAL_EXPECTED_OFM_BYTES (FULL_PIXELS * COUT_TOTAL)
+#else
+#define TOTAL_OUTPUT_PIXELS   EXPECTED_OUTPUT_PIXELS
+#define TOTAL_EXPECTED_OFM_BYTES EXPECTED_OFM_BYTES
+#endif
+#define OFM_AXIS_BYTES        (EXPECTED_OFM_BYTES * OFM_AXIS_BEAT_BYTES)
+
+#elif ACCEL_SMOKE_REAL_CONV0_CROP_POOL
 
 #define ROWS                  18
 #define COLS                  8

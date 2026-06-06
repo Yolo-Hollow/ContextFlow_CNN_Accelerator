@@ -461,6 +461,22 @@ Current result:
 
 - `26641 pass, 0 fail`; xsim elapsed about `00:00:21`
 
+### `tb_conv_accel_core_axi_lite_axis_stream_r18_c8_b2_layer06_ext_tile4`
+
+Purpose:
+
+- Verify the same real Layer06 tile under the current KV260 default profile: `ROWS=18, COLS=8, COUT_TILE=16`.
+- Exercise `K_PASSES=32` and `COUT_BLOCKS=8`, matching the board smoke scheduler.
+
+Checks:
+
+- External IFM/weight/bias/LUT/golden import.
+- Current r18_c8 parameterization for weight lanes, COUT block order, requant, activation, and HWC OFM byte writeback.
+
+Current result:
+
+- `26641 pass, 0 fail`; xsim elapsed about `00:05:36` on 2026-06-06.
+
 ### `tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_tile4_fifo16_backpressure`
 
 Purpose:

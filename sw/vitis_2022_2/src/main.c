@@ -15,6 +15,10 @@
 #include "conv0_crop_pool_data.h"
 #endif
 
+#if ACCEL_SMOKE_LAYER06_TILE4 || ACCEL_SMOKE_LAYER06_TILES
+#include "layer06_tile4_data.h"
+#endif
+
 /* Zynq UltraScale+ PS UARTs. Write both so either KV260 FTDI channel can show logs. */
 #define UART0_BASE            0xFF000000U
 #define UART1_BASE            0xFF010000U
@@ -64,6 +68,9 @@ static const accel_layer_desc_t active_layer = {
 #if ACCEL_SMOKE_REAL_CONV0_CROP_POOL
     .activation_lut = conv0_crop_activation_lut_u8,
     .golden_ofm_u8 = conv0_crop_golden_pool_u8,
+#elif ACCEL_SMOKE_LAYER06_TILE4 || ACCEL_SMOKE_LAYER06_TILES
+    .activation_lut = layer06_tile4_activation_lut_u8,
+    .golden_ofm_u8 = layer06_tile4_golden_ofm_u8,
 #else
     .activation_lut = NULL,
     .golden_ofm_u8 = NULL,
@@ -96,6 +103,20 @@ static const smoke_tile_desc_t smoke_tiles[SMOKE_TILE_COUNT] = {
 #if ACCEL_SMOKE_CONV0_CROP_POOL_TILES
     {"tile0", 0U, 4U, 0U, 16U * 4U, 8U * 2U, 8U * 2U * 16U},
     {"tile1", 4U, 4U, 16U, 16U * 4U, 8U * 2U, 8U * 2U * 16U},
+#elif ACCEL_SMOKE_LAYER06_TILES
+    {"tile0", 0U, 4U, 0U * 52U, 52U * 4U, 52U * 4U, 52U * 4U * 128U},
+    {"tile1", 4U, 4U, 4U * 52U, 52U * 4U, 52U * 4U, 52U * 4U * 128U},
+    {"tile2", 8U, 4U, 8U * 52U, 52U * 4U, 52U * 4U, 52U * 4U * 128U},
+    {"tile3", 12U, 4U, 12U * 52U, 52U * 4U, 52U * 4U, 52U * 4U * 128U},
+    {"tile4", 16U, 4U, 16U * 52U, 52U * 4U, 52U * 4U, 52U * 4U * 128U},
+    {"tile5", 20U, 4U, 20U * 52U, 52U * 4U, 52U * 4U, 52U * 4U * 128U},
+    {"tile6", 24U, 4U, 24U * 52U, 52U * 4U, 52U * 4U, 52U * 4U * 128U},
+    {"tile7", 28U, 4U, 28U * 52U, 52U * 4U, 52U * 4U, 52U * 4U * 128U},
+    {"tile8", 32U, 4U, 32U * 52U, 52U * 4U, 52U * 4U, 52U * 4U * 128U},
+    {"tile9", 36U, 4U, 36U * 52U, 52U * 4U, 52U * 4U, 52U * 4U * 128U},
+    {"tile10", 40U, 4U, 40U * 52U, 52U * 4U, 52U * 4U, 52U * 4U * 128U},
+    {"tile11", 44U, 4U, 44U * 52U, 52U * 4U, 52U * 4U, 52U * 4U * 128U},
+    {"tile12", 48U, 4U, 48U * 52U, 52U * 4U, 52U * 4U, 52U * 4U * 128U},
 #else
     {"tile0", TILE_OY_BASE, TILE_OFM_H, TILE_PIXEL_BASE,
      TILE_PIXELS, EXPECTED_OUTPUT_PIXELS, EXPECTED_OFM_BYTES},
@@ -255,7 +276,7 @@ static int program_activation_lut(const uint8_t *lut)
     return 0;
 }
 
-#if !ACCEL_SMOKE_REAL_CONV0_CROP_POOL
+#if !ACCEL_SMOKE_REAL_CONV0_CROP_POOL && !ACCEL_SMOKE_LAYER06_TILE4 && !ACCEL_SMOKE_LAYER06_TILES
 static uint8_t clamp8(int32_t v)
 {
     if (v > 127) {
@@ -304,6 +325,25 @@ static void make_vectors(void)
     for (int co = 0; co < COUT_TOTAL; ++co) {
         bias[co] = conv0_crop_bias_i32[co];
     }
+#elif ACCEL_SMOKE_LAYER06_TILE4 || ACCEL_SMOKE_LAYER06_TILES
+    for (int ch = 0; ch < CIN; ++ch) {
+        for (int y = 0; y < FM_H; ++y) {
+            for (int x = 0; x < FM_W; ++x) {
+                int idx = (y * FM_W + x) * CIN + ch;
+                feat[ch][y][x] = (int8_t)layer06_tile4_ifm_u8[idx];
+            }
+        }
+    }
+
+    for (int k = 0; k < K_TOTAL; ++k) {
+        for (int co = 0; co < COUT_TOTAL; ++co) {
+            weight[k][co] = layer06_tile4_weight_s8[k * COUT_TOTAL + co];
+        }
+    }
+
+    for (int co = 0; co < COUT_TOTAL; ++co) {
+        bias[co] = layer06_tile4_bias_i32[co];
+    }
 #else
     for (int ch = 0; ch < CIN; ++ch) {
         for (int y = 0; y < FM_H; ++y) {
@@ -342,16 +382,18 @@ static void make_vectors(void)
 #endif
 }
 
-static void pack_bias(void)
+static void pack_bias(int cout_base)
 {
     for (int i = 0; i < COUT_TILE; i += 2) {
-        uint32_t lo = (i < COUT_TOTAL) ? (uint32_t)bias[i] : 0U;
-        uint32_t hi = ((i + 1) < COUT_TOTAL) ? (uint32_t)bias[i + 1] : 0U;
+        int lo_co = cout_base + i;
+        int hi_co = cout_base + i + 1;
+        uint32_t lo = (lo_co < COUT_TOTAL) ? (uint32_t)bias[lo_co] : 0U;
+        uint32_t hi = (hi_co < COUT_TOTAL) ? (uint32_t)bias[hi_co] : 0U;
         bias_buf[i / 2] = ((uint64_t)hi << 32) | lo;
     }
 }
 
-static void pack_weight(int k_base)
+static void pack_weight(int k_base, int cout_base)
 {
     int lane = 0;
     uint64_t word = 0;
@@ -360,9 +402,10 @@ static void pack_weight(int k_base)
     for (int kk = 0; kk < ROWS; ++kk) {
         for (int cc = 0; cc < COUT_TILE; ++cc) {
             int gk = k_base + kk;
+            int co = cout_base + cc;
             uint8_t v = 0;
-            if (gk < K_TOTAL && cc < COUT_TOTAL) {
-                v = (uint8_t)weight[gk][cc];
+            if (gk < K_TOTAL && co < COUT_TOTAL) {
+                v = (uint8_t)weight[gk][co];
             }
             word |= ((uint64_t)v) << (lane * 8);
             if (lane == 7) {
@@ -485,7 +528,7 @@ static int wait_ifm_request_advance(uint32_t serviced_status)
     return -1;
 }
 
-#if ACCEL_SMOKE_REAL_CONV0_CROP_POOL
+#if ACCEL_SMOKE_REAL_CONV0_CROP_POOL || ACCEL_SMOKE_LAYER06_TILE4 || ACCEL_SMOKE_LAYER06_TILES
 static uint32_t expected_ifm_services_for_tile(const smoke_tile_desc_t *tile)
 {
     int first_fy = (int)tile->tile_oy_base * CONV_STRIDE - CONV_PAD;
@@ -505,9 +548,9 @@ static uint32_t expected_ifm_services_for_tile(const smoke_tile_desc_t *tile)
 }
 #endif
 
-static int service_bias(void)
+static int service_bias(int cout_base)
 {
-    pack_bias();
+    pack_bias(cout_base);
     dma_start_mm2s(DMA_BIAS_BASE_ADDR, active_runtime.bias_buf, active_runtime.bias_bytes);
     if (dma_wait(DMA_BIAS_BASE_ADDR, DMA_MM2S_DMASR, "bias MM2S") != 0) {
         return -1;
@@ -515,11 +558,11 @@ static int service_bias(void)
     return wait_gpio_deassert(ST_BIAS_REQ);
 }
 
-static int service_weight(int *next_k_pass, int *active_k_base)
+static int service_weight(int *next_k_pass, int *active_k_base, int cout_base)
 {
     int k_base = (*next_k_pass) * ROWS;
     *active_k_base = k_base;
-    pack_weight(k_base);
+    pack_weight(k_base, cout_base);
     dma_start_mm2s(DMA_WEIGHT_BASE_ADDR, active_runtime.weight_buf, active_runtime.weight_bytes);
     if (dma_wait(DMA_WEIGHT_BASE_ADDR, DMA_MM2S_DMASR, "weight MM2S") != 0) {
         return -1;
@@ -604,7 +647,7 @@ static int compare_ofm(void)
     for (int idx = 0; idx < TOTAL_OUTPUT_PIXELS; ++idx) {
         for (int co = 0; co < COUT_TOTAL; ++co) {
             uint8_t got = ofm_mem[idx * COUT_TOTAL + co];
-#if ACCEL_SMOKE_REAL_CONV0_CROP_POOL
+#if ACCEL_SMOKE_REAL_CONV0_CROP_POOL || ACCEL_SMOKE_LAYER06_TILE4 || ACCEL_SMOKE_LAYER06_TILES
             uint8_t exp = active_layer.golden_ofm_u8[idx * COUT_TOTAL + co];
 #else
             uint8_t exp = clamp8(golden[idx][co]);
@@ -693,9 +736,11 @@ static int run_one_tile(const smoke_tile_desc_t *tile, uint32_t tile_index,
         }
 
         if ((st & ST_BIAS_REQ) != 0U) {
+            int cout_base = (bias_services % COUT_BLOCKS) * COUT_TILE;
             debug_stage = 0x41000000U | (tile_index << 12) | (uint32_t)bias_services;
-            xil_printf("tile[%lu] service: bias %d\r\n", (unsigned long)tile_index, bias_services);
-            if (service_bias() != 0) {
+            xil_printf("tile[%lu] service: bias %d cout_base=%d\r\n",
+                       (unsigned long)tile_index, bias_services, cout_base);
+            if (service_bias(cout_base) != 0) {
                 return -1;
             }
             ++bias_services;
@@ -703,10 +748,18 @@ static int run_one_tile(const smoke_tile_desc_t *tile, uint32_t tile_index,
         }
 
         if ((st & ST_WEIGHT_REQ) != 0U) {
+            int cout_base = ((weight_services / K_PASSES) % COUT_BLOCKS) * COUT_TILE;
             debug_stage = 0x42000000U | (tile_index << 12) | (uint32_t)weight_services;
-            xil_printf("tile[%lu] service: weight %d k_base=%d\r\n",
-                       (unsigned long)tile_index, weight_services, k_pass * ROWS);
-            if (service_weight(&k_pass, &active_k_base) != 0) {
+#if ACCEL_SMOKE_LAYER06_TILES
+            if ((weight_services % K_PASSES) == 0) {
+                xil_printf("tile[%lu] service: weight block=%d cout_base=%d\r\n",
+                           (unsigned long)tile_index, weight_services / K_PASSES, cout_base);
+            }
+#else
+            xil_printf("tile[%lu] service: weight %d cout_base=%d k_base=%d\r\n",
+                       (unsigned long)tile_index, weight_services, cout_base, k_pass * ROWS);
+#endif
+            if (service_weight(&k_pass, &active_k_base, cout_base) != 0) {
                 return -1;
             }
             ++weight_services;
@@ -715,9 +768,17 @@ static int run_one_tile(const smoke_tile_desc_t *tile, uint32_t tile_index,
 
         if ((st & ST_IFM_REQ) != 0U) {
             debug_stage = 0x43000000U | (tile_index << 12) | (uint32_t)ifm_services;
+#if ACCEL_SMOKE_LAYER06_TILES
+            if ((ifm_services % (K_PASSES * 5)) == 0) {
+                xil_printf("tile[%lu] service: ifm progress=%d fy=%d k_base=%d status=0x%08lx\r\n",
+                           (unsigned long)tile_index, ifm_services, status_fill_fy(st),
+                           active_k_base, (unsigned long)st);
+            }
+#else
             xil_printf("tile[%lu] service: ifm %d fy=%d k_base=%d status=0x%08lx\r\n",
                        (unsigned long)tile_index, ifm_services, status_fill_fy(st),
                        active_k_base, (unsigned long)st);
+#endif
             if (service_ifm(st, active_k_base, &ifm_row_phase) != 0) {
                 return -1;
             }
@@ -791,7 +852,7 @@ static int run_one_tile(const smoke_tile_desc_t *tile, uint32_t tile_index,
                       (uint32_t)ifm_services;
         return -1;
     }
-#if ACCEL_SMOKE_REAL_CONV0_CROP_POOL
+#if ACCEL_SMOKE_REAL_CONV0_CROP_POOL || ACCEL_SMOKE_LAYER06_TILE4 || ACCEL_SMOKE_LAYER06_TILES
     uint32_t expected_ifm_services = expected_ifm_services_for_tile(tile);
     if ((uint32_t)ifm_services != expected_ifm_services) {
         xil_printf("Unexpected IFM service count got=%d exp=%lu\r\n",
@@ -814,6 +875,16 @@ static int run_smoke(void)
     int total_bias_services = 0;
     int total_weight_services = 0;
     int total_ifm_services = 0;
+    uint32_t initial_ctrl = rd32(ACCEL_BASE_ADDR, ACCEL_CTRL);
+
+    if ((initial_ctrl & 0x1U) != 0U) {
+        xil_printf("FAIL: accelerator busy before configuration ctrl=0x%08lx; reprogram bitstream or reset PL\r\n",
+                   (unsigned long)initial_ctrl);
+        debug_stage = 0xef000000U;
+        debug_value = initial_ctrl;
+        return -1;
+    }
+    wr32(ACCEL_BASE_ADDR, ACCEL_CTRL, 2U);
 
     debug_stage = 0x10000000U;
     xil_printf("stage: dma reset\r\n");
@@ -857,7 +928,7 @@ static int run_smoke(void)
 
     xil_printf("total services: bias=%d weight=%d ifm=%d\r\n",
                total_bias_services, total_weight_services, total_ifm_services);
-#if ACCEL_SMOKE_REAL_CONV0_CROP_POOL
+#if ACCEL_SMOKE_REAL_CONV0_CROP_POOL || ACCEL_SMOKE_LAYER06_TILE4 || ACCEL_SMOKE_LAYER06_TILES
     uint32_t expected_total_ifm_services = 0U;
     for (uint32_t tile_idx = 0U; tile_idx < SMOKE_TILE_COUNT; ++tile_idx) {
         expected_total_ifm_services += expected_ifm_services_for_tile(&smoke_tiles[tile_idx]);
@@ -899,9 +970,9 @@ int main(void)
     debug_stage = 0x02000000U;
     int rc = run_smoke();
     if (rc == 0) {
-        xil_printf("PASS: r18_c8 smoke matches RTL golden\r\n");
+        xil_printf("PASS: %s smoke matches RTL golden\r\n", SMOKE_NAME);
     } else {
-        xil_printf("FAIL: r18_c8 smoke failed\r\n");
+        xil_printf("FAIL: %s smoke failed\r\n", SMOKE_NAME);
     }
 
     return rc;

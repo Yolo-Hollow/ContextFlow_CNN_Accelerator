@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("r18_c8", "conv0_crop_pool", "conv0_crop_pool_tiles")]
+    [ValidateSet("r18_c8", "conv0_crop_pool", "conv0_crop_pool_tiles", "layer06_tile4", "layer06_tiles")]
     [string]$Mode = "r18_c8"
 )
 
@@ -17,6 +17,7 @@ $BspRoot = Join-Path $Workspace "conv_accel_kv260_platform\export\conv_accel_kv2
 $BspInclude = Join-Path $BspRoot "bspinclude\include"
 $BspLib = Join-Path $BspRoot "bsplib\lib"
 $Gcc = "C:\Xilinx\Vitis\2022.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe"
+$Python = "python"
 
 if (!(Test-Path $Gcc)) {
     throw "Vitis 2022.2 AArch64 GCC not found: $Gcc"
@@ -47,6 +48,13 @@ if ($Mode -eq "conv0_crop_pool" -or $Mode -eq "conv0_crop_pool_tiles") {
 }
 if ($Mode -eq "conv0_crop_pool_tiles") {
     $Defines += "-DACCEL_SMOKE_CONV0_CROP_POOL_TILES=1"
+}
+if ($Mode -eq "layer06_tile4" -or $Mode -eq "layer06_tiles") {
+    $Defines += "-DACCEL_SMOKE_LAYER06_TILE4=1"
+    if ($Mode -eq "layer06_tiles") {
+        $Defines += "-DACCEL_SMOKE_LAYER06_TILES=1"
+    }
+    & $Python (Join-Path $ScriptDir "generate_layer06_tile4_header.py") (Join-Path $AppSrcDir "layer06_tile4_data.h")
 }
 
 & $Gcc -Wall -O0 -g3 -c -DARMA53_64 @Defines -I $BspInclude -I $AppSrcDir (Join-Path $AppSrcDir "main.c") -o $Obj
