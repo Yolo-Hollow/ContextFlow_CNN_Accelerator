@@ -1010,18 +1010,39 @@ module `TB_CONV_ACCEL_CORE_MODULE;
         begin
             get_tile_cfg(tile_id, run_oy_base, run_ofm_h, run_pixel_base);
             run_pixels = OFM_W * run_ofm_h;
+`ifdef TB_CONV_ACCEL_CORE_EARLY_PRINT
+            $display("[EARLY] t=%0t run_tile%0d wait idle", $time, tile_id);
+            $fflush();
+`endif
             cfg_read(6'h00, cfg_read_data);
             while (cfg_read_data[0] != 1'b0)
                 cfg_read(6'h00, cfg_read_data);
+`ifdef TB_CONV_ACCEL_CORE_EARLY_PRINT
+            $display("[EARLY] t=%0t run_tile%0d configure oy=%0d h=%0d pixels=%0d pixel_base=%0d",
+                $time, tile_id, run_oy_base, run_ofm_h, run_pixels, run_pixel_base);
+            $fflush();
+`endif
             cfg_write(6'h06, run_pixels);
             cfg_write(6'h08, {7'd0, run_ofm_h[8:0], 7'd0, run_oy_base[8:0]});
             cfg_write(6'h09, run_pixel_base[23:0]);
             ps_tile_start_count = ps_tile_start_count + 1;
+`ifdef TB_CONV_ACCEL_CORE_EARLY_PRINT
+            $display("[EARLY] t=%0t run_tile%0d start", $time, tile_id);
+            $fflush();
+`endif
             cfg_write(6'h00, 32'd1);
             cfg_read(6'h00, cfg_read_data);
+`ifdef TB_CONV_ACCEL_CORE_EARLY_PRINT
+            $display("[EARLY] t=%0t run_tile%0d first status=0x%08h", $time, tile_id, cfg_read_data);
+            $fflush();
+`endif
             while (cfg_read_data[1] != 1'b1 || cfg_read_data[0] != 1'b0)
                 cfg_read(6'h00, cfg_read_data);
             ps_done_seen_count = ps_done_seen_count + 1;
+`ifdef TB_CONV_ACCEL_CORE_EARLY_PRINT
+            $display("[EARLY] t=%0t run_tile%0d done status=0x%08h", $time, tile_id, cfg_read_data);
+            $fflush();
+`endif
             repeat (6) @(negedge clk);
             ps_done_clear_count = ps_done_clear_count + 1;
             cfg_write(6'h00, 32'd2);
@@ -1408,6 +1429,11 @@ module `TB_CONV_ACCEL_CORE_MODULE;
         $display("[INFO] loaded bias/LUT/golden memories");
         $fflush();
 
+`ifdef TB_CONV_ACCEL_CORE_EARLY_PRINT
+        $display("[EARLY] t=%0t unpack external IFM start CIN=%0d FM=%0dx%0d",
+            $time, CIN, FM_H, FM_W);
+        $fflush();
+`endif
         for (ch = 0; ch < CIN; ch = ch + 1)
             for (y = 0; y < FM_H; y = y + 1)
                 for (x = 0; x < FM_W; x = x + 1)
@@ -1417,12 +1443,28 @@ module `TB_CONV_ACCEL_CORE_MODULE;
                     feat[ch][y][x] = ext_ifm[(y*FM_W + x)*CIN + ch];
 `endif
 
-        for (k = 0; k < K_TOTAL; k = k + 1)
+`ifdef TB_CONV_ACCEL_CORE_EARLY_PRINT
+        $display("[EARLY] t=%0t unpack external IFM done; unpack weight start K_TOTAL=%0d COUT_TOTAL=%0d",
+            $time, K_TOTAL, COUT_TOTAL);
+        $fflush();
+`endif
+        for (k = 0; k < K_TOTAL; k = k + 1) begin
+`ifdef TB_CONV_ACCEL_CORE_EARLY_PRINT
+            if ((k % 256) == 0) begin
+                $display("[EARLY] t=%0t unpack weight k=%0d/%0d", $time, k, K_TOTAL);
+                $fflush();
+            end
+`endif
             for (co = 0; co < COUT_TOTAL; co = co + 1)
                 weight[k][co] = ext_weight[k*COUT_TOTAL + co];
+        end
 
         for (co = 0; co < COUT_TOTAL; co = co + 1)
             bias[co] = ext_bias[co];
+`ifdef TB_CONV_ACCEL_CORE_EARLY_PRINT
+        $display("[EARLY] t=%0t unpack weight/bias done", $time);
+        $fflush();
+`endif
 `else
         for (ch = 0; ch < CIN; ch = ch + 1)
             for (y = 0; y < FM_H; y = y + 1)
@@ -1454,17 +1496,33 @@ module `TB_CONV_ACCEL_CORE_MODULE;
 `endif
 
         repeat (3) @(negedge clk);
+`ifdef TB_CONV_ACCEL_CORE_EARLY_PRINT
+        $display("[EARLY] t=%0t release reset", $time);
+        $fflush();
+`endif
         rst = 0;
         repeat (2) @(negedge clk);
+`ifdef TB_CONV_ACCEL_CORE_EARLY_PRINT
+        $display("[EARLY] t=%0t write quant params start COUT_TILE=%0d", $time, COUT_TILE);
+        $fflush();
+`endif
         for (cc = 0; cc < COUT_TILE; cc = cc + 1)
             quant_write(cc, `TB_CONV_ACCEL_CORE_QUANT_MULT,
                             `TB_CONV_ACCEL_CORE_QUANT_SHIFT,
                             `TB_CONV_ACCEL_CORE_QUANT_ZP);
 `ifdef TB_CONV_ACCEL_CORE_USE_EXTERNAL_GOLDEN
+`ifdef TB_CONV_ACCEL_CORE_EARLY_PRINT
+        $display("[EARLY] t=%0t write activation LUT start", $time);
+        $fflush();
+`endif
         for (idx = 0; idx < 256; idx = idx + 1)
             act_lut_write(idx[7:0], ext_act_lut[idx]);
 `endif
 
+`ifdef TB_CONV_ACCEL_CORE_EARLY_PRINT
+        $display("[EARLY] t=%0t write layer config start", $time);
+        $fflush();
+`endif
         cfg_write(6'h01, {7'd0, FM_W[8:0], 7'd0, FM_H[8:0]});
         cfg_write(6'h02, {7'd0, OFM_W[8:0], 7'd0, OFM_H[8:0]});
         cfg_write(6'h03, {22'd0, CONV_PAD, 6'd0, CONV_STRIDE});
@@ -1474,6 +1532,11 @@ module `TB_CONV_ACCEL_CORE_MODULE;
         cfg_write(6'h0f, {24'd0, INPUT_ZERO_POINT});
         cfg_write(6'h10, {28'd0, POOL_STRIDE, 1'b0, (POOL_ENABLE != 0)});
         cfg_write(6'h11, EXPECTED_OFM_WRITES);
+`ifdef TB_CONV_ACCEL_CORE_EARLY_PRINT
+        $display("[EARLY] t=%0t layer config done; run tiles start TILE_COUNT=%0d EXPECTED_OFM_WRITES=%0d",
+            $time, TILE_COUNT, EXPECTED_OFM_WRITES);
+        $fflush();
+`endif
         for (run_idx = 0; run_idx < TILE_COUNT; run_idx = run_idx + 1)
             run_tile(run_idx);
 `ifdef TB_CONV_ACCEL_CORE_USE_FULL_STREAM

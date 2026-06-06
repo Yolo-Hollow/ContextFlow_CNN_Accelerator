@@ -43,6 +43,8 @@
 `define TB_CONV_ACCEL_CORE_GOLDEN_MEM "D:/MPSoC/python_prj/rtl_golden/facemask_chain_conv4_conv5_rtl/05_conv5_pool_like_tiny/xsim_mem/golden_ofm_u8_hwc.mem"
 `define TB_CONV_ACCEL_CORE_TIMEOUT 240000000
 `define TB_CONV_ACCEL_CORE_PROGRESS_PRINT
-`define TB_CONV_ACCEL_CORE_PROGRESS_INTERVAL 1000000
+`define TB_CONV_ACCEL_CORE_PROGRESS_INTERVAL 100000
+`define TB_CONV_ACCEL_CORE_STAGE_PRINT
+`define TB_CONV_ACCEL_CORE_EARLY_PRINT
 
 `include "tb_conv_accel_core_realistic_small.v"
