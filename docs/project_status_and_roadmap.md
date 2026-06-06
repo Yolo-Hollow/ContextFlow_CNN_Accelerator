@@ -330,4 +330,6 @@ D:/MPSoC/python_prj
 - 2026-06-06 完整 Conv0 `tile_ofm_h=2` 仿真在扩大 IFM FIFO 后曾停在 PSUM drain；进一步确认当前数据流在计算完成后才统一 drain，因此 PSUM FIFO 同样需要容纳整个 tile。两类 FIFO 均扩大到 1024 后，计算和 drain 可以完整推进。
 - 2026-06-06 长 Conv0 仿真进一步暴露 `psum_drain_writer` 的 AXIS 风格握手错误：旧实现会在 `packet_valid` 尚未经历可见的 `valid && ready` 握手时提前推进地址，只有下游产生回压时才会出现重复包或丢包。现已改为保持 `packet_valid/addr/data`，直到真实握手完成再推进；五拍回压定向测试结果为 `17 pass, 0 fail`。
 - 2026-06-06 下一版关键离线回归全部通过：完整 Conv0 full-width tile2 为 `3345 pass, 0 fail`，K=9216 调度为 `512 pass, 0 fail`，配置寄存器为 `39/0`，AXI-Lite bridge 为 `67/0`，window extract 为 `165/0`，OFM packet FIFO 为 `196/0`，OFM byte FIFO 为 `36/0`。长测试已加入阶段、数据量和周期心跳日志，便于区分正常计算与死锁。
-- 上述 FIFO/K 位宽/握手修改目前仅完成 RTL、软件生成器和 xsim 验证，尚未重新综合、实现或生成新的 KV260 bitstream；当前板上 bitstream 仍是修改前版本。
+- 2026-06-06 FIFO/K 位宽/握手修改已完成 KV260 综合、实现、bitstream 和含 bit XSA 导出，独立构建目录为 `build_system_xck26_kv260_fifo1024_k14`。最终 signoff 为 `WNS=0.205 ns, TNS=0, WHS=0.012 ns, THS=0`，route status 为 `82447 fully routed nets, 0 routing errors`。
+- 新实现资源为 `CLB LUTs=50246 (42.90%)`、`CLB Registers=44577 (19.03%)`、`BRAM Tile=45.5 (31.60%)`、`DSP=177 (14.18%)`。相对上一版，BRAM 从 `28.5` 增至 `45.5` tiles，LUT 从 `50764` 降至 `50246`，寄存器从 `44083` 增至 `44577`，DSP 不变；时序余量从 `1.105 ns` 降至 `0.205 ns`，但仍满足全部约束。
+- 新 XSA 为 `build_system_xck26_kv260_fifo1024_k14/conv_accel_ps_dma_minimal.xsa`，SHA256 为 `E6C53E4F2EF69A499B5AA237D549F841EB0DEFCFF12BC9137495489D5757ECBC`；实现目录中的 bitstream SHA256 为 `E0863298A244D167B004F39D1A95D0ABB197F78976E45C8E3A2555A4C46A09B4`。当前板上仍是修改前 bitstream，下一步需要完整烧录新 bitstream 后再进行 Conv0-Conv4/Conv7 上板验证。
