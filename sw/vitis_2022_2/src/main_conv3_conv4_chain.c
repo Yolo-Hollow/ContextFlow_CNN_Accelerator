@@ -646,13 +646,36 @@ static int parse_ofm_tile(const chain_layer_t *layer, const chain_tile_t *tile)
 
 static int compare_layer_ofm(const chain_layer_t *layer)
 {
+    uint32_t mismatch_count = 0U;
+    uint32_t max_abs_diff = 0U;
+    uint32_t final_w = layer->pool_enable ? (layer->ofm_w / layer->pool_stride) : layer->ofm_w;
     for (uint32_t i = 0U; i < layer->total_expected_ofm_bytes; ++i) {
         if (layer->ofm_u8[i] != layer->golden_ofm_u8[i]) {
-            xil_printf("%s mismatch byte=%lu got=%u exp=%u\r\n",
-                       layer->name, (unsigned long)i,
-                       (unsigned)layer->ofm_u8[i], (unsigned)layer->golden_ofm_u8[i]);
-            return -1;
+            int diff = (int)layer->ofm_u8[i] - (int)layer->golden_ofm_u8[i];
+            uint32_t abs_diff = (diff < 0) ? (uint32_t)(-diff) : (uint32_t)diff;
+            uint32_t pixel = i / layer->cout_total;
+            uint32_t oc = i % layer->cout_total;
+            uint32_t oy = (final_w == 0U) ? 0U : (pixel / final_w);
+            uint32_t ox = (final_w == 0U) ? 0U : (pixel % final_w);
+            if (abs_diff > max_abs_diff) {
+                max_abs_diff = abs_diff;
+            }
+            if (mismatch_count < 8U) {
+                xil_printf("%s mismatch[%lu] byte=%lu pixel=%lu oy=%lu ox=%lu oc=%lu got=%u exp=%u diff=%d\r\n",
+                           layer->name, (unsigned long)mismatch_count, (unsigned long)i,
+                           (unsigned long)pixel, (unsigned long)oy, (unsigned long)ox,
+                           (unsigned long)oc, (unsigned)layer->ofm_u8[i],
+                           (unsigned)layer->golden_ofm_u8[i], diff);
+            }
+            ++mismatch_count;
         }
+    }
+    if (mismatch_count != 0U) {
+        xil_printf("%s mismatch_count=%lu max_abs_diff=%lu total=%lu\r\n",
+                   layer->name, (unsigned long)mismatch_count,
+                   (unsigned long)max_abs_diff,
+                   (unsigned long)layer->total_expected_ofm_bytes);
+        return -1;
     }
     xil_printf("%s full compare=%lu bytes\r\n",
                layer->name, (unsigned long)layer->total_expected_ofm_bytes);

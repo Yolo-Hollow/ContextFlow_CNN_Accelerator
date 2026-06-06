@@ -1,0 +1,49 @@
+`timescale 1ns / 1ps
+
+`define TB_CONV_ACCEL_CORE_MODULE tb_conv_accel_core_axi_lite_axis_stream_r18_c8_b2_conv5_ext_tail_cout16
+`define TB_CONV_ACCEL_CORE_USE_AXI_LITE
+`define TB_CONV_ACCEL_CORE_USE_AXIS_STREAM
+`define TB_CONV_ACCEL_CORE_USE_EXTERNAL_GOLDEN
+`define TB_CONV_ACCEL_CORE_CENTER_EXTERNAL_IFM
+`define TB_CONV_ACCEL_CORE_INPUT_ZP 8'd15
+`define TB_CONV_ACCEL_CORE_ROWS 18
+`define TB_CONV_ACCEL_CORE_COLS 8
+`define TB_CONV_ACCEL_CORE_IFM_BANKS 2
+`define TB_CONV_ACCEL_CORE_CIN 256
+`define TB_CONV_ACCEL_CORE_FM_W 13
+`define TB_CONV_ACCEL_CORE_FM_H 13
+`define TB_CONV_ACCEL_CORE_OFM_W 13
+`define TB_CONV_ACCEL_CORE_OFM_H 13
+`define TB_CONV_ACCEL_CORE_COUT_TOTAL 16
+`define TB_CONV_ACCEL_CORE_PAD 1
+`define TB_CONV_ACCEL_CORE_STRIDE 1
+`define TB_CONV_ACCEL_CORE_TILE_OY_BASE 12
+`define TB_CONV_ACCEL_CORE_TILE_OFM_H 1
+`define TB_CONV_ACCEL_CORE_TILE_PIXEL_BASE 156
+`define TB_CONV_ACCEL_CORE_TILE_COUNT 1
+`define TB_CONV_ACCEL_CORE_POOL_ENABLE 0
+`define TB_CONV_ACCEL_CORE_POOL_STRIDE 0
+`define TB_CONV_ACCEL_CORE_IFM_D 1024
+`define TB_CONV_ACCEL_CORE_IFM_AW 10
+`define TB_CONV_ACCEL_CORE_PSUM_D 1024
+`define TB_CONV_ACCEL_CORE_PSUM_AW 10
+`define TB_CONV_ACCEL_CORE_PSUM_BUF_AW 12
+`define TB_CONV_ACCEL_CORE_PSUM_BUF_DEPTH 4096
+`define TB_CONV_ACCEL_CORE_OFM_ADDR_W 24
+`define TB_CONV_ACCEL_CORE_OFM_FIFO_DEPTH 128
+`define TB_CONV_ACCEL_CORE_OFM_FIFO_AW 7
+`define TB_CONV_ACCEL_CORE_QUANT_MULT 16'd16863
+`define TB_CONV_ACCEL_CORE_QUANT_SHIFT 4'd7
+`define TB_CONV_ACCEL_CORE_QUANT_ZP 8'd82
+`define TB_CONV_ACCEL_CORE_ACT_MODE 2
+`define TB_CONV_ACCEL_CORE_PROGRESS_PRINT
+`define TB_CONV_ACCEL_CORE_PROGRESS_INTERVAL 1000000
+`define TB_CONV_ACCEL_CORE_CHECK_FEEDER_IFM
+`define TB_CONV_ACCEL_CORE_IFM_MEM "D:/MPSoC/python_prj/rtl_golden/facemask_chain_conv4_conv5_rtl/05_conv5_pool_like_tiny/xsim_mem_cout16/ifm_u8_hwc.mem"
+`define TB_CONV_ACCEL_CORE_WEIGHT_MEM "D:/MPSoC/python_prj/rtl_golden/facemask_chain_conv4_conv5_rtl/05_conv5_pool_like_tiny/xsim_mem_cout16/weight_kco_s8.mem"
+`define TB_CONV_ACCEL_CORE_BIAS_MEM "D:/MPSoC/python_prj/rtl_golden/facemask_chain_conv4_conv5_rtl/05_conv5_pool_like_tiny/xsim_mem_cout16/bias_i32.mem"
+`define TB_CONV_ACCEL_CORE_ACT_LUT_MEM "D:/MPSoC/python_prj/rtl_golden/facemask_chain_conv4_conv5_rtl/05_conv5_pool_like_tiny/xsim_mem_cout16/activation_lut_u8.mem"
+`define TB_CONV_ACCEL_CORE_GOLDEN_MEM "D:/MPSoC/python_prj/rtl_golden/facemask_chain_conv4_conv5_rtl/05_conv5_pool_like_tiny/xsim_mem_cout16/golden_ofm_u8_hwc.mem"
+`define TB_CONV_ACCEL_CORE_TIMEOUT 80000000
+
+`include "tb_conv_accel_core_realistic_small.v"

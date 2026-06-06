@@ -22,6 +22,7 @@ module line_buffer_5bank #(
     reg [1:0]  wr_ptr;
     reg [AW:0] line_fy [0:2];
     reg        line_valid [0:2];
+    integer li;
 
     always @(posedge clk) begin
         if (rst) begin
@@ -34,10 +35,18 @@ module line_buffer_5bank #(
             line_valid[2] <= 1'b0;
         end else begin
             if (|bank_wr_en) begin
+                for (li = 0; li < 3; li = li + 1) begin
+                    if (line_fy[li] == wr_fy)
+                        line_valid[li] <= 1'b0;
+                end
                 line_fy[wr_ptr] <= wr_fy;
                 line_valid[wr_ptr] <= 1'b0;
             end
             if (line_advance) begin
+                for (li = 0; li < 3; li = li + 1) begin
+                    if ((li[1:0] != wr_ptr) && (line_fy[li] == wr_fy))
+                        line_valid[li] <= 1'b0;
+                end
                 line_fy[wr_ptr] <= wr_fy;
                 line_valid[wr_ptr] <= 1'b1;
                 wr_ptr <= (wr_ptr == 2'd2) ? 2'd0 : wr_ptr + 2'd1;

@@ -441,6 +441,14 @@ module `TB_CONV_ACCEL_CORE_MODULE;
     integer ifm_loader_write_count, ifm_loader_advance_count, ifm_loader_fail_count;
     integer ifm_loader_bank_ch, ifm_loader_expected;
 `endif
+`ifdef TB_CONV_ACCEL_CORE_CHECK_FEEDER_IFM
+    integer feeder_ifm_fail_count;
+    integer feeder_lane, feeder_gk, feeder_ch, feeder_ker, feeder_ky, feeder_kx, feeder_fy, feeder_fx;
+    integer diag_loader_write_count, diag_loader_fail_count;
+    integer diag_loader_bank_ch;
+    reg [7:0] diag_loader_expected;
+    reg [7:0] feeder_ifm_got, feeder_ifm_expected;
+`endif
 `ifdef TB_CONV_ACCEL_CORE_USE_AXIS_STREAM
     integer axis_ofm_tlast_count;
 `endif
@@ -575,6 +583,32 @@ module `TB_CONV_ACCEL_CORE_MODULE;
             for (c = 0; c < CIN; c = c + 1)
                 if (pass_needs_ch(k_base, c) && (c % IFM_BANKS == bank))
                     channel_for_bank = c;
+        end
+    endfunction
+
+    function [7:0] expected_feeder_ifm_tb;
+        input integer base_k;
+        input integer lane;
+        input integer out_y;
+        input integer out_x;
+        integer local_gk, local_ch, local_ker, local_ky, local_kx, local_fy, local_fx;
+        begin
+            local_gk = base_k + lane;
+            if (local_gk >= K_TOTAL) begin
+                expected_feeder_ifm_tb = 8'd0;
+            end else begin
+                local_ch = local_gk / 9;
+                local_ker = local_gk % 9;
+                local_ky = local_ker / 3;
+                local_kx = local_ker % 3;
+                local_fy = out_y * CONV_STRIDE + local_ky - CONV_PAD;
+                local_fx = out_x * CONV_STRIDE + local_kx - CONV_PAD;
+                if (local_ch >= CIN || local_fy < 0 || local_fy >= FM_H ||
+                    local_fx < 0 || local_fx >= FM_W)
+                    expected_feeder_ifm_tb = 8'd0;
+                else
+                    expected_feeder_ifm_tb = feat[local_ch][local_fy][local_fx];
+            end
         end
     endfunction
 
@@ -1162,6 +1196,69 @@ module `TB_CONV_ACCEL_CORE_MODULE;
             layer_done_pulse_count <= layer_done_pulse_count + 1;
     end
 
+`ifdef TB_CONV_ACCEL_CORE_CHECK_FEEDER_IFM
+    always @(posedge clk) begin
+        if (!rst && (|`TB_DUT_IFM_LOADER.dma_bank_wr_en)) begin
+            diag_loader_write_count <= diag_loader_write_count + 1;
+            if (`TB_DUT_IFM_LOADER.dma_wr_fy >= FM_H ||
+                `TB_DUT_IFM_LOADER.dma_wr_x >= FM_W) begin
+                $display("[FAIL] diagnostic IFM loader write out of range fy=%0d x=%0d",
+                    `TB_DUT_IFM_LOADER.dma_wr_fy, `TB_DUT_IFM_LOADER.dma_wr_x);
+                diag_loader_fail_count <= diag_loader_fail_count + 1;
+            end else begin
+                for (b = 0; b < IFM_BANKS; b = b + 1) begin
+                    diag_loader_bank_ch = channel_for_bank(current_pass_base_k, b);
+                    diag_loader_expected = (diag_loader_bank_ch >= 0) ?
+                        feat[diag_loader_bank_ch][`TB_DUT_IFM_LOADER.dma_wr_fy][`TB_DUT_IFM_LOADER.dma_wr_x] :
+                        8'd0;
+                    if (`TB_DUT_IFM_LOADER.dma_wr_data[b] !== diag_loader_expected) begin
+                        if (diag_loader_fail_count < 32) begin
+                            $display("[FAIL] diagnostic IFM loader fy=%0d x=%0d bank=%0d ch=%0d got=%0d exp=%0d k_base=%0d",
+                                `TB_DUT_IFM_LOADER.dma_wr_fy,
+                                `TB_DUT_IFM_LOADER.dma_wr_x,
+                                b, diag_loader_bank_ch,
+                                $signed(`TB_DUT_IFM_LOADER.dma_wr_data[b]),
+                                $signed(diag_loader_expected),
+                                current_pass_base_k);
+                            $fflush();
+                        end
+                        diag_loader_fail_count <= diag_loader_fail_count + 1;
+                    end
+                end
+            end
+        end
+
+        if (!rst && `TB_DUT_LAYER.u_top.feeder_ifm_valid) begin
+            for (feeder_lane = 0; feeder_lane < ROWS; feeder_lane = feeder_lane + 1) begin
+                feeder_ifm_got = `TB_DUT_LAYER.u_top.feeder_ifm_data[feeder_lane*8 +: 8];
+                feeder_ifm_expected = expected_feeder_ifm_tb(
+                    current_pass_base_k, feeder_lane,
+                    `TB_DUT_LAYER.u_top.feeder_oy,
+                    `TB_DUT_LAYER.u_top.feeder_ox);
+                if (feeder_ifm_got !== feeder_ifm_expected) begin
+                    feeder_gk = current_pass_base_k + feeder_lane;
+                    feeder_ch = feeder_gk / 9;
+                    feeder_ker = feeder_gk % 9;
+                    feeder_ky = feeder_ker / 3;
+                    feeder_kx = feeder_ker % 3;
+                    feeder_fy = `TB_DUT_LAYER.u_top.feeder_oy * CONV_STRIDE + feeder_ky - CONV_PAD;
+                    feeder_fx = `TB_DUT_LAYER.u_top.feeder_ox * CONV_STRIDE + feeder_kx - CONV_PAD;
+                    if (feeder_ifm_fail_count < 32) begin
+                        $display("[FAIL] feeder IFM oy=%0d ox=%0d lane=%0d k=%0d ch=%0d ky=%0d kx=%0d fy=%0d fx=%0d got=%0d exp=%0d",
+                            `TB_DUT_LAYER.u_top.feeder_oy,
+                            `TB_DUT_LAYER.u_top.feeder_ox,
+                            feeder_lane, feeder_gk, feeder_ch, feeder_ky, feeder_kx,
+                            feeder_fy, feeder_fx,
+                            $signed(feeder_ifm_got), $signed(feeder_ifm_expected));
+                        $fflush();
+                    end
+                    feeder_ifm_fail_count <= feeder_ifm_fail_count + 1;
+                end
+            end
+        end
+    end
+`endif
+
 `ifdef TB_CONV_ACCEL_CORE_USE_FULL_STREAM
     always @(posedge clk) begin
         if (!rst) begin
@@ -1284,6 +1381,11 @@ module `TB_CONV_ACCEL_CORE_MODULE;
         progress_last_ofm_wr_count = 0;
         progress_last_compute_fire_count = 0;
 `endif
+`ifdef TB_CONV_ACCEL_CORE_CHECK_FEEDER_IFM
+        feeder_ifm_fail_count = 0;
+        diag_loader_write_count = 0;
+        diag_loader_fail_count = 0;
+`endif
         clear_inputs();
         for (idx = 0; idx < OFM_WORDS; idx = idx + 1) begin
             ofm_mem[idx] = 8'hxx;
@@ -1292,11 +1394,19 @@ module `TB_CONV_ACCEL_CORE_MODULE;
         end
 
 `ifdef TB_CONV_ACCEL_CORE_USE_EXTERNAL_GOLDEN
+        $display("[INFO] loading external IFM/weight/bias/LUT/golden memories");
+        $fflush();
         $readmemh(`TB_CONV_ACCEL_CORE_IFM_MEM, ext_ifm);
+        $display("[INFO] loaded IFM memory");
+        $fflush();
         $readmemh(`TB_CONV_ACCEL_CORE_WEIGHT_MEM, ext_weight);
+        $display("[INFO] loaded weight memory");
+        $fflush();
         $readmemh(`TB_CONV_ACCEL_CORE_BIAS_MEM, ext_bias);
         $readmemh(`TB_CONV_ACCEL_CORE_ACT_LUT_MEM, ext_act_lut);
         $readmemh(`TB_CONV_ACCEL_CORE_GOLDEN_MEM, ext_golden);
+        $display("[INFO] loaded bias/LUT/golden memories");
+        $fflush();
 
         for (ch = 0; ch < CIN; ch = ch + 1)
             for (y = 0; y < FM_H; y = y + 1)
@@ -1434,6 +1544,24 @@ module `TB_CONV_ACCEL_CORE_MODULE;
                 ifm_loader_write_count, ifm_loader_advance_count);
             fail = fail + 1;
         end else pass = pass + 1;
+`endif
+`ifdef TB_CONV_ACCEL_CORE_CHECK_FEEDER_IFM
+        if (diag_loader_fail_count != 0) begin
+            $display("[FAIL] diagnostic IFM loader mismatches=%0d writes=%0d",
+                diag_loader_fail_count, diag_loader_write_count);
+            fail = fail + 1;
+        end else begin
+            $display("[PASS] diagnostic IFM loader writes match expected rows writes=%0d",
+                diag_loader_write_count);
+            pass = pass + 1;
+        end
+        if (feeder_ifm_fail_count != 0) begin
+            $display("[FAIL] feeder IFM mismatches=%0d", feeder_ifm_fail_count);
+            fail = fail + 1;
+        end else begin
+            $display("[PASS] feeder IFM stream matches expected windows");
+            pass = pass + 1;
+        end
 `endif
 `ifdef TB_CONV_ACCEL_CORE_USE_AXIS_STREAM
         if (axis_ofm_tlast_count != TILE_COUNT) begin
