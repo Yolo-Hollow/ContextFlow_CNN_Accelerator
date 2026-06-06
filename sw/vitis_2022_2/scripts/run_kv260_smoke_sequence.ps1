@@ -17,6 +17,8 @@ param(
     [switch]$RunConv0Conv7Chain,
     [switch]$RunConv0Conv8Chain,
     [switch]$RunConv0Conv9Chain,
+    [switch]$RunConv0Conv9DdrDemo,
+    [string]$InputPackage,
     [switch]$RunDeterministic,
     [string]$BuildDirName = "build_system_xck26_kv260"
 )
@@ -45,6 +47,7 @@ $Conv0Conv6ChainElf = Join-Path $Root "build_vitis_2022_2\conv_accel_r18_c16_smo
 $Conv0Conv7ChainElf = Join-Path $Root "build_vitis_2022_2\conv_accel_r18_c16_smoke\manual_build\conv_accel_conv0_conv7_chain_smoke.elf"
 $Conv0Conv8ChainElf = Join-Path $Root "build_vitis_2022_2\conv_accel_r18_c16_smoke\manual_build\conv_accel_conv0_conv8_chain_smoke.elf"
 $Conv0Conv9ChainElf = Join-Path $Root "build_vitis_2022_2\conv_accel_r18_c16_smoke\manual_build\conv_accel_conv0_conv9_chain_smoke.elf"
+$Conv0Conv9DdrDemoElf = Join-Path $Root "build_vitis_2022_2\conv_accel_r18_c16_smoke\manual_build\conv_accel_conv0_conv9_ddr_demo_smoke.elf"
 $DownloadTcl = Join-Path $ScriptDir "download_run_accel_smoke.tcl"
 $ProbeTcl = Join-Path $ScriptDir "probe_pl_regs.tcl"
 $JtagProbeTcl = Join-Path $ScriptDir "probe_jtag_targets.tcl"
@@ -114,7 +117,7 @@ function Start-SerialCapture($Name) {
     }
 }
 
-function Run-Smoke($Name, $Elf, [bool]$ProgramBit, [bool]$UseFastRun) {
+function Run-Smoke($Name, $Elf, [bool]$ProgramBit, [bool]$UseFastRun, $DataFile = "") {
     Ensure-Tool $Elf "$Name ELF"
     $capture = Start-SerialCapture $Name
     Start-Sleep -Seconds 2
@@ -123,6 +126,10 @@ function Run-Smoke($Name, $Elf, [bool]$ProgramBit, [bool]$UseFastRun) {
         $args += "-fast"
     } elseif (!$ProgramBit) {
         $args += "-skip_bit"
+    }
+    if ($DataFile) {
+        Ensure-Tool $DataFile "$Name DDR input package"
+        $args += @("-data_file", $DataFile, "-data_address", "0x10000000")
     }
     & $Xsct @args
     $xsctExit = $LASTEXITCODE
@@ -147,7 +154,13 @@ if (!$SkipBit -and !$FastRun) {
 Write-Host "Available COM ports: $([string]::Join(', ', [System.IO.Ports.SerialPort]::getportnames()))"
 Start-HwServer
 & $Xsct $JtagProbeTcl | Tee-Object -FilePath (Join-Path $LogDir "$Stamp`_jtag_probe.log")
-if ($RunConv0Conv9Chain) {
+if ($RunConv0Conv9DdrDemo) {
+    if (!$InputPackage) {
+        throw "-InputPackage is required with -RunConv0Conv9DdrDemo"
+    }
+    Run-Smoke "conv0_conv9_ddr_demo" $Conv0Conv9DdrDemoElf (!$SkipBit -and !$FastRun) $FastRun $InputPackage
+    & $Xsct $ProbeTcl | Tee-Object -FilePath (Join-Path $LogDir "$Stamp`_pl_probe_after_conv0_conv9_ddr_demo.log")
+} elseif ($RunConv0Conv9Chain) {
     Ensure-Tool $YoloDecodeScript "YOLO decode reference"
     Ensure-Tool $YoloCompareScript "YOLO UART comparator"
     Ensure-Tool $Conv9Tensor "Conv9 RTL-chain tensor"

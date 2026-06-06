@@ -44,3 +44,4 @@ golden/generated/
 golden/tmp/
 golden/external/
 tools/golden/output/
+demo_output/

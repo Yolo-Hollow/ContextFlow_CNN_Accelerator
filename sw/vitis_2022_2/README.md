@@ -366,6 +366,35 @@ It reported one `with_mask` detection with score `0.357321`; Conv9 remained
 bit-exact for all `4056` bytes and the UART comparison passed within `0.1`
 pixel and `1e-4` score tolerance.
 
+## Runtime image demo
+
+Build the DDR-input ELF once:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/manual_build_accel_smoke.ps1 -Mode conv0_conv9_ddr_demo
+```
+
+Run an image after a board power cycle. This preprocesses the image, programs
+the existing line-buffer-fix bitstream, writes a 64-byte metadata header and
+the `416x416x3` RGB HWC tensor to DDR address `0x10000000`, runs inference, and
+saves an annotated image:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/run_kv260_image_demo.ps1 -Image D:\MPSoC\python_prj\facemask\images\maksssksksss0.png
+```
+
+For later images while the same bitstream remains programmed, reuse the same
+ELF with `-FastRun`. No recompilation is needed:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/run_kv260_image_demo.ps1 -Image D:\MPSoC\python_prj\facemask\images\maksssksksss1.png -FastRun
+```
+
+Outputs are placed under `demo_output/<timestamp>_<image>/`: the DDR package,
+letterbox metadata and preview, UART-derived detection JSON, and
+`detections.png`. The package includes original dimensions, scale/padding, and
+an FNV-1a tensor checksum validated by the A53 before inference.
+
 Use the full sequence after a board power cycle. `-FastRun` is only appropriate
 when the same bitstream is still programmed and the prior accelerator run left
 the PL in a known-good idle state.

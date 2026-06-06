@@ -9,6 +9,8 @@ set psu_init_tcl [file join $hw_dir psu_init.tcl]
 set elf [file join $workspace conv_accel_r18_c16_smoke manual_build conv_accel_r18_c8_smoke.elf]
 set fast_run 0
 set skip_bit 0
+set data_file ""
+set data_address 0x10000000
 
 for {set i 0} {$i < [llength $argv]} {incr i} {
     set arg [lindex $argv $i]
@@ -28,6 +30,18 @@ for {set i 0} {$i < [llength $argv]} {incr i} {
         set fast_run 1
     } elseif {$arg eq "-skip_bit"} {
         set skip_bit 1
+    } elseif {$arg eq "-data_file"} {
+        incr i
+        if {$i >= [llength $argv]} {
+            error "Missing value for -data_file"
+        }
+        set data_file [file normalize [lindex $argv $i]]
+    } elseif {$arg eq "-data_address"} {
+        incr i
+        if {$i >= [llength $argv]} {
+            error "Missing value for -data_address"
+        }
+        set data_address [lindex $argv $i]
     } else {
         error "Unknown argument: $arg"
     }
@@ -41,6 +55,9 @@ if {!$fast_run && !$skip_bit && ![file exists $bit_file]} {
 }
 if {!$fast_run && ![file exists $psu_init_tcl]} {
     error "psu_init.tcl not found: $psu_init_tcl. Create the Vitis platform first."
+}
+if {$data_file ne "" && ![file exists $data_file]} {
+    error "DDR data file not found: $data_file"
 }
 
 connect -url tcp:127.0.0.1:3121
@@ -89,5 +106,9 @@ after 1000
 
 puts "Downloading ELF: $elf"
 dow $elf
+if {$data_file ne ""} {
+    puts "Downloading DDR data: $data_file -> $data_address"
+    dow -data $data_file $data_address
+}
 puts "Starting program"
 con

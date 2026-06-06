@@ -50,6 +50,31 @@
 #define CHAIN_KH              3U
 #define CHAIN_KW              3U
 
+#if ACCEL_CHAIN_CONV0_CONV9_DDR
+#define IMAGE_PACKAGE_ADDR    0x10000000U
+#define IMAGE_PACKAGE_MAGIC   0x4F4C4F59U
+#define IMAGE_PACKAGE_VERSION 1U
+#define IMAGE_PACKAGE_HEADER_BYTES 64U
+
+typedef struct {
+    uint32_t magic;
+    uint32_t version;
+    uint32_t header_bytes;
+    uint32_t tensor_bytes;
+    uint32_t original_w;
+    uint32_t original_h;
+    float scale;
+    float pad_x;
+    float pad_y;
+    uint32_t tensor_checksum;
+    uint8_t reserved[24];
+} image_package_header_t;
+
+typedef char image_package_header_size_must_be_64[
+    (sizeof(image_package_header_t) == IMAGE_PACKAGE_HEADER_BYTES) ? 1 : -1];
+static const image_package_header_t *image_package;
+#endif
+
 #if ACCEL_CHAIN_CONV0_CONV9
 #define CHAIN_SMOKE_NAME      "conv0_pool -> conv9 chained smoke"
 #define MAX_FM_W              416U
@@ -226,7 +251,11 @@ static chain_layer_t conv0_layer = {
     0U, 18898U, 9U, 69U,
     1U, 2U,
     208U * 208U, 208U * 208U * 16U,
+#if ACCEL_CHAIN_CONV0_CONV9_DDR
+    (const uint8_t *)(UINTPTR)(IMAGE_PACKAGE_ADDR + IMAGE_PACKAGE_HEADER_BYTES),
+#else
     conv0_pool_ifm_u8,
+#endif
     conv0_pool_weight_s8,
     conv0_pool_bias_i32,
     conv0_pool_activation_lut_u8,
@@ -838,6 +867,11 @@ static int parse_ofm_tile(const chain_layer_t *layer, const chain_tile_t *tile)
 
 static int compare_layer_ofm(const chain_layer_t *layer)
 {
+#if ACCEL_CHAIN_CONV0_CONV9_DDR
+    xil_printf("%s generated=%lu bytes (dynamic input, fixed golden compare skipped)\r\n",
+               layer->name, (unsigned long)layer->total_expected_ofm_bytes);
+    return 0;
+#else
     uint32_t mismatch_count = 0U;
     uint32_t max_abs_diff = 0U;
     uint32_t final_w = layer->pool_enable ? (layer->ofm_w / layer->pool_stride) : layer->ofm_w;
@@ -872,6 +906,7 @@ static int compare_layer_ofm(const chain_layer_t *layer)
     xil_printf("%s full compare=%lu bytes\r\n",
                layer->name, (unsigned long)layer->total_expected_ofm_bytes);
     return 0;
+#endif
 }
 
 static int run_one_tile(const chain_layer_t *layer, const chain_tile_t *tile, uint32_t tile_index,
@@ -1081,6 +1116,68 @@ static int run_layer(chain_layer_t *layer)
 }
 
 #if ACCEL_CHAIN_CONV0_CONV9
+#if ACCEL_CHAIN_CONV0_CONV9_DDR
+static uint32_t image_tensor_checksum(const uint8_t *data, uint32_t bytes)
+{
+    uint32_t hash = 2166136261U;
+    for (uint32_t i = 0U; i < bytes; ++i) {
+        hash ^= data[i];
+        hash *= 16777619U;
+    }
+    return hash;
+}
+
+static int validate_image_package(void)
+{
+    const uint8_t *tensor;
+    uint32_t checksum;
+
+    Xil_DCacheInvalidateRange(
+        (UINTPTR)IMAGE_PACKAGE_ADDR,
+        IMAGE_PACKAGE_HEADER_BYTES + 416U * 416U * 3U);
+    image_package = (const image_package_header_t *)(UINTPTR)IMAGE_PACKAGE_ADDR;
+    if (image_package->magic != IMAGE_PACKAGE_MAGIC ||
+        image_package->version != IMAGE_PACKAGE_VERSION ||
+        image_package->header_bytes != IMAGE_PACKAGE_HEADER_BYTES ||
+        image_package->tensor_bytes != 416U * 416U * 3U ||
+        image_package->original_w == 0U ||
+        image_package->original_h == 0U ||
+        image_package->scale <= 0.0f) {
+        xil_printf(
+            "IMAGE_PACKAGE invalid magic=0x%08lx version=%lu header=%lu tensor=%lu "
+            "original=%lux%lu\r\n",
+            (unsigned long)image_package->magic,
+            (unsigned long)image_package->version,
+            (unsigned long)image_package->header_bytes,
+            (unsigned long)image_package->tensor_bytes,
+            (unsigned long)image_package->original_w,
+            (unsigned long)image_package->original_h);
+        return -1;
+    }
+    tensor = (const uint8_t *)(UINTPTR)(IMAGE_PACKAGE_ADDR + image_package->header_bytes);
+    checksum = image_tensor_checksum(tensor, image_package->tensor_bytes);
+    if (checksum != image_package->tensor_checksum) {
+        xil_printf("IMAGE_PACKAGE checksum got=0x%08lx expected=0x%08lx\r\n",
+                   (unsigned long)checksum,
+                   (unsigned long)image_package->tensor_checksum);
+        return -1;
+    }
+    conv0_layer.ifm_u8 = tensor;
+    xil_printf(
+        "IMAGE_PACKAGE ready addr=0x%08lx tensor=%lu original=%lux%lu "
+        "checksum=0x%08lx first=%u,%u,%u\r\n",
+        (unsigned long)IMAGE_PACKAGE_ADDR,
+        (unsigned long)image_package->tensor_bytes,
+        (unsigned long)image_package->original_w,
+        (unsigned long)image_package->original_h,
+        (unsigned long)checksum,
+        (unsigned)tensor[0],
+        (unsigned)tensor[1],
+        (unsigned)tensor[2]);
+    return 0;
+}
+#endif
+
 static int decode_and_print_conv9(void)
 {
     int detection_count = yolo_decode_single_scale(
@@ -1109,11 +1206,19 @@ static int decode_and_print_conv9(void)
 
         yolo_inverse_letterbox(
             &yolo_detections[i],
+#if ACCEL_CHAIN_CONV0_CONV9_DDR
+            (float)image_package->original_w,
+            (float)image_package->original_h,
+            image_package->scale,
+            image_package->pad_x,
+            image_package->pad_y,
+#else
             512.0f,
             366.0f,
             0.8125f,
             0.0f,
             59.0f,
+#endif
             &original_detection);
         yolo_format_fixed6(yolo_detections[i].score, score, sizeof(score));
         yolo_format_fixed6(yolo_detections[i].x1, model_x1, sizeof(model_x1));
@@ -1148,6 +1253,12 @@ static int decode_and_print_conv9(void)
 int main(void)
 {
     xil_printf("\r\n%s\r\n", CHAIN_SMOKE_NAME);
+#if ACCEL_CHAIN_CONV0_CONV9_DDR
+    if (validate_image_package() != 0) {
+        xil_printf("FAIL: DDR image package validation failed\r\n");
+        return -1;
+    }
+#endif
     wr32(GPIO_BASE_ADDR, GPIO_TRI, 0x00000000U);
     wr32(GPIO_BASE_ADDR, GPIO2_TRI, 0x0000ffffU);
 
@@ -1163,6 +1274,10 @@ int main(void)
         return -1;
     }
 #endif
+#if ACCEL_CHAIN_CONV0_CONV9_DDR
+    xil_printf("PASS: %s dynamic image inference complete\r\n", CHAIN_SMOKE_NAME);
+#else
     xil_printf("PASS: %s matches RTL golden\r\n", CHAIN_SMOKE_NAME);
+#endif
     return 0;
 }

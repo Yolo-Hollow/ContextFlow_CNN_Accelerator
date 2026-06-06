@@ -356,4 +356,7 @@ D:/MPSoC/python_prj
 - 2026-06-06 已新增无 Xilinx 依赖的 `yolo_decode.c/.h`，使用固定 507 项候选区和单精度 `expf`，支持模型坐标裁剪、固定图像 `512x366` 的逆 letterbox、稳定 UART 数值格式。`tb/test_yolo_decode.py` 同时覆盖 Python 映射/NMS、C 边界测试和 Python/C 同张量一致性，测试通过。
 - 2026-06-06 Conv8 与带后处理的 Conv9 ELF 均重新构建通过，调度 cross-check 保持 `layers=10` 且 Conv9 输出 `4056` bytes。
 - 2026-06-06 使用 `build_system_xck26_kv260_linebuffix` 完整重新烧录并完成 Conv0->Conv9 + 后处理验收，最终日志为 `build_system_xck26_kv260_linebuffix/board_smoke_logs/20260606_222542_conv0_conv9_chain_COM8.log`。十层仍逐层 bit-exact，Conv9 `full compare=4056 bytes`；UART 输出 1 个 `with_mask`，score `0.357321`，原图坐标约为 `(193.435638,112.213531)-(228.543060,164.534409)`，自动比对在 `0.1` pixel / `1e-4` score 容差内通过。
-- 当前可靠板级边界是完整 Conv0->Conv9 单尺度卷积链加 A53 decode/NMS。下一步进入更多真实图片加载、批量端到端验证和性能测量。
+- 2026-06-06 已新增 `conv0_conv9_ddr_demo` 运行模式。图片包固定写入 DDR `0x10000000`，包含 64-byte 元数据头和 `416x416x3` RGB HWC 量化张量；A53 在运行前校验 magic、版本、尺寸和 FNV-1a checksum。动态模式保留硬件服务计数与 AXIS 长度检查，但跳过只适用于固定图的逐层 golden compare。
+- 2026-06-06 固定图 DDR 等价回归通过：包内 `519168` bytes 与原 Conv0 输入逐字节一致，完整重新烧录日志为 `build_system_xck26_kv260_linebuffix/board_smoke_logs/20260606_224438_conv0_conv9_ddr_demo_COM8.log`；最终 ELF 复测日志为 `build_system_xck26_kv260_linebuffix/board_smoke_logs/20260606_225823_conv0_conv9_ddr_demo_COM8.log`，检测与原 RTL-chain decode golden 完全一致。
+- 2026-06-06 已新增 `run_kv260_image_demo.ps1`，自动执行图片 letterbox/量化、JTAG DDR 写入、同一 ELF 推理、UART 解析和 Pillow 绘框。第二张 `400x156` 图片在不重新编译 ELF、不重新烧 bitstream的 `-FastRun` 路径通过，日志为 `build_system_xck26_kv260_linebuffix/board_smoke_logs/20260606_225007_conv0_conv9_ddr_demo_COM8.log`，输出 1 个 `with_mask`，score `0.295050`。
+- 当前可靠板级边界是完整 Conv0->Conv9 单尺度卷积链、A53 decode/NMS 和运行时 JTAG DDR 图片加载/主机可视化。下一步进入多图片批量验证和性能测量。
