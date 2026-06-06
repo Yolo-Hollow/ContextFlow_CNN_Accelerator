@@ -194,6 +194,7 @@ build_vitis_2022_2/conv_accel_r18_c16_smoke/manual_build/conv_accel_conv0_conv4_
 build_vitis_2022_2/conv_accel_r18_c16_smoke/manual_build/conv_accel_conv0_conv5_chain_smoke.elf
 build_vitis_2022_2/conv_accel_r18_c16_smoke/manual_build/conv_accel_conv0_conv6_chain_smoke.elf
 build_vitis_2022_2/conv_accel_r18_c16_smoke/manual_build/conv_accel_conv0_conv7_chain_smoke.elf
+build_vitis_2022_2/conv_accel_r18_c16_smoke/manual_build/conv_accel_conv0_conv8_chain_smoke.elf
 ```
 
 `conv_accel_r18_c8_smoke.elf` 是旧 deterministic smoke 的更新版，会显式通过 AXI-Lite 写入 identity quant、identity LUT 和 `EXPECTED_BYTES`。`conv_accel_conv0_crop_pool_smoke.elf` 使用真实 Conv0 crop + pool fixture，按当前 BD 默认配置调度：
@@ -219,7 +220,7 @@ Layer06 系列 ELF 使用 `sw/vitis_2022_2/scripts/generate_layer06_tile4_header
 
 `conv3_conv4_chain` 是当前第一条真正的两层串接 smoke：先运行 `conv3_pool` 并把硬件 OFM debug packet 重排成 `26x26x128` feature buffer，再把该 buffer 作为 `conv4_pool` 的 IFM 输入。该模式的 Conv4 expected output 来自新的 chain golden `D:/MPSoC/python_prj/rtl_golden/facemask_chain_conv3_conv4_rtl/04_conv4_pool`，而不是 PyTorch `layer07_pooling` 中间层。
 
-当前最长的链式 smoke 是 `conv0_conv7_chain`，连续执行 Conv0 到 Conv7，并在每层结束后将硬件 OFM packet 重排为下一层 IFM。Conv7 原生算子是 1x1，但硬件使用仅中心位置非零的稀疏 3x3 权重，以 `kernel=3, pad=1, K_TOTAL=9216` 等价执行。Conv7 expected output 来自 `D:/MPSoC/python_prj/rtl_golden/facemask_chain_conv0_conv7_rtl/07_head_conv7_1x1`。下游 golden 必须使用同一条 RTL semantic 链的上游输出生成，不能与 standalone/single-scale golden 混用。
+当前最长的链式 smoke 是 `conv0_conv8_chain`，连续执行 Conv0 到 Conv8，并在每层结束后将硬件 OFM packet 重排为下一层 IFM。Conv7 原生算子是 1x1，但硬件使用仅中心位置非零的稀疏 3x3 权重，以 `kernel=3, pad=1, K_TOTAL=9216` 等价执行。Conv8 expected output 来自 `D:/MPSoC/python_prj/rtl_golden/facemask_chain_conv0_conv8_rtl/08_head_conv8_3x3`。下游 golden 必须使用同一条 RTL semantic 链的上游输出生成，不能与 standalone/single-scale golden 混用。
 
 ## 6. 已知限制和风险
 
@@ -227,7 +228,7 @@ Layer06 系列 ELF 使用 `sw/vitis_2022_2/scripts/generate_layer06_tile4_header
 - pooling 第一版已经作为 activation 后、OFM writer 前的可选输出侧后处理模块接入，当前支持 bypass 和 `2x2` uint8 maxpool stride-2。
 - pool 打开时，`OFM_SIZE/NUM_PIXELS/TILE_OFM_H` 描述 pool 前 conv output tile，`TILE_PIXEL_BASE` 按最终 pool 后 OFM 地址空间配置。
 - 当前验证重点是卷积数据流、量化语义和写回正确性，不覆盖 YOLO decode/NMS。
-- Vitis runtime 已覆盖 Conv0 到 Conv7 的八层连续调度，但仍不是完整 10 层单尺度网络 runtime。
+- Vitis runtime 已覆盖 Conv0 到 Conv8 的九层连续调度，仅剩 24 通道 detect Conv9 尚未接入。
 - 当前 OFM AXIS 仍输出 `{addr[23:0], data[7:0]}` debug packet。它适合验证和软件重排，但不是长期高效的连续 HWC DMA 写回格式。
 - 当前 IFM 行填充仍由 PS 轮询 GPIO request 后启动 IFM DMA 服务，尚未实现硬件 DDR reader。
 - RTL semantic golden 是硬件 bit-exact 仿真的标准；PyTorch reference 只能作为模型级参考。
@@ -265,8 +266,8 @@ D:/MPSoC/python_prj
 
 ### 网络验证主线
 
-1. 接入 Conv8，并使用同链 Conv7 输出生成 Conv8 golden。
-2. 将 detect Conv9 切换到中心稀疏 3x3 调度。
+1. 使用同链 Conv8 输出生成 detect Conv9 golden。
+2. 将 Conv9 原生 1x1 权重切换到中心稀疏 3x3 调度，硬件使用 `K_TOTAL=4608`、`256` 个 K pass、`2` 个 COUT block。
 3. 完成 10 层单尺度硬件链后接入软件 YOLO decode。
 4. YOLO box decode、threshold 和 NMS 继续保留在软件端。
 
@@ -294,7 +295,7 @@ D:/MPSoC/python_prj
 - 单尺度 layer list 已固化在 `tools/golden/single_scale_yolov3tiny_layers.json`，覆盖 Conv0 到 13x13 单尺度检测头的 10 个硬件卷积候选层。
 - 多层 RTL semantic golden exporter 已加入 `tools/golden/export_rtl_single_scale_golden.py`，默认输出到外部 `D:/MPSoC/python_prj/rtl_golden/facemask_single_scale_rtl`，不把大 binary dump 写入 RTL 仓库。
 - 单尺度调度 cross-check 已加入 `tools/golden/verify_single_scale_schedule.py`，用于对齐 JSON layer spec 与 Vitis C plan，并复算 shape、K pass、COUT block、feature buffer、spatial tile、schedule block 和最大 AXIS capture。
-- Vitis smoke 已加入 descriptor/scheduler dry-run：`accel_layer_desc_t` 描述单层运行参数，`accel_single_scale_plan` 记录 10 层单尺度调度表，`accel_single_scale_scheduler.h` 在启动时检查 shape 链接、K pass、COUT block、expected bytes 和 ping-pong feature buffer 分配；实际板级 runtime 已推进到 Conv0->Conv7 八层连续调度。JSON layer spec 使用 `hardware_kernel/hardware_pad` 显式区分 Conv7 的原生 1x1 语义和稀疏 3x3 硬件映射。
+- Vitis smoke 已加入 descriptor/scheduler dry-run：`accel_layer_desc_t` 描述单层运行参数，`accel_single_scale_plan` 记录 10 层单尺度调度表，`accel_single_scale_scheduler.h` 在启动时检查 shape 链接、K pass、COUT block、expected bytes 和 ping-pong feature buffer 分配；实际板级 runtime 已推进到 Conv0->Conv8 九层连续调度。JSON layer spec 使用 `hardware_kernel/hardware_pad` 显式区分原生 1x1 语义和稀疏 3x3 硬件映射。
 - 短回归入口为 `tb/run_short_xsim_regression.ps1`，核心通过标准优先使用 Conv0 crop + pool r18_c8 external golden；r18_c8 deterministic 作为控制面/诊断 smoke，不再单独代表核心正确性。
 - 板子恢复后的入口为 `sw/vitis_2022_2/scripts/run_kv260_smoke_sequence.ps1`，流程为 JTAG probe -> bit/ELF download -> UART capture -> PL register probe；默认先跑真实 Conv0 crop + pool，若需要追加旧 deterministic 诊断则使用 `-RunDeterministic`。
 - 板子未断电且 PL 已确认烧录后，软件端迭代可使用 `run_kv260_smoke_sequence.ps1 -FastRun`，该路径保留当前 PS/PL 初始化，只 reset A53 并下载 ELF；若重新上电、PL 指示灯异常或 DMA reset 卡在首个 MMIO 访问，应改用完整 bitstream 烧录流程。
@@ -346,4 +347,6 @@ D:/MPSoC/python_prj
 - 2026-06-06 `conv0_pool -> conv6` 七层连续完整烧录上板通过，日志为 `build_system_xck26_kv260_linebuffix/board_smoke_logs/20260606_211220_conv0_conv6_chain_COM8.log`。Conv6 四个 spatial tile 的总服务计数为 `bias=256, weight=65536, ifm=311296`，最后一个 `oy=12, h=1` tail 输出 `13312` bytes，最终 `conv6 full compare=173056 bytes`，全链逐层 bit-exact。
 - 2026-06-06 已使用同链 Conv6 输出生成 Conv7 原生 1x1 RTL semantic golden，并通过 `--emulate-1x1-as-3x3` 生成中心稀疏 3x3 KCO 权重。展开后权重为 `9216x256`，硬件执行 `512` 个 K pass、`16` 个 COUT block；原生 golden 输出为 `13x13x256 = 43264` bytes，`sat_count=0`。
 - 2026-06-06 `conv0_pool -> conv7` 八层连续完整烧录上板通过，日志为 `build_system_xck26_kv260_linebuffix/board_smoke_logs/20260606_212154_conv0_conv7_chain_COM8.log`。Conv7 四个 spatial tile 的总服务计数为 `bias=64, weight=32768, ifm=155648`，最后一个 `oy=12, h=1` tail 输出 `3328` bytes，最终 `conv7_sparse3x3 full compare=43264 bytes`，证明中心稀疏 3x3 与原生 1x1 golden bit-exact 等价。
-- 当前可靠板级边界是 Conv0->Conv7。下一步是使用同链 Conv7 输出生成并接入 Conv8。
+- 2026-06-06 已使用同链 Conv7 输出生成 Conv8 RTL semantic golden，路径为 `D:/MPSoC/python_prj/rtl_golden/facemask_chain_conv0_conv8_rtl/08_head_conv8_3x3`；该层为 `13x13x256 -> 13x13x512`，`K_TOTAL=2304`、`128` 个 K pass、`32` 个 COUT block、输出 `86528` bytes，`sat_count=0`。
+- 2026-06-06 `conv0_pool -> conv8` 九层连续完整烧录上板通过，日志为 `build_system_xck26_kv260_linebuffix/board_smoke_logs/20260606_213159_conv0_conv8_chain_COM8.log`。Conv8 四个 spatial tile 的总服务计数为 `bias=128, weight=16384, ifm=77824`，最后一个 `oy=12, h=1` tail 输出 `6656` bytes，最终 `conv8 full compare=86528 bytes`，全链逐层 bit-exact。
+- 当前可靠板级边界是 Conv0->Conv8。下一步是使用同链 Conv8 输出生成并接入 detect Conv9。
