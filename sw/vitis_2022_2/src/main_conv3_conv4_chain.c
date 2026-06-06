@@ -1,10 +1,13 @@
 #include "accel_smoke.h"
-#if ACCEL_CHAIN_CONV0_CONV4
+#if ACCEL_CHAIN_CONV0_CONV4 || ACCEL_CHAIN_CONV0_CONV5
 #include "conv0_pool_data.h"
 #include "conv1_pool_data.h"
 #include "conv2_pool_data.h"
 #include "conv3_pool_data.h"
 #include "conv4_pool_data.h"
+#if ACCEL_CHAIN_CONV0_CONV5
+#include "conv5_pool_data.h"
+#endif
 #else
 #include "conv4_pool_data.h"
 #if ACCEL_CHAIN_CONV4_CONV5
@@ -34,7 +37,11 @@
 #define CHAIN_KH              3U
 #define CHAIN_KW              3U
 
-#if ACCEL_CHAIN_CONV0_CONV4
+#if ACCEL_CHAIN_CONV0_CONV5
+#define CHAIN_SMOKE_NAME      "conv0_pool -> conv5 chained smoke"
+#define MAX_FM_W              416U
+#define MAX_TILE_OFM_BYTES    (13U * 4U * 512U)
+#elif ACCEL_CHAIN_CONV0_CONV4
 #define CHAIN_SMOKE_NAME      "conv0_pool -> conv4_pool chained smoke"
 #define MAX_FM_W              416U
 #define MAX_TILE_OFM_BYTES    (52U * 4U * 64U)
@@ -91,7 +98,7 @@ static uint64_t bias_buf[CHAIN_COUT_TILE / 2U] __attribute__((aligned(64)));
 static uint64_t weight_buf[(CHAIN_ROWS * CHAIN_COUT_TILE) / 8U] __attribute__((aligned(64)));
 static uint64_t ifm_buf[MAX_FM_W] __attribute__((aligned(64)));
 static uint64_t ofm_axis_buf[MAX_TILE_OFM_BYTES] __attribute__((aligned(64)));
-#if ACCEL_CHAIN_CONV0_CONV4
+#if ACCEL_CHAIN_CONV0_CONV4 || ACCEL_CHAIN_CONV0_CONV5
 static uint8_t feature_buffer0[208U * 208U * 16U] __attribute__((aligned(64)));
 static uint8_t feature_buffer1[104U * 104U * 32U] __attribute__((aligned(64)));
 #elif ACCEL_CHAIN_CONV4_CONV5
@@ -104,7 +111,7 @@ static uint8_t conv4_ofm[13U * 13U * 256U] __attribute__((aligned(64)));
 volatile uint32_t debug_stage = 0;
 volatile uint32_t debug_value = 0;
 
-#if !ACCEL_CHAIN_CONV4_CONV5 && !ACCEL_CHAIN_CONV0_CONV4
+#if !ACCEL_CHAIN_CONV4_CONV5 && !ACCEL_CHAIN_CONV0_CONV4 && !ACCEL_CHAIN_CONV0_CONV5
 static const chain_tile_t conv3_tiles[13] = {
     {"conv3_tile0", 0U, 4U, 0U * 52U, 52U * 4U, 26U * 2U * 128U},
     {"conv3_tile1", 4U, 4U, 1U * 52U, 52U * 4U, 26U * 2U * 128U},
@@ -122,7 +129,7 @@ static const chain_tile_t conv3_tiles[13] = {
 };
 #endif
 
-#if !ACCEL_CHAIN_CONV0_CONV4
+#if !ACCEL_CHAIN_CONV0_CONV4 && !ACCEL_CHAIN_CONV0_CONV5
 static const chain_tile_t conv4_tiles[7] = {
     {"conv4_tile0", 0U, 4U, 0U * 26U, 26U * 4U, 13U * 2U * 256U},
     {"conv4_tile1", 4U, 4U, 1U * 26U, 26U * 4U, 13U * 2U * 256U},
@@ -134,7 +141,16 @@ static const chain_tile_t conv4_tiles[7] = {
 };
 #endif
 
-#if ACCEL_CHAIN_CONV0_CONV4
+#if ACCEL_CHAIN_CONV4_CONV5 || ACCEL_CHAIN_CONV0_CONV5
+static const chain_tile_t conv5_tiles[4] = {
+    {"conv5_tile0", 0U, 4U, 0U * 13U, 13U * 4U, 13U * 4U * 512U},
+    {"conv5_tile1", 4U, 4U, 4U * 13U, 13U * 4U, 13U * 4U * 512U},
+    {"conv5_tile2", 8U, 4U, 8U * 13U, 13U * 4U, 13U * 4U * 512U},
+    {"conv5_tile3", 12U, 1U, 12U * 13U, 13U * 1U, 13U * 1U * 512U},
+};
+#endif
+
+#if ACCEL_CHAIN_CONV0_CONV4 || ACCEL_CHAIN_CONV0_CONV5
 static chain_layer_t conv0_layer = {
     "conv0_pool",
     416U, 416U, 416U, 416U,
@@ -225,21 +241,37 @@ static chain_layer_t conv4_layer = {
     8U,
 };
 
+#if ACCEL_CHAIN_CONV0_CONV5
+static chain_layer_t conv5_layer = {
+    "conv5",
+    13U, 13U, 13U, 13U,
+    256U, 512U, 256U * 9U, 128U, 32U,
+    15U, 16863U, 7U, 82U,
+    0U, 0U,
+    13U * 13U, 13U * 13U * 512U,
+    feature_buffer0,
+    conv5_pool_weight_s8,
+    conv5_pool_bias_i32,
+    conv5_pool_activation_lut_u8,
+    conv5_pool_golden_ofm_u8,
+    feature_buffer1,
+    conv5_tiles,
+    4U,
+    0U,
+};
+#endif
+
 static chain_layer_t *chain_layers[] = {
     &conv0_layer,
     &conv1_layer,
     &conv2_layer,
     &conv3_layer,
     &conv4_layer,
+#if ACCEL_CHAIN_CONV0_CONV5
+    &conv5_layer,
+#endif
 };
 #elif ACCEL_CHAIN_CONV4_CONV5
-static const chain_tile_t conv5_tiles[4] = {
-    {"conv5_tile0", 0U, 4U, 0U * 13U, 13U * 4U, 13U * 4U * 512U},
-    {"conv5_tile1", 4U, 4U, 4U * 13U, 13U * 4U, 13U * 4U * 512U},
-    {"conv5_tile2", 8U, 4U, 8U * 13U, 13U * 4U, 13U * 4U * 512U},
-    {"conv5_tile3", 12U, 1U, 12U * 13U, 13U * 1U, 13U * 1U * 512U},
-};
-
 static chain_layer_t stage0_layer = {
     "conv4_pool",
     26U, 26U, 26U, 26U,

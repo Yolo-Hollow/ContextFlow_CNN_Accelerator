@@ -189,6 +189,9 @@ build_vitis_2022_2/conv_accel_r18_c16_smoke/manual_build/conv_accel_layer06_tile
 build_vitis_2022_2/conv_accel_r18_c16_smoke/manual_build/conv_accel_layer06_pool_tiles_smoke.elf
 build_vitis_2022_2/conv_accel_r18_c16_smoke/manual_build/conv_accel_conv4_pool_tiles_smoke.elf
 build_vitis_2022_2/conv_accel_r18_c16_smoke/manual_build/conv_accel_conv3_conv4_chain_smoke.elf
+build_vitis_2022_2/conv_accel_r18_c16_smoke/manual_build/conv_accel_conv4_conv5_chain_smoke.elf
+build_vitis_2022_2/conv_accel_r18_c16_smoke/manual_build/conv_accel_conv0_conv4_chain_smoke.elf
+build_vitis_2022_2/conv_accel_r18_c16_smoke/manual_build/conv_accel_conv0_conv5_chain_smoke.elf
 ```
 
 `conv_accel_r18_c8_smoke.elf` 是旧 deterministic smoke 的更新版，会显式通过 AXI-Lite 写入 identity quant、identity LUT 和 `EXPECTED_BYTES`。`conv_accel_conv0_crop_pool_smoke.elf` 使用真实 Conv0 crop + pool fixture，按当前 BD 默认配置调度：
@@ -214,13 +217,15 @@ Layer06 系列 ELF 使用 `sw/vitis_2022_2/scripts/generate_layer06_tile4_header
 
 `conv3_conv4_chain` 是当前第一条真正的两层串接 smoke：先运行 `conv3_pool` 并把硬件 OFM debug packet 重排成 `26x26x128` feature buffer，再把该 buffer 作为 `conv4_pool` 的 IFM 输入。该模式的 Conv4 expected output 来自新的 chain golden `D:/MPSoC/python_prj/rtl_golden/facemask_chain_conv3_conv4_rtl/04_conv4_pool`，而不是 PyTorch `layer07_pooling` 中间层。
 
+当前最长的链式 smoke 是 `conv0_conv5_chain`，连续执行 Conv0 到 Conv5，并在每层结束后将硬件 OFM packet 重排为下一层 IFM。Conv5 expected output 来自 `D:/MPSoC/python_prj/rtl_golden/facemask_chain_conv0_conv5_rtl/05_conv5_pool_like_tiny`；该 golden 使用同一条 Conv0->Conv4 RTL semantic 链的 Conv4 输出作为输入，不能与 standalone/single-scale Conv4 golden 混用。
+
 ## 6. 已知限制和风险
 
 - 当前 RTL 还不是完整 YOLOv3-tiny 推理系统。
 - pooling 第一版已经作为 activation 后、OFM writer 前的可选输出侧后处理模块接入，当前支持 bypass 和 `2x2` uint8 maxpool stride-2。
 - pool 打开时，`OFM_SIZE/NUM_PIXELS/TILE_OFM_H` 描述 pool 前 conv output tile，`TILE_PIXEL_BASE` 按最终 pool 后 OFM 地址空间配置。
 - 当前验证重点是卷积数据流、量化语义和写回正确性，不覆盖 YOLO decode/NMS。
-- Vitis 最小系统 runtime 目前只覆盖旧 deterministic smoke 和一个真实 Conv0 crop + pool smoke，不代表完整网络 runtime。
+- Vitis runtime 已覆盖 Conv0 到 Conv5 的六层连续调度，但仍不是完整 10 层单尺度网络 runtime。
 - 当前 OFM AXIS 仍输出 `{addr[23:0], data[7:0]}` debug packet。它适合验证和软件重排，但不是长期高效的连续 HWC DMA 写回格式。
 - 当前 IFM 行填充仍由 PS 轮询 GPIO request 后启动 IFM DMA 服务，尚未实现硬件 DDR reader。
 - RTL semantic golden 是硬件 bit-exact 仿真的标准；PyTorch reference 只能作为模型级参考。
@@ -258,21 +263,17 @@ D:/MPSoC/python_prj
 
 ### 网络验证主线
 
-1. 固化单尺度检测网络的 layer list 和 buffer 调度。
-2. 为每一层导出 RTL semantic golden。
-3. 按层验证 convolution/pooling 输出。
-4. 编写软件层调度器，按顺序配置 RTL 并管理中间 feature buffer。
-5. YOLO box decode 和 threshold 先保留在软件端。
+1. 在现有 Conv0->Conv5 链后接入 Conv6，并使用同链 Conv5 输出生成 Conv6 golden。
+2. 将 Conv7/Conv9 的原生 1x1 层切换到中心稀疏 3x3 硬件调度，Conv7 使用硬件 `K_TOTAL=9216`。
+3. 继续扩展到 Conv8 和 detect Conv9，完成 10 层单尺度硬件链。
+4. YOLO box decode、threshold 和 NMS 继续保留在软件端。
 
 ### 系统集成主线
 
-1. 用 KV260 board preset 重新生成包含当前 RTL 的 bitstream/XSA。
-2. 先用 `probe_pl_regs.tcl` 验证 accelerator、DMA、GPIO 和 `0xA0000080..0xA000008c` quant/LUT MMIO 地址可访问。
-3. 上板优先运行 `conv_accel_conv0_crop_pool_smoke.elf`，确认真实 Conv0 crop + pool 的 quant/LUT、pool、OFM debug stream 和软件 golden 对比。
-4. 如需控制面诊断，再运行 `conv_accel_r18_c8_smoke.elf`，观察旧 deterministic PS/DMA/GPIO 通路和 raw psum mismatch。
-5. 可选增加 AXI VIP BD smoke，目标只验证 BD 地址映射和控制面，不重复 RTL 大规模 golden 验证。
-6. 再扩展到多层单尺度 pipeline。
-7. 等寄存器和 buffer ABI 稳定后，再加入 SD 卡或 host-side 参数加载。
+1. 继续以 `build_system_xck26_kv260_linebuffix` 作为当前板级基线，新增 RTL 后再生成独立命名的构建目录。
+2. 每次板子重新上电后完整烧录 bitstream，再运行最长可用链式 smoke 回归。
+3. 保留 `probe_pl_regs.tcl` 对 accelerator、DMA、GPIO 和 quant/LUT MMIO 的检查。
+4. 等 10 层调度和 buffer ABI 稳定后，再加入 SD 卡或 host-side 参数加载。
 
 ## 9. 当前默认策略
 
@@ -291,7 +292,7 @@ D:/MPSoC/python_prj
 - 单尺度 layer list 已固化在 `tools/golden/single_scale_yolov3tiny_layers.json`，覆盖 Conv0 到 13x13 单尺度检测头的 10 个硬件卷积候选层。
 - 多层 RTL semantic golden exporter 已加入 `tools/golden/export_rtl_single_scale_golden.py`，默认输出到外部 `D:/MPSoC/python_prj/rtl_golden/facemask_single_scale_rtl`，不把大 binary dump 写入 RTL 仓库。
 - 单尺度调度 cross-check 已加入 `tools/golden/verify_single_scale_schedule.py`，用于对齐 JSON layer spec 与 Vitis C plan，并复算 shape、K pass、COUT block、feature buffer、spatial tile、schedule block 和最大 AXIS capture。
-- Vitis smoke 已加入 descriptor/scheduler dry-run：`accel_layer_desc_t` 描述单层运行参数，`accel_single_scale_plan` 记录 10 层单尺度调度表，`accel_single_scale_scheduler.h` 在启动时检查 shape 链接、K pass、COUT block、expected bytes 和 ping-pong feature buffer 分配；当前 smoke 已覆盖单 tile Conv0 和两 spatial tile Conv0 crop + pool。
+- Vitis smoke 已加入 descriptor/scheduler dry-run：`accel_layer_desc_t` 描述单层运行参数，`accel_single_scale_plan` 记录 10 层单尺度调度表，`accel_single_scale_scheduler.h` 在启动时检查 shape 链接、K pass、COUT block、expected bytes 和 ping-pong feature buffer 分配；实际板级 runtime 已推进到 Conv0->Conv5 六层连续调度。
 - 短回归入口为 `tb/run_short_xsim_regression.ps1`，核心通过标准优先使用 Conv0 crop + pool r18_c8 external golden；r18_c8 deterministic 作为控制面/诊断 smoke，不再单独代表核心正确性。
 - 板子恢复后的入口为 `sw/vitis_2022_2/scripts/run_kv260_smoke_sequence.ps1`，流程为 JTAG probe -> bit/ELF download -> UART capture -> PL register probe；默认先跑真实 Conv0 crop + pool，若需要追加旧 deterministic 诊断则使用 `-RunDeterministic`。
 - 板子未断电且 PL 已确认烧录后，软件端迭代可使用 `run_kv260_smoke_sequence.ps1 -FastRun`，该路径保留当前 PS/PL 初始化，只 reset A53 并下载 ELF；若重新上电、PL 指示灯异常或 DMA reset 卡在首个 MMIO 访问，应改用完整 bitstream 烧录流程。
@@ -332,4 +333,11 @@ D:/MPSoC/python_prj
 - 2026-06-06 下一版关键离线回归全部通过：完整 Conv0 full-width tile2 为 `3345 pass, 0 fail`，K=9216 调度为 `512 pass, 0 fail`，配置寄存器为 `39/0`，AXI-Lite bridge 为 `67/0`，window extract 为 `165/0`，OFM packet FIFO 为 `196/0`，OFM byte FIFO 为 `36/0`。长测试已加入阶段、数据量和周期心跳日志，便于区分正常计算与死锁。
 - 2026-06-06 FIFO/K 位宽/握手修改已完成 KV260 综合、实现、bitstream 和含 bit XSA 导出，独立构建目录为 `build_system_xck26_kv260_fifo1024_k14`。最终 signoff 为 `WNS=0.205 ns, TNS=0, WHS=0.012 ns, THS=0`，route status 为 `82447 fully routed nets, 0 routing errors`。
 - 新实现资源为 `CLB LUTs=50246 (42.90%)`、`CLB Registers=44577 (19.03%)`、`BRAM Tile=45.5 (31.60%)`、`DSP=177 (14.18%)`。相对上一版，BRAM 从 `28.5` 增至 `45.5` tiles，LUT 从 `50764` 降至 `50246`，寄存器从 `44083` 增至 `44577`，DSP 不变；时序余量从 `1.105 ns` 降至 `0.205 ns`，但仍满足全部约束。
-- 新 XSA 为 `build_system_xck26_kv260_fifo1024_k14/conv_accel_ps_dma_minimal.xsa`，SHA256 为 `E6C53E4F2EF69A499B5AA237D549F841EB0DEFCFF12BC9137495489D5757ECBC`；实现目录中的 bitstream SHA256 为 `E0863298A244D167B004F39D1A95D0ABB197F78976E45C8E3A2555A4C46A09B4`。当前板上仍是修改前 bitstream，下一步需要完整烧录新 bitstream 后再进行 Conv0-Conv4/Conv7 上板验证。
+- FIFO1024/K14 初版 XSA 为 `build_system_xck26_kv260_fifo1024_k14/conv_accel_ps_dma_minimal.xsa`，SHA256 为 `E6C53E4F2EF69A499B5AA237D549F841EB0DEFCFF12BC9137495489D5757ECBC`；实现目录中的 bitstream SHA256 为 `E0863298A244D167B004F39D1A95D0ABB197F78976E45C8E3A2555A4C46A09B4`。该版本随后在 Conv5 tail 验证中暴露 stale line-buffer row 问题，已由后续 `linebuffix` 版本取代。
+- 2026-06-06 Conv5 bottom-tail 定向仿真暴露 line buffer 只按 `fy` 标记有效行、未排除上一 K pass 同 `fy` stale row 的问题。`line_buffer_5bank.v` 已在新行写入/advance 时清除其它同 `fy` valid，`tb_conv_accel_core_axi_lite_axis_stream_r18_c8_b2_conv5_ext_tail_cout16` 修复后为 `227 pass, 0 fail`，并确认 IFM loader 与 feeder window 数据正确。
+- 2026-06-06 stale-row 修复后的 KV260 构建目录为 `build_system_xck26_kv260_linebuffix`。实现 signoff 为 `WNS=0.812 ns, TNS=0, WHS=0.010 ns, THS=0`，route status 为 `81692 fully routed nets, 0 routing errors`；资源为 `CLB LUTs=50244 (42.90%)`、`CLB Registers=44051 (18.81%)`、`BRAM Tile=45.5 (31.60%)`、`DSP=177 (14.18%)`。XSA SHA256 为 `2CF40E651FDFF9EBD138DC7EE710C6EE91F2317E23686DA4A721E0909051693A`，bitstream SHA256 为 `152B96EC577FFF908585F8CF81DA5CEDA2C2C5DB2A69D0BC2F56F7C461ED531A`。
+- 2026-06-06 `conv4_pool -> conv5` 完整重新烧录上板通过，日志为 `build_system_xck26_kv260_linebuffix/board_smoke_logs/20260606_204007_conv4_conv5_chain_COM8.log`；Conv5 `K_TOTAL=2304`、`128` 个 K pass、`32` 个 COUT block，底部 `oy=12, h=1` tail tile 正常，最终 `conv5 full compare=86528 bytes`。
+- 2026-06-06 `conv0_pool -> conv4_pool` 在同一 linebuffix bitstream 上完整重新烧录回归通过，日志为 `build_system_xck26_kv260_linebuffix/board_smoke_logs/20260606_204216_conv0_conv4_chain_COM8.log`。
+- 2026-06-06 `conv0_pool -> conv5` 六层连续上板通过，日志为 `build_system_xck26_kv260_linebuffix/board_smoke_logs/20260606_205041_conv0_conv5_chain_COM8.log`；逐层 full compare 为 Conv0 `692224`、Conv1 `346112`、Conv2 `173056`、Conv3 `86528`、Conv4 `43264`、Conv5 `86528` bytes，全部 bit-exact。
+- Conv0->Conv5 初次测试曾因 Conv5 使用另一条 standalone Conv4 输出生成的 golden 而出现 mismatch。链式验证必须使用同一硬件语义链的上游输出重新生成下游 golden；当前 Conv5 chain golden 位于 `D:/MPSoC/python_prj/rtl_golden/facemask_chain_conv0_conv5_rtl`。
+- 当前可靠板级边界是 Conv0->Conv5。Conv6 仍待接入；Conv7/Conv9 的 `--emulate-1x1-as-3x3` 数据生成能力已经存在，但 `accel_single_scale_plan.h` 和实际 runtime 尚未切换到展开后的硬件 kernel/pad/K total。

@@ -72,7 +72,9 @@ def main():
     if final_c != cout:
         raise RuntimeError(f"Final C {final_c} does not match conv C {cout}")
 
-    ifm = read_exact(layer_dir / "ifm_u8_hwc.bin", ifm_h * ifm_w * cin)
+    ifm = None
+    if not args.omit_ifm:
+        ifm = read_exact(layer_dir / "ifm_u8_hwc.bin", ifm_h * ifm_w * cin)
     weight_oihw = read_exact(layer_dir / "weight_raw_oihw_s8.bin", cout * cin * kernel * kernel)
     bias_raw = read_exact(layer_dir / "bias_i32.bin", cout * 4)
     lut = read_exact(layer_dir / "activation_lut_u8.bin", 256)
@@ -111,7 +113,7 @@ def main():
             f"#define {args.prefix.upper()}_EMULATE_1X1_AS_3X3 "
             f"{1 if args.emulate_1x1_as_3x3 else 0}U\n\n"
         )
-        if not args.omit_ifm:
+        if ifm is not None:
             emit_array(f, "uint8_t", f"{args.prefix}_ifm_u8", list(ifm))
         emit_array(f, "int8_t", f"{args.prefix}_weight_s8", weight_kco)
         emit_array(f, "int32_t", f"{args.prefix}_bias_i32", bias, per_line=8)

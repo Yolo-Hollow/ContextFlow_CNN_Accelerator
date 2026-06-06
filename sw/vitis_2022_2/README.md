@@ -195,14 +195,28 @@ The generated ELF is:
 build_vitis_2022_2/conv_accel_r18_c16_smoke/manual_build/conv_accel_conv3_conv4_chain_smoke.elf
 ```
 
-This script uses the carrier-based hardware export:
+Additional chain modes extend the same runtime through Conv5:
 
-```text
-build_system_xck26_kv260/conv_accel_ps_dma_minimal.xsa
+```powershell
+powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/manual_build_accel_smoke.ps1 -Mode conv4_conv5_chain
+powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/manual_build_accel_smoke.ps1 -Mode conv0_conv4_chain
+powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/manual_build_accel_smoke.ps1 -Mode conv0_conv5_chain
 ```
 
-That XSA is expected to include the KV260 carrier board preset and the GPIO2
-exposure of `feeder_fill_fy`.
+The Conv0-to-Conv5 mode executes six consecutive hardware layers and compares
+every layer against a chain-specific RTL semantic golden. Conv5 must be
+generated from the Conv4 output of the same chain; a standalone Conv4 golden is
+not interchangeable because earlier RTL-semantic differences propagate.
+
+The current board-validated hardware export is:
+
+```text
+build_system_xck26_kv260_linebuffix/conv_accel_ps_dma_minimal.xsa
+```
+
+It includes the FIFO1024/K14 changes and the stale IFM line-buffer row fix.
+`run_kv260_smoke_sequence.ps1 -BuildDirName <directory>` selects a specific
+hardware build without overwriting an older validated bitstream.
 
 ## Software scheduler skeleton
 
@@ -279,12 +293,24 @@ To run the chained `conv3_pool -> conv4_pool` smoke:
 powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/run_kv260_smoke_sequence.ps1 -PortName COM8 -FastRun -RunConv3Conv4Chain -CaptureSeconds 3600
 ```
 
+To run the validated chain modes with the current line-buffer-fix bitstream:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/run_kv260_smoke_sequence.ps1 -PortName COM8 -BuildDirName build_system_xck26_kv260_linebuffix -RunConv4Conv5Chain -CaptureSeconds 3600
+powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/run_kv260_smoke_sequence.ps1 -PortName COM8 -BuildDirName build_system_xck26_kv260_linebuffix -RunConv0Conv4Chain -CaptureSeconds 3600
+powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/run_kv260_smoke_sequence.ps1 -PortName COM8 -BuildDirName build_system_xck26_kv260_linebuffix -RunConv0Conv5Chain -CaptureSeconds 5400
+```
+
+Use the full sequence after a board power cycle. `-FastRun` is only appropriate
+when the same bitstream is still programmed and the prior accelerator run left
+the PL in a known-good idle state.
+
 The script starts `hw_server` if needed, probes JTAG, captures serial logs,
 downloads the bitstream and ELF, then runs `probe_pl_regs.tcl`. Logs are saved
-under:
+under the selected build directory, for example:
 
 ```text
-build_system_xck26_kv260/board_smoke_logs/
+build_system_xck26_kv260_linebuffix/board_smoke_logs/
 ```
 
 For fast software-only iteration after the bitstream has already been
