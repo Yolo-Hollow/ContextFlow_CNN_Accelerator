@@ -16,6 +16,7 @@ param(
     [switch]$RunConv0Conv6Chain,
     [switch]$RunConv0Conv7Chain,
     [switch]$RunConv0Conv8Chain,
+    [switch]$RunConv0Conv9Chain,
     [switch]$RunDeterministic,
     [string]$BuildDirName = "build_system_xck26_kv260"
 )
@@ -43,6 +44,7 @@ $Conv0Conv5ChainElf = Join-Path $Root "build_vitis_2022_2\conv_accel_r18_c16_smo
 $Conv0Conv6ChainElf = Join-Path $Root "build_vitis_2022_2\conv_accel_r18_c16_smoke\manual_build\conv_accel_conv0_conv6_chain_smoke.elf"
 $Conv0Conv7ChainElf = Join-Path $Root "build_vitis_2022_2\conv_accel_r18_c16_smoke\manual_build\conv_accel_conv0_conv7_chain_smoke.elf"
 $Conv0Conv8ChainElf = Join-Path $Root "build_vitis_2022_2\conv_accel_r18_c16_smoke\manual_build\conv_accel_conv0_conv8_chain_smoke.elf"
+$Conv0Conv9ChainElf = Join-Path $Root "build_vitis_2022_2\conv_accel_r18_c16_smoke\manual_build\conv_accel_conv0_conv9_chain_smoke.elf"
 $DownloadTcl = Join-Path $ScriptDir "download_run_accel_smoke.tcl"
 $ProbeTcl = Join-Path $ScriptDir "probe_pl_regs.tcl"
 $JtagProbeTcl = Join-Path $ScriptDir "probe_jtag_targets.tcl"
@@ -139,7 +141,10 @@ if (!$SkipBit -and !$FastRun) {
 Write-Host "Available COM ports: $([string]::Join(', ', [System.IO.Ports.SerialPort]::getportnames()))"
 Start-HwServer
 & $Xsct $JtagProbeTcl | Tee-Object -FilePath (Join-Path $LogDir "$Stamp`_jtag_probe.log")
-if ($RunConv0Conv8Chain) {
+if ($RunConv0Conv9Chain) {
+    Run-Smoke "conv0_conv9_chain" $Conv0Conv9ChainElf (!$SkipBit -and !$FastRun) $FastRun
+    & $Xsct $ProbeTcl | Tee-Object -FilePath (Join-Path $LogDir "$Stamp`_pl_probe_after_conv0_conv9_chain.log")
+} elseif ($RunConv0Conv8Chain) {
     Run-Smoke "conv0_conv8_chain" $Conv0Conv8ChainElf (!$SkipBit -and !$FastRun) $FastRun
     & $Xsct $ProbeTcl | Tee-Object -FilePath (Join-Path $LogDir "$Stamp`_pl_probe_after_conv0_conv8_chain.log")
 } elseif ($RunConv0Conv7Chain) {

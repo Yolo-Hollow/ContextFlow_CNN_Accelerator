@@ -195,7 +195,7 @@ The generated ELF is:
 build_vitis_2022_2/conv_accel_r18_c16_smoke/manual_build/conv_accel_conv3_conv4_chain_smoke.elf
 ```
 
-Additional chain modes extend the same runtime through Conv8:
+Additional chain modes extend the same runtime through the complete Conv9 head:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/manual_build_accel_smoke.ps1 -Mode conv4_conv5_chain
@@ -204,9 +204,10 @@ powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/manual_build_ac
 powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/manual_build_accel_smoke.ps1 -Mode conv0_conv6_chain
 powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/manual_build_accel_smoke.ps1 -Mode conv0_conv7_chain
 powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/manual_build_accel_smoke.ps1 -Mode conv0_conv8_chain
+powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/manual_build_accel_smoke.ps1 -Mode conv0_conv9_chain
 ```
 
-The Conv0-to-Conv8 mode executes nine consecutive hardware layers and compares
+The Conv0-to-Conv9 mode executes all ten single-scale hardware layers and compares
 every layer against a chain-specific RTL semantic golden. Conv5 and Conv6 must
 be generated from the preceding output of the same chain; standalone golden
 inputs are not interchangeable because earlier RTL-semantic differences
@@ -216,6 +217,9 @@ semantics but runs on hardware as center-only sparse 3x3 with `K_TOTAL=9216`,
 `K_PASSES=512`, and `COUT_BLOCKS=16`.
 Conv8 is a native 3x3 `13x13x256 -> 13x13x512` layer with
 `K_TOTAL=2304`, `K_PASSES=128`, and `COUT_BLOCKS=32`.
+The 24-channel Conv9 head keeps native 1x1 golden semantics and runs as a
+center-only sparse 3x3 layer with `K_TOTAL=4608`, `K_PASSES=256`, and two
+COUT blocks. The second block contains eight valid output channels.
 
 The current board-validated hardware export is:
 
@@ -311,6 +315,7 @@ powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/run_kv260_smoke
 powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/run_kv260_smoke_sequence.ps1 -PortName COM8 -BuildDirName build_system_xck26_kv260_linebuffix -RunConv0Conv6Chain -CaptureSeconds 7200
 powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/run_kv260_smoke_sequence.ps1 -PortName COM8 -BuildDirName build_system_xck26_kv260_linebuffix -RunConv0Conv7Chain -CaptureSeconds 9000
 powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/run_kv260_smoke_sequence.ps1 -PortName COM8 -BuildDirName build_system_xck26_kv260_linebuffix -RunConv0Conv8Chain -CaptureSeconds 10800
+powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/run_kv260_smoke_sequence.ps1 -PortName COM8 -BuildDirName build_system_xck26_kv260_linebuffix -RunConv0Conv9Chain -CaptureSeconds 12600
 ```
 
 The Conv0-to-Conv6 chain passed on the line-buffer-fix bitstream on
@@ -336,9 +341,17 @@ The Conv0-to-Conv8 chain passed on June 6, 2026:
 build_system_xck26_kv260_linebuffix/board_smoke_logs/20260606_213159_conv0_conv8_chain_COM8.log
 ```
 
-Conv8 compared all `86528` bytes bit-exactly. The next runtime stage is the
-24-channel detect Conv9 using the same center-only sparse 3x3 emulation used by
-Conv7.
+Conv8 compared all `86528` bytes bit-exactly.
+
+The complete Conv0-to-Conv9 chain passed on June 6, 2026:
+
+```text
+build_system_xck26_kv260_linebuffix/board_smoke_logs/20260606_214226_conv0_conv9_chain_COM8.log
+```
+
+Conv9 compared all `4056` bytes bit-exactly against its native 1x1 golden.
+The hardware convolution chain is complete; the next integration task is
+software decode, confidence filtering, and NMS for the `13x13x24` tensor.
 
 Use the full sequence after a board power cycle. `-FastRun` is only appropriate
 when the same bitstream is still programmed and the prior accelerator run left
