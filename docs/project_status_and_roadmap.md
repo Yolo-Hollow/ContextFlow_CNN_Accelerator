@@ -187,6 +187,7 @@ build_vitis_2022_2/conv_accel_r18_c16_smoke/manual_build/conv_accel_conv0_crop_p
 build_vitis_2022_2/conv_accel_r18_c16_smoke/manual_build/conv_accel_layer06_tile4_smoke.elf
 build_vitis_2022_2/conv_accel_r18_c16_smoke/manual_build/conv_accel_layer06_tiles_smoke.elf
 build_vitis_2022_2/conv_accel_r18_c16_smoke/manual_build/conv_accel_layer06_pool_tiles_smoke.elf
+build_vitis_2022_2/conv_accel_r18_c16_smoke/manual_build/conv_accel_conv4_pool_tiles_smoke.elf
 ```
 
 `conv_accel_r18_c8_smoke.elf` 是旧 deterministic smoke 的更新版，会显式通过 AXI-Lite 写入 identity quant、identity LUT 和 `EXPECTED_BYTES`。`conv_accel_conv0_crop_pool_smoke.elf` 使用真实 Conv0 crop + pool fixture，按当前 BD 默认配置调度：
@@ -207,6 +208,8 @@ D:/MPSoC/python_prj/rtl_golden/facemask_conv0_crop16x8_pool/xsim_mem
 小型 fixture 已转为 `sw/vitis_2022_2/src/conv0_crop_pool_data.h`，因此 Vitis smoke 构建不再依赖运行时访问外部 `.mem` 文件。
 
 Layer06 系列 ELF 使用 `sw/vitis_2022_2/scripts/generate_layer06_tile4_header.py` 在 manual build 阶段从外部 `D:/MPSoC/python_prj/rtl_golden/facemask_layer06_rtl` 生成大数组 header。`layer06_tiles` 验证 conv-only 完整 `52x52x128` 输出；`layer06_pool_tiles` 验证单尺度 `conv3_pool`，即 `52x52x64 -> 52x52x128 -> 26x26x128`。
+
+`conv4_pool_tiles` 使用 `sw/vitis_2022_2/scripts/generate_single_scale_layer_header.py` 从外部 `D:/MPSoC/python_prj/rtl_golden/facemask_single_scale_rtl/04_conv4_pool` 生成大数组 header，用于验证下一层 `26x26x128 -> 26x26x256 -> 13x13x256`。该模式仍是单层 smoke，但覆盖了从 `conv3_pool` 输出形状进入下一层 3x3 卷积的调度规模。
 
 ## 6. 已知限制和风险
 
@@ -313,3 +316,7 @@ D:/MPSoC/python_prj
 - 2026-06-06 已新增 `conv_accel_layer06_pool_tiles_smoke.elf` 构建模式，用于在不改 RTL 的前提下上板验证完整 `52x52x64 -> 52x52x128 -> 26x26x128`，13 个 conv spatial tile 的 pool 后完整输出应为 `86528` bytes。
 - 2026-06-06 KV260 完整烧录后运行 `conv_accel_layer06_pool_tiles_smoke.elf` 通过，日志为 `build_system_xck26_kv260/board_smoke_logs/20260606_134340_layer06_pool_tiles_COM8.log`；最后一个 tile delta 为 `core_wr=6656, axis_wr=6656, tlast=1, last_end=6656`，总服务计数为 `bias=104, weight=3328, ifm=19456`，最终 `ofm full compare=86528 bytes` 且 golden 对比 `0 mismatch`。
 - 2026-06-06 `run_kv260_smoke_sequence.ps1` 已改为串口捕获看到 `PASS:` 或 `FAIL:` 后提前收尾，避免长测试失败后仍等待整个 `CaptureSeconds`；Vitis runtime 也已在配置前检查 `CTRL.bit0`，若上一次失败残留 busy 状态则直接要求重新烧录/复位 PL，避免 stale register 导致误判。
+- 2026-06-06 已导出单尺度 `conv4_pool` RTL semantic golden，路径为 `D:/MPSoC/python_prj/rtl_golden/facemask_single_scale_rtl/04_conv4_pool`；该层为 `26x26x128 -> 26x26x256 -> 13x13x256`，`K_PASSES=64`，`COUT_BLOCKS=16`，输出 `43264` bytes，`sat_count=0`，与 PyTorch reference mismatch 为 `20` bytes。
+- 2026-06-06 已新增并通过 `tb_conv_accel_core_axi_lite_axis_stream_r18_c8_b2_conv4_pool_ext_tile4`，首个 `tile_ofm_h=4` conv tile 的 pool 后输出为 `13*2*256=6656` bytes，xsim 结果为 `6673 pass, 0 fail`，elapsed about `00:01:31`。
+- 2026-06-06 已新增 `conv_accel_conv4_pool_tiles_smoke.elf` 构建模式并构建通过；完整上板测试入口为 `run_kv260_smoke_sequence.ps1 -FastRun -RunConv4PoolTiles -CaptureSeconds 2400`。
+- 2026-06-06 KV260 `-FastRun -RunConv4PoolTiles` 上板通过，日志为 `build_system_xck26_kv260/board_smoke_logs/20260606_140410_conv4_pool_tiles_COM8.log`；7 个 spatial tile 中前 6 个输出 `6656` bytes，最后一个 2-row 尾 tile 输出 `3328` bytes，总服务计数为 `bias=112, weight=7168, ifm=38912`，最终 `ofm full compare=43264 bytes` 且 golden 对比 `0 mismatch`。

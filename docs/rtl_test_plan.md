@@ -496,6 +496,26 @@ Current result:
 
 - `6673 pass, 0 fail`; xsim elapsed about `00:00:19` on 2026-06-06.
 
+### `tb_conv_accel_core_axi_lite_axis_stream_r18_c8_b2_conv4_pool_ext_tile4`
+
+Purpose:
+
+- Verify the next 3x3 single-scale stage after `conv3_pool` without requiring 1x1 RTL support.
+- Exercise `26x26x128 -> Conv/LUT 26x26x256 -> 2x2/s2 maxpool 13x13x256` for the first `tile_ofm_h=4` conv tile.
+- Cover the larger scheduling point `K_PASSES=64`, `COUT_BLOCKS=16`, and `1024` weight pass services per spatial tile.
+
+Checks:
+
+- External IFM/weight/bias/LUT/golden import from `facemask_single_scale_rtl/04_conv4_pool/xsim_mem`.
+- Output count is `13*2*256 = 6656` bytes for the first conv tile.
+- AXIS TLAST and debug counters match the pooled output byte count.
+- OFM byte stream is compared byte-for-byte against RTL semantic golden.
+
+Current result:
+
+- `6673 pass, 0 fail`; xsim elapsed about `00:01:31` on 2026-06-06.
+- KV260 `conv_accel_conv4_pool_tiles_smoke.elf` passed on 2026-06-06. Log: `build_system_xck26_kv260/board_smoke_logs/20260606_140410_conv4_pool_tiles_COM8.log`; full pooled OFM compare was `43264` bytes with `0 mismatch`.
+
 ### `tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_tile4_fifo16_backpressure`
 
 Purpose:

@@ -93,10 +93,56 @@
 #define ACCEL_SMOKE_LAYER06_POOL_TILES 0
 #endif
 
+#ifndef ACCEL_SMOKE_CONV4_POOL_TILES
+#define ACCEL_SMOKE_CONV4_POOL_TILES 0
+#endif
+
 #define ACCEL_SMOKE_LAYER06_ANY \
     (ACCEL_SMOKE_LAYER06_TILE4 || ACCEL_SMOKE_LAYER06_TILES || ACCEL_SMOKE_LAYER06_POOL_TILES)
 
-#if ACCEL_SMOKE_LAYER06_ANY
+#define ACCEL_SMOKE_EXTERNAL_GOLDEN \
+    (ACCEL_SMOKE_REAL_CONV0_CROP_POOL || ACCEL_SMOKE_LAYER06_ANY || ACCEL_SMOKE_CONV4_POOL_TILES)
+
+#if ACCEL_SMOKE_CONV4_POOL_TILES
+
+#define ROWS                  18
+#define COLS                  8
+#define IFM_BANKS             2
+#define FM_W                  26
+#define FM_H                  26
+#define OFM_W                 26
+#define OFM_H                 26
+#define CIN                   128
+#define KH                    3
+#define KW                    3
+#define K_TOTAL               (CIN * KH * KW)
+#define COUT_TILE             (COLS * 2)
+#define COUT_TOTAL            256
+#define CONV_PAD              1
+#define CONV_STRIDE           1
+#define TILE_OY_BASE          0
+#define TILE_OFM_H            4
+#define SMOKE_TILE_COUNT      7
+#define SMOKE_NAME            "conv4 pool tiles"
+#define TILE_PIXEL_BASE       0
+#define TILE_PIXELS           (OFM_W * TILE_OFM_H)
+#define FULL_PIXELS           (OFM_W * OFM_H)
+#define K_PASSES              ((K_TOTAL + ROWS - 1) / ROWS)
+#define COUT_BLOCKS           ((COUT_TOTAL + COUT_TILE - 1) / COUT_TILE)
+#define INPUT_ZERO_POINT      16
+#define ACT_MODE              2
+#define POOL_ENABLE           1
+#define POOL_STRIDE           2
+#define QUANT_MULT            18831U
+#define QUANT_SHIFT           7U
+#define QUANT_ZP              73U
+#define EXPECTED_OUTPUT_PIXELS ((OFM_W / 2) * (TILE_OFM_H / 2))
+#define EXPECTED_OFM_BYTES    (EXPECTED_OUTPUT_PIXELS * COUT_TOTAL)
+#define TOTAL_OUTPUT_PIXELS   ((OFM_W / 2) * (OFM_H / 2))
+#define TOTAL_EXPECTED_OFM_BYTES (TOTAL_OUTPUT_PIXELS * COUT_TOTAL)
+#define OFM_AXIS_BYTES        (EXPECTED_OFM_BYTES * OFM_AXIS_BEAT_BYTES)
+
+#elif ACCEL_SMOKE_LAYER06_ANY
 
 #define ROWS                  18
 #define COLS                  8

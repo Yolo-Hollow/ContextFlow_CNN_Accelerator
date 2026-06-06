@@ -154,6 +154,24 @@ The generated ELF is:
 build_vitis_2022_2/conv_accel_r18_c16_smoke/manual_build/conv_accel_layer06_pool_tiles_smoke.elf
 ```
 
+The next 3x3 stage can be tested as `conv4_pool` without changing RTL:
+
+```text
+26x26x128 -> Conv/LUT 26x26x256 -> 2x2/s2 maxpool 13x13x256
+```
+
+Build it with:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/manual_build_accel_smoke.ps1 -Mode conv4_pool_tiles
+```
+
+The generated ELF is:
+
+```text
+build_vitis_2022_2/conv_accel_r18_c16_smoke/manual_build/conv_accel_conv4_pool_tiles_smoke.elf
+```
+
 This script uses the carrier-based hardware export:
 
 ```text
@@ -224,6 +242,12 @@ To run the Layer06 `conv3_pool` 13-tile smoke:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/run_kv260_smoke_sequence.ps1 -PortName COM8 -FastRun -RunLayer06PoolTiles -CaptureSeconds 2400
+```
+
+To run the `conv4_pool` 7-tile smoke:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/run_kv260_smoke_sequence.ps1 -PortName COM8 -FastRun -RunConv4PoolTiles -CaptureSeconds 2400
 ```
 
 The script starts `hw_server` if needed, probes JTAG, captures serial logs,

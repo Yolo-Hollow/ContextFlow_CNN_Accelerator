@@ -8,6 +8,7 @@ param(
     [switch]$RunLayer06Tile4,
     [switch]$RunLayer06Tiles,
     [switch]$RunLayer06PoolTiles,
+    [switch]$RunConv4PoolTiles,
     [switch]$RunDeterministic
 )
 
@@ -26,6 +27,7 @@ $Conv0TilesElf = Join-Path $Root "build_vitis_2022_2\conv_accel_r18_c16_smoke\ma
 $Layer06Tile4Elf = Join-Path $Root "build_vitis_2022_2\conv_accel_r18_c16_smoke\manual_build\conv_accel_layer06_tile4_smoke.elf"
 $Layer06TilesElf = Join-Path $Root "build_vitis_2022_2\conv_accel_r18_c16_smoke\manual_build\conv_accel_layer06_tiles_smoke.elf"
 $Layer06PoolTilesElf = Join-Path $Root "build_vitis_2022_2\conv_accel_r18_c16_smoke\manual_build\conv_accel_layer06_pool_tiles_smoke.elf"
+$Conv4PoolTilesElf = Join-Path $Root "build_vitis_2022_2\conv_accel_r18_c16_smoke\manual_build\conv_accel_conv4_pool_tiles_smoke.elf"
 $DownloadTcl = Join-Path $ScriptDir "download_run_accel_smoke.tcl"
 $ProbeTcl = Join-Path $ScriptDir "probe_pl_regs.tcl"
 $JtagProbeTcl = Join-Path $ScriptDir "probe_jtag_targets.tcl"
@@ -122,7 +124,10 @@ if (!$SkipBit -and !$FastRun) {
 Write-Host "Available COM ports: $([string]::Join(', ', [System.IO.Ports.SerialPort]::getportnames()))"
 Start-HwServer
 & $Xsct $JtagProbeTcl | Tee-Object -FilePath (Join-Path $LogDir "$Stamp`_jtag_probe.log")
-if ($RunLayer06PoolTiles) {
+if ($RunConv4PoolTiles) {
+    Run-Smoke "conv4_pool_tiles" $Conv4PoolTilesElf (!$SkipBit -and !$FastRun) $FastRun
+    & $Xsct $ProbeTcl | Tee-Object -FilePath (Join-Path $LogDir "$Stamp`_pl_probe_after_conv4_pool_tiles.log")
+} elseif ($RunLayer06PoolTiles) {
     Run-Smoke "layer06_pool_tiles" $Layer06PoolTilesElf (!$SkipBit -and !$FastRun) $FastRun
     & $Xsct $ProbeTcl | Tee-Object -FilePath (Join-Path $LogDir "$Stamp`_pl_probe_after_layer06_pool_tiles.log")
 } elseif ($RunLayer06Tiles) {

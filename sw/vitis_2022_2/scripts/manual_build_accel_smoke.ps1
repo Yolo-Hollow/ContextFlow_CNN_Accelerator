@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("r18_c8", "conv0_crop_pool", "conv0_crop_pool_tiles", "layer06_tile4", "layer06_tiles", "layer06_pool_tiles")]
+    [ValidateSet("r18_c8", "conv0_crop_pool", "conv0_crop_pool_tiles", "layer06_tile4", "layer06_tiles", "layer06_pool_tiles", "conv4_pool_tiles")]
     [string]$Mode = "r18_c8"
 )
 
@@ -60,6 +60,14 @@ if ($Mode -eq "layer06_tile4" -or $Mode -eq "layer06_tiles" -or $Mode -eq "layer
         $Defines += "-DACCEL_SMOKE_LAYER06_POOL_TILES=1"
     }
     & $Python (Join-Path $ScriptDir "generate_layer06_tile4_header.py") (Join-Path $AppSrcDir "layer06_tile4_data.h")
+}
+if ($Mode -eq "conv4_pool_tiles") {
+    $Defines += "-DACCEL_SMOKE_CONV4_POOL_TILES=1"
+    & $Python `
+        (Join-Path $ScriptDir "generate_single_scale_layer_header.py") `
+        "D:\MPSoC\python_prj\rtl_golden\facemask_single_scale_rtl\04_conv4_pool" `
+        (Join-Path $AppSrcDir "conv4_pool_data.h") `
+        --prefix conv4_pool
 }
 
 & $Gcc -Wall -O0 -g3 -c -DARMA53_64 @Defines -I $BspInclude -I $AppSrcDir (Join-Path $AppSrcDir "main.c") -o $Obj
