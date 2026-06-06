@@ -103,7 +103,11 @@ def export_layer(project, state, cfg, spec, layer, args):
     layer_dir.mkdir(parents=True, exist_ok=True)
 
     input_shape = tuple(layer["input_shape_hwc"])
-    ifm_u8 = np.fromfile(source_dir / layer["input_file"], dtype=np.uint8).reshape(input_shape)
+    if args.ifm_override:
+        ifm_path = Path(args.ifm_override).resolve()
+    else:
+        ifm_path = source_dir / layer["input_file"]
+    ifm_u8 = np.fromfile(ifm_path, dtype=np.uint8).reshape(input_shape)
     input_zp = int(cfg["izp"][infer_index])
     centered_i16 = ifm_u8.astype(np.int16) - input_zp
     ifm_s8 = clamp_int8(centered_i16)
@@ -191,7 +195,7 @@ def export_layer(project, state, cfg, spec, layer, args):
         "description": "RTL semantic golden metadata for one single-scale YOLOv3-tiny layer.",
         "name": name,
         "project": str(project),
-        "source_layer_file": str(source_dir / layer["input_file"]),
+        "source_layer_file": str(ifm_path),
         "model_index": model_index,
         "infer_index": infer_index,
         "array": spec["array"],
@@ -274,6 +278,7 @@ def main():
     parser.add_argument("--prefix", default="F")
     parser.add_argument("--out-dir", default=None)
     parser.add_argument("--layers", default="all", help="Comma-separated infer indices or names, or 'all'.")
+    parser.add_argument("--ifm-override", default=None, help="Override IFM input binary path. Intended for one selected layer.")
     parser.add_argument("--metadata-only", action="store_true", help="Write manifests only; skip binary output files.")
     args = parser.parse_args()
 
@@ -290,6 +295,8 @@ def main():
     ]
     if not layers:
         raise RuntimeError("No layer matched --layers")
+    if args.ifm_override and len(layers) != 1:
+        raise RuntimeError("--ifm-override requires exactly one selected layer")
 
     state = torch.load(project / "models_files" / "yolov3tiny_facemask_quant.pth", map_location="cpu")
     cfg = read_cfg(project / "infer_bin", args.prefix)

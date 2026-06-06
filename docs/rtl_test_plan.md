@@ -516,6 +516,27 @@ Current result:
 - `6673 pass, 0 fail`; xsim elapsed about `00:01:31` on 2026-06-06.
 - KV260 `conv_accel_conv4_pool_tiles_smoke.elf` passed on 2026-06-06. Log: `build_system_xck26_kv260/board_smoke_logs/20260606_140410_conv4_pool_tiles_COM8.log`; full pooled OFM compare was `43264` bytes with `0 mismatch`.
 
+### KV260 `conv3_pool -> conv4_pool` chained smoke
+
+Purpose:
+
+- Verify real inter-layer software scheduling: the `conv3_pool` hardware OFM buffer is reused directly as the `conv4_pool` hardware IFM stream.
+- Cover the first two adjacent 3x3+pool stages currently supported without 1x1 RTL changes.
+- Separate chain semantics from PyTorch-reference semantics.
+
+Checks:
+
+- Stage 1: `52x52x64 -> 52x52x128 -> 26x26x128`, 13 spatial tiles, output `86528` bytes.
+- Stage 2: `26x26x128 -> 26x26x256 -> 13x13x256`, 7 spatial tiles, output `43264` bytes.
+- `conv4_pool` expected output is generated from the RTL semantic `conv3_pool` output, not from PyTorch `layer07_pooling_MaxPool2d_u8_hwc.bin`.
+- Each tile checks OFM debug delta, TLAST count, service counts, address parsing, and final byte-for-byte golden compare.
+
+Current result:
+
+- First attempt using the standalone Conv4 golden failed at `byte=4415` because the expected data was generated from PyTorch intermediate bytes.
+- After regenerating chain Conv4 golden from `facemask_layer06_rtl/golden_pool2x2s2_u8_hwc.bin`, KV260 `conv_accel_conv3_conv4_chain_smoke.elf` passed on 2026-06-06.
+- Log: `build_system_xck26_kv260/board_smoke_logs/20260606_141427_conv3_conv4_chain_COM8.log`; `conv3_pool full compare=86528 bytes`, `conv4_pool full compare=43264 bytes`, final `PASS`.
+
 ### `tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_tile4_fifo16_backpressure`
 
 Purpose:

@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("r18_c8", "conv0_crop_pool", "conv0_crop_pool_tiles", "layer06_tile4", "layer06_tiles", "layer06_pool_tiles", "conv4_pool_tiles")]
+    [ValidateSet("r18_c8", "conv0_crop_pool", "conv0_crop_pool_tiles", "layer06_tile4", "layer06_tiles", "layer06_pool_tiles", "conv4_pool_tiles", "conv3_conv4_chain")]
     [string]$Mode = "r18_c8"
 )
 
@@ -32,6 +32,7 @@ if (!(Test-Path $BspInclude) -or !(Test-Path $BspLib)) {
 New-Item -ItemType Directory -Force $ManualBuildDir | Out-Null
 Copy-Item -Path `
     (Join-Path $SwDir "src\main.c"), `
+    (Join-Path $SwDir "src\main_conv3_conv4_chain.c"), `
     (Join-Path $SwDir "src\accel_smoke.h"), `
     (Join-Path $SwDir "src\accel_layer_desc.h"), `
     (Join-Path $SwDir "src\accel_single_scale_plan.h"), `
@@ -43,6 +44,7 @@ $Obj = Join-Path $ManualBuildDir "main_$Mode.o"
 $Elf = Join-Path $ManualBuildDir "conv_accel_${Mode}_smoke.elf"
 $LinkerScript = Join-Path $AppSrcDir "lscript.ld"
 $Defines = @()
+$Source = Join-Path $AppSrcDir "main.c"
 if ($Mode -eq "conv0_crop_pool" -or $Mode -eq "conv0_crop_pool_tiles") {
     $Defines += "-DACCEL_SMOKE_REAL_CONV0_CROP_POOL=1"
 }
@@ -69,8 +71,17 @@ if ($Mode -eq "conv4_pool_tiles") {
         (Join-Path $AppSrcDir "conv4_pool_data.h") `
         --prefix conv4_pool
 }
+if ($Mode -eq "conv3_conv4_chain") {
+    $Source = Join-Path $AppSrcDir "main_conv3_conv4_chain.c"
+    & $Python (Join-Path $ScriptDir "generate_layer06_tile4_header.py") (Join-Path $AppSrcDir "layer06_tile4_data.h")
+    & $Python `
+        (Join-Path $ScriptDir "generate_single_scale_layer_header.py") `
+        "D:\MPSoC\python_prj\rtl_golden\facemask_chain_conv3_conv4_rtl\04_conv4_pool" `
+        (Join-Path $AppSrcDir "conv4_pool_data.h") `
+        --prefix conv4_pool
+}
 
-& $Gcc -Wall -O0 -g3 -c -DARMA53_64 @Defines -I $BspInclude -I $AppSrcDir (Join-Path $AppSrcDir "main.c") -o $Obj
+& $Gcc -Wall -O0 -g3 -c -DARMA53_64 @Defines -I $BspInclude -I $AppSrcDir $Source -o $Obj
 & $Gcc -o $Elf $Obj "-Wl,--start-group,-lxil,-lgcc,-lc,--end-group" -n "-Wl,--gc-sections" -L $BspLib -T $LinkerScript
 
 Write-Host "Built $Elf"

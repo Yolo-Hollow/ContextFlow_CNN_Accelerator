@@ -172,6 +172,29 @@ The generated ELF is:
 build_vitis_2022_2/conv_accel_r18_c16_smoke/manual_build/conv_accel_conv4_pool_tiles_smoke.elf
 ```
 
+To build the first chained two-layer smoke:
+
+```text
+conv3_pool hardware OFM buffer -> conv4_pool hardware IFM stream
+```
+
+use:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/manual_build_accel_smoke.ps1 -Mode conv3_conv4_chain
+```
+
+This mode compares `conv3_pool` against the Layer06 pooled RTL golden, then
+uses the actual hardware-produced `26x26x128` buffer as the IFM for
+`conv4_pool`. Its `conv4_pool` expected output is generated from that RTL
+semantic intermediate buffer, not from the PyTorch `layer07_pooling` bytes.
+
+The generated ELF is:
+
+```text
+build_vitis_2022_2/conv_accel_r18_c16_smoke/manual_build/conv_accel_conv3_conv4_chain_smoke.elf
+```
+
 This script uses the carrier-based hardware export:
 
 ```text
@@ -248,6 +271,12 @@ To run the `conv4_pool` 7-tile smoke:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/run_kv260_smoke_sequence.ps1 -PortName COM8 -FastRun -RunConv4PoolTiles -CaptureSeconds 2400
+```
+
+To run the chained `conv3_pool -> conv4_pool` smoke:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/run_kv260_smoke_sequence.ps1 -PortName COM8 -FastRun -RunConv3Conv4Chain -CaptureSeconds 3600
 ```
 
 The script starts `hw_server` if needed, probes JTAG, captures serial logs,

@@ -188,6 +188,7 @@ build_vitis_2022_2/conv_accel_r18_c16_smoke/manual_build/conv_accel_layer06_tile
 build_vitis_2022_2/conv_accel_r18_c16_smoke/manual_build/conv_accel_layer06_tiles_smoke.elf
 build_vitis_2022_2/conv_accel_r18_c16_smoke/manual_build/conv_accel_layer06_pool_tiles_smoke.elf
 build_vitis_2022_2/conv_accel_r18_c16_smoke/manual_build/conv_accel_conv4_pool_tiles_smoke.elf
+build_vitis_2022_2/conv_accel_r18_c16_smoke/manual_build/conv_accel_conv3_conv4_chain_smoke.elf
 ```
 
 `conv_accel_r18_c8_smoke.elf` 是旧 deterministic smoke 的更新版，会显式通过 AXI-Lite 写入 identity quant、identity LUT 和 `EXPECTED_BYTES`。`conv_accel_conv0_crop_pool_smoke.elf` 使用真实 Conv0 crop + pool fixture，按当前 BD 默认配置调度：
@@ -210,6 +211,8 @@ D:/MPSoC/python_prj/rtl_golden/facemask_conv0_crop16x8_pool/xsim_mem
 Layer06 系列 ELF 使用 `sw/vitis_2022_2/scripts/generate_layer06_tile4_header.py` 在 manual build 阶段从外部 `D:/MPSoC/python_prj/rtl_golden/facemask_layer06_rtl` 生成大数组 header。`layer06_tiles` 验证 conv-only 完整 `52x52x128` 输出；`layer06_pool_tiles` 验证单尺度 `conv3_pool`，即 `52x52x64 -> 52x52x128 -> 26x26x128`。
 
 `conv4_pool_tiles` 使用 `sw/vitis_2022_2/scripts/generate_single_scale_layer_header.py` 从外部 `D:/MPSoC/python_prj/rtl_golden/facemask_single_scale_rtl/04_conv4_pool` 生成大数组 header，用于验证下一层 `26x26x128 -> 26x26x256 -> 13x13x256`。该模式仍是单层 smoke，但覆盖了从 `conv3_pool` 输出形状进入下一层 3x3 卷积的调度规模。
+
+`conv3_conv4_chain` 是当前第一条真正的两层串接 smoke：先运行 `conv3_pool` 并把硬件 OFM debug packet 重排成 `26x26x128` feature buffer，再把该 buffer 作为 `conv4_pool` 的 IFM 输入。该模式的 Conv4 expected output 来自新的 chain golden `D:/MPSoC/python_prj/rtl_golden/facemask_chain_conv3_conv4_rtl/04_conv4_pool`，而不是 PyTorch `layer07_pooling` 中间层。
 
 ## 6. 已知限制和风险
 
@@ -320,3 +323,5 @@ D:/MPSoC/python_prj
 - 2026-06-06 已新增并通过 `tb_conv_accel_core_axi_lite_axis_stream_r18_c8_b2_conv4_pool_ext_tile4`，首个 `tile_ofm_h=4` conv tile 的 pool 后输出为 `13*2*256=6656` bytes，xsim 结果为 `6673 pass, 0 fail`，elapsed about `00:01:31`。
 - 2026-06-06 已新增 `conv_accel_conv4_pool_tiles_smoke.elf` 构建模式并构建通过；完整上板测试入口为 `run_kv260_smoke_sequence.ps1 -FastRun -RunConv4PoolTiles -CaptureSeconds 2400`。
 - 2026-06-06 KV260 `-FastRun -RunConv4PoolTiles` 上板通过，日志为 `build_system_xck26_kv260/board_smoke_logs/20260606_140410_conv4_pool_tiles_COM8.log`；7 个 spatial tile 中前 6 个输出 `6656` bytes，最后一个 2-row 尾 tile 输出 `3328` bytes，总服务计数为 `bias=112, weight=7168, ifm=38912`，最终 `ofm full compare=43264 bytes` 且 golden 对比 `0 mismatch`。
+- 2026-06-06 已新增链式 `conv_accel_conv3_conv4_chain_smoke.elf`。首次上板用 standalone Conv4 golden 对比时在 `byte=4415` 失败，说明真实层间测试不能继续使用 PyTorch 中间层作为 Conv4 golden 输入。已用 `conv3_pool` RTL semantic 输出 `golden_pool2x2s2_u8_hwc.bin` 重新生成 chain Conv4 golden。
+- 2026-06-06 KV260 `-FastRun -RunConv3Conv4Chain` 上板通过，日志为 `build_system_xck26_kv260/board_smoke_logs/20260606_141427_conv3_conv4_chain_COM8.log`；`conv3_pool full compare=86528 bytes`，随后硬件生成的 `26x26x128` buffer 被直接作为 `conv4_pool` 输入，最终 `conv4_pool full compare=43264 bytes` 且 golden 对比 `0 mismatch`。
