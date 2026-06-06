@@ -15,6 +15,7 @@ module tb_psum_drain_writer;
     reg [DATA_W-1:0] psum_fifo_rd_data;
     reg [31:0] psum_fifo_empty;
     wire packet_valid;
+    reg packet_ready;
     wire [AW-1:0] packet_addr;
     wire [DATA_W-1:0] packet_data;
     wire packet_is_final;
@@ -24,7 +25,7 @@ module tb_psum_drain_writer;
         .num_pixels(num_pixels), .baseline_col0(baseline_col0), .is_final_pass(is_final_pass),
         .psum_fifo_rd_en(psum_fifo_rd_en), .psum_fifo_rd_data(psum_fifo_rd_data),
         .psum_fifo_empty(psum_fifo_empty),
-        .packet_valid(packet_valid), .packet_ready(1'b1), .packet_addr(packet_addr),
+        .packet_valid(packet_valid), .packet_ready(packet_ready), .packet_addr(packet_addr),
         .packet_data(packet_data), .packet_is_final(packet_is_final)
     );
 
@@ -67,7 +68,7 @@ module tb_psum_drain_writer;
     end
 
     always @(posedge clk) begin
-        if (!rst && packet_valid) begin
+        if (!rst && packet_valid && packet_ready) begin
             if (packet_data !== expected_pkt[pkt_count]) begin
                 $display("[FAIL] packet%0d data mismatch", pkt_count);
                 fail = fail + 1;
@@ -86,6 +87,7 @@ module tb_psum_drain_writer;
         num_pixels = 16'd3;
         baseline_col0 = 32'd100;
         psum_fifo_empty = 32'hffff_ffff;
+        packet_ready = 1'b0;
         pass = 0;
         fail = 0;
         pkt_count = 0;
@@ -118,6 +120,16 @@ module tb_psum_drain_writer;
 
         repeat (2) @(negedge clk);
         psum_fifo_empty = ~COL_MASK;
+
+        wait(packet_valid);
+        repeat (5) begin
+            @(negedge clk);
+            if (!packet_valid || packet_addr !== 0 || packet_data !== expected_pkt[0]) begin
+                $display("[FAIL] packet changed while backpressured");
+                fail = fail + 1;
+            end else pass = pass + 1;
+        end
+        packet_ready = 1'b1;
 
         wait(done);
         repeat (2) @(negedge clk);

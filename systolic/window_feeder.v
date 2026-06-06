@@ -22,7 +22,7 @@ module window_feeder #(
     input  [AW-1:0] tile_ofm_h,
     input  [1:0]    stride,
     input  [1:0]    pad,
-    input  [10:0]   pass_base_k,
+    input  [13:0]   pass_base_k,
 
     // Row fill request to an external DMA/source.
     output          fill_req,

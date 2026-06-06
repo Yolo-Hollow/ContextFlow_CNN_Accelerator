@@ -1,6 +1,18 @@
 #include "accel_smoke.h"
-#include "layer06_tile4_data.h"
+#if ACCEL_CHAIN_CONV0_CONV4
+#include "conv0_pool_data.h"
+#include "conv1_pool_data.h"
+#include "conv2_pool_data.h"
+#include "conv3_pool_data.h"
 #include "conv4_pool_data.h"
+#else
+#include "conv4_pool_data.h"
+#if ACCEL_CHAIN_CONV4_CONV5
+#include "conv5_pool_data.h"
+#else
+#include "layer06_tile4_data.h"
+#endif
+#endif
 
 #include <stdarg.h>
 #include <stdint.h>
@@ -22,10 +34,19 @@
 #define CHAIN_KH              3U
 #define CHAIN_KW              3U
 
+#if ACCEL_CHAIN_CONV0_CONV4
+#define CHAIN_SMOKE_NAME      "conv0_pool -> conv4_pool chained smoke"
+#define MAX_FM_W              416U
+#define MAX_TILE_OFM_BYTES    (52U * 4U * 64U)
+#elif ACCEL_CHAIN_CONV4_CONV5
+#define CHAIN_SMOKE_NAME      "conv4_pool -> conv5 chained smoke"
 #define MAX_FM_W              52U
-#define MAX_COUT_TOTAL        256U
-#define MAX_OFM_BYTES         (26U * 26U * 128U)
+#define MAX_TILE_OFM_BYTES    (13U * 4U * 512U)
+#else
+#define CHAIN_SMOKE_NAME      "conv3_pool -> conv4_pool chained smoke"
+#define MAX_FM_W              52U
 #define MAX_TILE_OFM_BYTES    (13U * 2U * 256U)
+#endif
 
 typedef struct {
     const char *name;
@@ -51,6 +72,8 @@ typedef struct {
     uint32_t quant_mult;
     uint32_t quant_shift;
     uint32_t quant_zp;
+    uint32_t pool_enable;
+    uint32_t pool_stride;
     uint32_t total_output_pixels;
     uint32_t total_expected_ofm_bytes;
     const uint8_t *ifm_u8;
@@ -61,17 +84,27 @@ typedef struct {
     uint8_t *ofm_u8;
     const chain_tile_t *tiles;
     uint32_t tile_count;
+    uint32_t dynamic_tile_ofm_h;
 } chain_layer_t;
 
 static uint64_t bias_buf[CHAIN_COUT_TILE / 2U] __attribute__((aligned(64)));
 static uint64_t weight_buf[(CHAIN_ROWS * CHAIN_COUT_TILE) / 8U] __attribute__((aligned(64)));
 static uint64_t ifm_buf[MAX_FM_W] __attribute__((aligned(64)));
 static uint64_t ofm_axis_buf[MAX_TILE_OFM_BYTES] __attribute__((aligned(64)));
+#if ACCEL_CHAIN_CONV0_CONV4
+static uint8_t feature_buffer0[208U * 208U * 16U] __attribute__((aligned(64)));
+static uint8_t feature_buffer1[104U * 104U * 32U] __attribute__((aligned(64)));
+#elif ACCEL_CHAIN_CONV4_CONV5
+static uint8_t conv4_ofm[13U * 13U * 256U] __attribute__((aligned(64)));
+static uint8_t conv5_ofm[13U * 13U * 512U] __attribute__((aligned(64)));
+#else
 static uint8_t conv3_ofm[26U * 26U * 128U] __attribute__((aligned(64)));
 static uint8_t conv4_ofm[13U * 13U * 256U] __attribute__((aligned(64)));
+#endif
 volatile uint32_t debug_stage = 0;
 volatile uint32_t debug_value = 0;
 
+#if !ACCEL_CHAIN_CONV4_CONV5 && !ACCEL_CHAIN_CONV0_CONV4
 static const chain_tile_t conv3_tiles[13] = {
     {"conv3_tile0", 0U, 4U, 0U * 52U, 52U * 4U, 26U * 2U * 128U},
     {"conv3_tile1", 4U, 4U, 1U * 52U, 52U * 4U, 26U * 2U * 128U},
@@ -87,7 +120,9 @@ static const chain_tile_t conv3_tiles[13] = {
     {"conv3_tile11", 44U, 4U, 11U * 52U, 52U * 4U, 26U * 2U * 128U},
     {"conv3_tile12", 48U, 4U, 12U * 52U, 52U * 4U, 26U * 2U * 128U},
 };
+#endif
 
+#if !ACCEL_CHAIN_CONV0_CONV4
 static const chain_tile_t conv4_tiles[7] = {
     {"conv4_tile0", 0U, 4U, 0U * 26U, 26U * 4U, 13U * 2U * 256U},
     {"conv4_tile1", 4U, 4U, 1U * 26U, 26U * 4U, 13U * 2U * 256U},
@@ -97,12 +132,157 @@ static const chain_tile_t conv4_tiles[7] = {
     {"conv4_tile5", 20U, 4U, 5U * 26U, 26U * 4U, 13U * 2U * 256U},
     {"conv4_tile6", 24U, 2U, 6U * 26U, 26U * 2U, 13U * 1U * 256U},
 };
+#endif
+
+#if ACCEL_CHAIN_CONV0_CONV4
+static chain_layer_t conv0_layer = {
+    "conv0_pool",
+    416U, 416U, 416U, 416U,
+    3U, 16U, 3U * 9U, 2U, 1U,
+    0U, 18898U, 9U, 69U,
+    1U, 2U,
+    208U * 208U, 208U * 208U * 16U,
+    conv0_pool_ifm_u8,
+    conv0_pool_weight_s8,
+    conv0_pool_bias_i32,
+    conv0_pool_activation_lut_u8,
+    conv0_pool_golden_ofm_u8,
+    feature_buffer0,
+    0,
+    208U,
+    2U,
+};
+
+static chain_layer_t conv1_layer = {
+    "conv1_pool",
+    208U, 208U, 208U, 208U,
+    16U, 32U, 16U * 9U, 8U, 2U,
+    13U, 18333U, 7U, 101U,
+    1U, 2U,
+    104U * 104U, 104U * 104U * 32U,
+    feature_buffer0,
+    conv1_pool_weight_s8,
+    conv1_pool_bias_i32,
+    conv1_pool_activation_lut_u8,
+    conv1_pool_golden_ofm_u8,
+    feature_buffer1,
+    0,
+    52U,
+    4U,
+};
+
+static chain_layer_t conv2_layer = {
+    "conv2_pool",
+    104U, 104U, 104U, 104U,
+    32U, 64U, 32U * 9U, 16U, 4U,
+    36U, 21260U, 7U, 101U,
+    1U, 2U,
+    52U * 52U, 52U * 52U * 64U,
+    feature_buffer1,
+    conv2_pool_weight_s8,
+    conv2_pool_bias_i32,
+    conv2_pool_activation_lut_u8,
+    conv2_pool_golden_ofm_u8,
+    feature_buffer0,
+    0,
+    13U,
+    8U,
+};
 
 static chain_layer_t conv3_layer = {
     "conv3_pool",
     52U, 52U, 52U, 52U,
     64U, 128U, 64U * 9U, 32U, 8U,
     36U, 18055U, 7U, 75U,
+    1U, 2U,
+    26U * 26U, 26U * 26U * 128U,
+    feature_buffer0,
+    conv3_pool_weight_s8,
+    conv3_pool_bias_i32,
+    conv3_pool_activation_lut_u8,
+    conv3_pool_golden_ofm_u8,
+    feature_buffer1,
+    0,
+    7U,
+    8U,
+};
+
+static chain_layer_t conv4_layer = {
+    "conv4_pool",
+    26U, 26U, 26U, 26U,
+    128U, 256U, 128U * 9U, 64U, 16U,
+    16U, 18831U, 7U, 73U,
+    1U, 2U,
+    13U * 13U, 13U * 13U * 256U,
+    feature_buffer1,
+    conv4_pool_weight_s8,
+    conv4_pool_bias_i32,
+    conv4_pool_activation_lut_u8,
+    conv4_pool_golden_ofm_u8,
+    feature_buffer0,
+    0,
+    4U,
+    8U,
+};
+
+static chain_layer_t *chain_layers[] = {
+    &conv0_layer,
+    &conv1_layer,
+    &conv2_layer,
+    &conv3_layer,
+    &conv4_layer,
+};
+#elif ACCEL_CHAIN_CONV4_CONV5
+static const chain_tile_t conv5_tiles[4] = {
+    {"conv5_tile0", 0U, 4U, 0U * 13U, 13U * 4U, 13U * 4U * 512U},
+    {"conv5_tile1", 4U, 4U, 4U * 13U, 13U * 4U, 13U * 4U * 512U},
+    {"conv5_tile2", 8U, 4U, 8U * 13U, 13U * 4U, 13U * 4U * 512U},
+    {"conv5_tile3", 12U, 1U, 12U * 13U, 13U * 1U, 13U * 1U * 512U},
+};
+
+static chain_layer_t stage0_layer = {
+    "conv4_pool",
+    26U, 26U, 26U, 26U,
+    128U, 256U, 128U * 9U, 64U, 16U,
+    16U, 18831U, 7U, 73U,
+    1U, 2U,
+    13U * 13U, 13U * 13U * 256U,
+    conv4_pool_ifm_u8,
+    conv4_pool_weight_s8,
+    conv4_pool_bias_i32,
+    conv4_pool_activation_lut_u8,
+    conv4_pool_golden_ofm_u8,
+    conv4_ofm,
+    conv4_tiles,
+    7U,
+    0U,
+};
+
+static chain_layer_t stage1_layer = {
+    "conv5",
+    13U, 13U, 13U, 13U,
+    256U, 512U, 256U * 9U, 128U, 32U,
+    15U, 16863U, 7U, 82U,
+    0U, 0U,
+    13U * 13U, 13U * 13U * 512U,
+    conv4_ofm,
+    conv5_pool_weight_s8,
+    conv5_pool_bias_i32,
+    conv5_pool_activation_lut_u8,
+    conv5_pool_golden_ofm_u8,
+    conv5_ofm,
+    conv5_tiles,
+    4U,
+    0U,
+};
+static chain_layer_t *chain_layers[] = {&stage0_layer, &stage1_layer};
+#else
+static chain_layer_t stage0_layer = {
+    "conv3_pool",
+    52U, 52U, 52U, 52U,
+    64U, 128U, 64U * 9U, 32U, 8U,
+    36U, 18055U, 7U, 75U,
+    1U, 2U,
     26U * 26U, 26U * 26U * 128U,
     layer06_tile4_ifm_u8,
     layer06_tile4_weight_s8,
@@ -112,13 +292,15 @@ static chain_layer_t conv3_layer = {
     conv3_ofm,
     conv3_tiles,
     13U,
+    0U,
 };
 
-static chain_layer_t conv4_layer = {
+static chain_layer_t stage1_layer = {
     "conv4_pool",
     26U, 26U, 26U, 26U,
     128U, 256U, 128U * 9U, 64U, 16U,
     16U, 18831U, 7U, 73U,
+    1U, 2U,
     13U * 13U, 13U * 13U * 256U,
     conv3_ofm,
     conv4_pool_weight_s8,
@@ -128,7 +310,10 @@ static chain_layer_t conv4_layer = {
     conv4_ofm,
     conv4_tiles,
     7U,
+    0U,
 };
+static chain_layer_t *chain_layers[] = {&stage0_layer, &stage1_layer};
+#endif
 
 static void uart_putc_one(uint32_t base, char c)
 {
@@ -624,7 +809,7 @@ static int configure_layer(const chain_layer_t *layer)
     wr32(ACCEL_BASE_ADDR, ACCEL_COUT_TOTAL, layer->cout_total);
     wr32(ACCEL_BASE_ADDR, ACCEL_ACT_CFG, 2U);
     wr32(ACCEL_BASE_ADDR, ACCEL_IFM_ZP, layer->input_zero_point);
-    wr32(ACCEL_BASE_ADDR, ACCEL_POOL_CFG, 0x00000009U);
+    wr32(ACCEL_BASE_ADDR, ACCEL_POOL_CFG, (layer->pool_stride << 2) | layer->pool_enable);
     if (program_quant_tile(layer) != 0) {
         return -1;
     }
@@ -644,7 +829,29 @@ static int run_layer(chain_layer_t *layer)
     }
     clear_ofm(layer->ofm_u8, layer->total_expected_ofm_bytes);
     for (uint32_t i = 0U; i < layer->tile_count; ++i) {
-        if (run_one_tile(layer, &layer->tiles[i], i, &total_bias, &total_weight, &total_ifm) != 0) {
+        chain_tile_t dynamic_tile;
+        const chain_tile_t *tile;
+        if (layer->tiles == 0) {
+            uint32_t tile_oy_base = i * layer->dynamic_tile_ofm_h;
+            uint32_t tile_ofm_h = layer->ofm_h - tile_oy_base;
+            uint32_t final_w = layer->pool_enable ? layer->ofm_w / layer->pool_stride : layer->ofm_w;
+            uint32_t final_oy_base = layer->pool_enable ? tile_oy_base / layer->pool_stride : tile_oy_base;
+            uint32_t final_tile_h;
+            if (tile_ofm_h > layer->dynamic_tile_ofm_h) {
+                tile_ofm_h = layer->dynamic_tile_ofm_h;
+            }
+            final_tile_h = layer->pool_enable ? tile_ofm_h / layer->pool_stride : tile_ofm_h;
+            dynamic_tile.name = layer->name;
+            dynamic_tile.tile_oy_base = tile_oy_base;
+            dynamic_tile.tile_ofm_h = tile_ofm_h;
+            dynamic_tile.tile_pixel_base = final_oy_base * final_w;
+            dynamic_tile.tile_pixels = layer->ofm_w * tile_ofm_h;
+            dynamic_tile.expected_ofm_bytes = final_w * final_tile_h * layer->cout_total;
+            tile = &dynamic_tile;
+        } else {
+            tile = &layer->tiles[i];
+        }
+        if (run_one_tile(layer, tile, i, &total_bias, &total_weight, &total_ifm) != 0) {
             return -1;
         }
     }
@@ -660,18 +867,16 @@ static int run_layer(chain_layer_t *layer)
 
 int main(void)
 {
-    xil_printf("\r\nconv3_pool -> conv4_pool chained smoke\r\n");
+    xil_printf("\r\n%s\r\n", CHAIN_SMOKE_NAME);
     wr32(GPIO_BASE_ADDR, GPIO_TRI, 0x00000000U);
     wr32(GPIO_BASE_ADDR, GPIO2_TRI, 0x0000ffffU);
 
-    if (run_layer(&conv3_layer) != 0) {
-        xil_printf("FAIL: conv3_pool stage failed\r\n");
-        return -1;
+    for (uint32_t i = 0U; i < (sizeof(chain_layers) / sizeof(chain_layers[0])); ++i) {
+        if (run_layer(chain_layers[i]) != 0) {
+            xil_printf("FAIL: %s chained stage failed\r\n", chain_layers[i]->name);
+            return -1;
+        }
     }
-    if (run_layer(&conv4_layer) != 0) {
-        xil_printf("FAIL: conv4_pool chained stage failed\r\n");
-        return -1;
-    }
-    xil_printf("PASS: conv3_pool -> conv4_pool chained smoke matches RTL golden\r\n");
+    xil_printf("PASS: %s matches RTL golden\r\n", CHAIN_SMOKE_NAME);
     return 0;
 }

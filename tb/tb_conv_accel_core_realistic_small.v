@@ -249,7 +249,8 @@ module `TB_CONV_ACCEL_CORE_MODULE;
 `endif
     wire bias_load_req, weight_load_req;
     reg bias_load_done, weight_tile_ready;
-    wire [10:0] current_cout_base, current_pass_base_k;
+    wire [10:0] current_cout_base;
+    wire [13:0] current_pass_base_k;
     reg [5:0] bias_wr_addr;
     reg [PSUM_W-1:0] bias_wr_data;
     reg bias_wr_en;
@@ -998,7 +999,15 @@ module `TB_CONV_ACCEL_CORE_MODULE;
         @(negedge rst);
         forever begin
             wait(bias_load_req);
+`ifdef TB_CONV_ACCEL_CORE_STAGE_PRINT
+            $display("[STAGE] t=%0t bias load start cout=%0d", $time, current_cout_base);
+            $fflush();
+`endif
             service_bias();
+`ifdef TB_CONV_ACCEL_CORE_STAGE_PRINT
+            $display("[STAGE] t=%0t bias load done cout=%0d", $time, current_cout_base);
+            $fflush();
+`endif
             wait(!bias_load_req);
         end
     end
@@ -1007,7 +1016,17 @@ module `TB_CONV_ACCEL_CORE_MODULE;
         @(negedge rst);
         forever begin
             wait(weight_load_req);
+`ifdef TB_CONV_ACCEL_CORE_STAGE_PRINT
+            $display("[STAGE] t=%0t weight load start cout=%0d k=%0d",
+                $time, current_cout_base, current_pass_base_k);
+            $fflush();
+`endif
             service_weight();
+`ifdef TB_CONV_ACCEL_CORE_STAGE_PRINT
+            $display("[STAGE] t=%0t weight load done cout=%0d k=%0d",
+                $time, current_cout_base, current_pass_base_k);
+            $fflush();
+`endif
             wait(!weight_load_req);
         end
     end
@@ -1017,7 +1036,17 @@ module `TB_CONV_ACCEL_CORE_MODULE;
         forever begin
             wait(feeder_fill_req);
             ps_line_fill_count = ps_line_fill_count + 1;
+`ifdef TB_CONV_ACCEL_CORE_STAGE_PRINT
+            $display("[STAGE] t=%0t IFM line fill start count=%0d fy=%0d k=%0d",
+                $time, ps_line_fill_count, feeder_fill_fy, current_pass_base_k);
+            $fflush();
+`endif
             write_row(feeder_fill_fy);
+`ifdef TB_CONV_ACCEL_CORE_STAGE_PRINT
+            $display("[STAGE] t=%0t IFM line fill done count=%0d fy=%0d k=%0d",
+                $time, ps_line_fill_count, feeder_fill_fy, current_pass_base_k);
+            $fflush();
+`endif
             @(posedge clk);
             #1;
         end
@@ -1108,6 +1137,23 @@ module `TB_CONV_ACCEL_CORE_MODULE;
             ifm_write_count <= ifm_write_count + 1;
         if (!rst && `TB_DUT_LAYER.compute_fire)
             compute_fire_count <= compute_fire_count + 1;
+`ifdef TB_CONV_ACCEL_CORE_STAGE_PRINT
+        if (!rst && `TB_DUT_LAYER.compute_fire &&
+            ((compute_fire_count + 1) % 64 == 0)) begin
+            $display("[DATA] t=%0t compute=%0d/%0d cout=%0d k=%0d ifm_full=%h",
+                $time, compute_fire_count + 1,
+                RUN_PIXELS * K_PASSES * COUT_BLOCKS,
+                current_cout_base, current_pass_base_k,
+                `TB_DUT_LAYER.u_top.ifm_fifo_full);
+            $fflush();
+        end
+        if (!rst && ofm_mem_wr_en && ((ofm_mem_wr_count + 1) % 256 == 0)) begin
+            $display("[DATA] t=%0t ofm=%0d/%0d addr=%0d",
+                $time, ofm_mem_wr_count + 1, EXPECTED_OFM_WRITES,
+                ofm_mem_wr_addr);
+            $fflush();
+        end
+`endif
         if (!rst && `TB_DUT_LAYER.u_top.u_core.psum_fifo_wr_en[0])
             psum_wr_count <= psum_wr_count + 1;
         if (!rst && `TB_DUT_LAYER.u_drain.state == 2'd3)
@@ -1196,6 +1242,7 @@ module `TB_CONV_ACCEL_CORE_MODULE;
             repeat (`TB_CONV_ACCEL_CORE_PROGRESS_INTERVAL) @(negedge clk);
             if (!rst)
                 print_progress();
+            $fflush();
         end
     end
 `endif

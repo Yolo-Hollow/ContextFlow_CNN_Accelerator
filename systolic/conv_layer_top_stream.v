@@ -10,12 +10,12 @@ module conv_layer_top_stream #(
     parameter IFM_W = 8,
     parameter WEIGHT_W = 8,
     parameter PSUM_W = 32,
-    parameter IFM_FIFO_DEPTH = 256,
-    parameter IFM_FIFO_AW = 8,
+    parameter IFM_FIFO_DEPTH = 1024,
+    parameter IFM_FIFO_AW = 10,
     parameter WGT_FIFO_DEPTH = 64,
     parameter WGT_FIFO_AW = 6,
-    parameter PSUM_FIFO_DEPTH = 256,
-    parameter PSUM_FIFO_AW = 8,
+    parameter PSUM_FIFO_DEPTH = 1024,
+    parameter PSUM_FIFO_AW = 10,
     parameter FM_W_MAX = 416,
     parameter FM_H_MAX = 416,
     parameter K_TILE = 32,
@@ -43,7 +43,7 @@ module conv_layer_top_stream #(
     input  [8:0] ofm_w,
     input  [1:0] conv_stride,
     input  [1:0] conv_pad,
-    input  [10:0] k_total,
+    input  [13:0] k_total,
     input  [10:0] cout_total,
     input  [15:0] num_pixels,
     input  [8:0] tile_oy_base,
@@ -55,7 +55,7 @@ module conv_layer_top_stream #(
     output bias_load_req,
     input  bias_load_done,
     output [10:0] current_cout_base,
-    output [10:0] current_pass_base_k,
+    output [13:0] current_pass_base_k,
 
     input  [5:0]        bias_wr_addr,
     input  [PSUM_W-1:0] bias_wr_data,
@@ -100,7 +100,7 @@ module conv_layer_top_stream #(
     output [7:0]                ofm_mem_wr_data,
     output                      ofm_packet_full
 );
-    wire [10:0] sched_pass_base_k;
+    wire [13:0] sched_pass_base_k;
     wire [10:0] sched_cout_base;
     wire [10:0] sched_cout_valid;
     wire [15:0] sched_num_pixels;

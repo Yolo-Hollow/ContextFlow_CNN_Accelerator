@@ -9,7 +9,8 @@ module tb_layer_scheduler_stream;
 
     reg clk, rst, start;
     wire busy, done;
-    wire [10:0] pass_base_k, cout_base;
+    wire [13:0] pass_base_k;
+    wire [10:0] cout_base;
     wire [15:0] num_pixels_out;
     wire is_first_pass, is_final_pass, use_ext_psum, use_psum_stream;
     wire psum_wr_bank, psum_rd_bank;
@@ -18,7 +19,7 @@ module tb_layer_scheduler_stream;
 
     layer_scheduler_stream #(.K_TILE(K_TILE), .COUT_TILE(COUT_TILE)) dut (
         .clk(clk), .rst(rst), .start(start), .busy(busy), .done(done),
-        .k_total(K_TOTAL[10:0]), .cout_total(COUT_TOTAL[10:0]), .num_pixels(NUM_PIXELS[15:0]),
+        .k_total(K_TOTAL[13:0]), .cout_total(COUT_TOTAL[10:0]), .num_pixels(NUM_PIXELS[15:0]),
         .pass_base_k(pass_base_k), .cout_base(cout_base), .num_pixels_out(num_pixels_out),
         .is_first_pass(is_first_pass), .is_final_pass(is_final_pass),
         .use_ext_psum(use_ext_psum), .use_psum_stream(use_psum_stream),

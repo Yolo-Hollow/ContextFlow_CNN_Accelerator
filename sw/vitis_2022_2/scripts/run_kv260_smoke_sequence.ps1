@@ -10,6 +10,8 @@ param(
     [switch]$RunLayer06PoolTiles,
     [switch]$RunConv4PoolTiles,
     [switch]$RunConv3Conv4Chain,
+    [switch]$RunConv4Conv5Chain,
+    [switch]$RunConv0Conv4Chain,
     [switch]$RunDeterministic
 )
 
@@ -30,6 +32,8 @@ $Layer06TilesElf = Join-Path $Root "build_vitis_2022_2\conv_accel_r18_c16_smoke\
 $Layer06PoolTilesElf = Join-Path $Root "build_vitis_2022_2\conv_accel_r18_c16_smoke\manual_build\conv_accel_layer06_pool_tiles_smoke.elf"
 $Conv4PoolTilesElf = Join-Path $Root "build_vitis_2022_2\conv_accel_r18_c16_smoke\manual_build\conv_accel_conv4_pool_tiles_smoke.elf"
 $Conv3Conv4ChainElf = Join-Path $Root "build_vitis_2022_2\conv_accel_r18_c16_smoke\manual_build\conv_accel_conv3_conv4_chain_smoke.elf"
+$Conv4Conv5ChainElf = Join-Path $Root "build_vitis_2022_2\conv_accel_r18_c16_smoke\manual_build\conv_accel_conv4_conv5_chain_smoke.elf"
+$Conv0Conv4ChainElf = Join-Path $Root "build_vitis_2022_2\conv_accel_r18_c16_smoke\manual_build\conv_accel_conv0_conv4_chain_smoke.elf"
 $DownloadTcl = Join-Path $ScriptDir "download_run_accel_smoke.tcl"
 $ProbeTcl = Join-Path $ScriptDir "probe_pl_regs.tcl"
 $JtagProbeTcl = Join-Path $ScriptDir "probe_jtag_targets.tcl"
@@ -126,7 +130,13 @@ if (!$SkipBit -and !$FastRun) {
 Write-Host "Available COM ports: $([string]::Join(', ', [System.IO.Ports.SerialPort]::getportnames()))"
 Start-HwServer
 & $Xsct $JtagProbeTcl | Tee-Object -FilePath (Join-Path $LogDir "$Stamp`_jtag_probe.log")
-if ($RunConv3Conv4Chain) {
+if ($RunConv0Conv4Chain) {
+    Run-Smoke "conv0_conv4_chain" $Conv0Conv4ChainElf (!$SkipBit -and !$FastRun) $FastRun
+    & $Xsct $ProbeTcl | Tee-Object -FilePath (Join-Path $LogDir "$Stamp`_pl_probe_after_conv0_conv4_chain.log")
+} elseif ($RunConv4Conv5Chain) {
+    Run-Smoke "conv4_conv5_chain" $Conv4Conv5ChainElf (!$SkipBit -and !$FastRun) $FastRun
+    & $Xsct $ProbeTcl | Tee-Object -FilePath (Join-Path $LogDir "$Stamp`_pl_probe_after_conv4_conv5_chain.log")
+} elseif ($RunConv3Conv4Chain) {
     Run-Smoke "conv3_conv4_chain" $Conv3Conv4ChainElf (!$SkipBit -and !$FastRun) $FastRun
     & $Xsct $ProbeTcl | Tee-Object -FilePath (Join-Path $LogDir "$Stamp`_pl_probe_after_conv3_conv4_chain.log")
 } elseif ($RunConv4PoolTiles) {

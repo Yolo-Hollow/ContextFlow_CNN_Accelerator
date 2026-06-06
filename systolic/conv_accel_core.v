@@ -18,12 +18,12 @@ module conv_accel_core #(
     parameter IFM_W = 8,
     parameter WEIGHT_W = 8,
     parameter PSUM_W = 32,
-    parameter IFM_FIFO_DEPTH = 256,
-    parameter IFM_FIFO_AW = 8,
+    parameter IFM_FIFO_DEPTH = 1024,
+    parameter IFM_FIFO_AW = 10,
     parameter WGT_FIFO_DEPTH = 64,
     parameter WGT_FIFO_AW = 6,
-    parameter PSUM_FIFO_DEPTH = 256,
-    parameter PSUM_FIFO_AW = 8,
+    parameter PSUM_FIFO_DEPTH = 1024,
+    parameter PSUM_FIFO_AW = 10,
     parameter FM_W_MAX = 416,
     parameter FM_H_MAX = 416,
     parameter K_TILE = 32,
@@ -51,7 +51,7 @@ module conv_accel_core #(
     output bias_load_req,
     input  bias_load_done,
     output [10:0] current_cout_base,
-    output [10:0] current_pass_base_k,
+    output [13:0] current_pass_base_k,
     output [10:0] configured_cout_total,
     output [15:0] configured_num_pixels,
     output [7:0]  configured_input_zero_point,
@@ -109,7 +109,7 @@ module conv_accel_core #(
     wire [1:0] conv_stride;
     wire [1:0] conv_pad;
     wire [1:0] activation_mode;
-    wire [10:0] k_total;
+    wire [13:0] k_total;
     wire [10:0] cout_total;
     wire [15:0] num_pixels;
     wire [8:0] tile_oy_base;

@@ -31,7 +31,8 @@ module tb_axi_lite_cfg_bridge;
     wire start_pulse;
     wire [8:0] fm_h, fm_w, ofm_h, ofm_w;
     wire [1:0] conv_stride, conv_pad, activation_mode;
-    wire [10:0] k_total, cout_total;
+    wire [13:0] k_total;
+    wire [10:0] cout_total;
     wire [15:0] num_pixels;
     wire [8:0] tile_oy_base, tile_ofm_h;
     wire [23:0] tile_pixel_base;
@@ -234,7 +235,7 @@ module tb_axi_lite_cfg_bridge;
         check_eq(rd, {7'd0, 9'd6, 7'd0, 9'd7}, "ofm_size wfirst");
 
         axi_write(8'h0c, {22'd0, 2'd1, 6'd0, 2'd2}, 4'hf);
-        axi_write(8'h10, 32'd45, 4'hf);
+        axi_write(8'h10, 32'd9216, 4'hf);
         axi_write(8'h14, 32'd10, 4'hf);
         axi_write(8'h18, 32'd12, 4'hf);
         axi_write(8'h1c, 32'd2, 4'hf);
@@ -260,7 +261,7 @@ module tb_axi_lite_cfg_bridge;
         check_eq(rd, 32'd42, "input_zero_point lower-byte partial");
 
         check_eq({30'd0, conv_pad, 6'd0, conv_stride}, {22'd0, 2'd1, 6'd0, 2'd2}, "conv");
-        check_eq({21'd0, k_total}, 32'd45, "k_total");
+        check_eq({18'd0, k_total}, 32'd9216, "k_total");
         check_eq({21'd0, cout_total}, 32'd10, "cout_total");
         check_eq({16'd0, num_pixels}, 32'd12, "num_pixels");
         check_eq({30'd0, activation_mode}, 32'd2, "activation");

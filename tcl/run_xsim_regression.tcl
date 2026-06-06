@@ -76,6 +76,8 @@ set tests {
     {tb_conv_accel_core_realistic_small tb/tb_conv_accel_core_realistic_small.v}
     {tb_conv_accel_core_pooling tb/tb_conv_accel_core_pooling.v}
     {tb_layer_scheduler_cout64_fulltile tb/tb_layer_scheduler_cout64_fulltile.v}
+    {tb_layer_scheduler_stream tb/tb_layer_scheduler_stream.v}
+    {tb_layer_scheduler_k9216 tb/tb_layer_scheduler_k9216.v}
     {tb_conv_accel_core_cout64_fulltile tb/tb_conv_accel_core_cout64_fulltile.v}
     {tb_conv_accel_core_cout128_blocks tb/tb_conv_accel_core_cout128_blocks.v}
     {tb_conv_accel_core_spatial_tile tb/tb_conv_accel_core_spatial_tile.v}
@@ -93,6 +95,7 @@ set tests {
     {tb_conv_accel_core_axi_lite_axis_stream_conv0_crop_pool_ext tb/tb_conv_accel_core_axi_lite_axis_stream_conv0_crop_pool_ext.v}
     {tb_conv_accel_core_axi_lite_axis_stream_conv0_crop_pool_r18_c8_b2_ext tb/tb_conv_accel_core_axi_lite_axis_stream_conv0_crop_pool_r18_c8_b2_ext.v}
     {tb_conv_accel_core_axi_lite_axis_stream_conv0_crop_pool_r18_c16_b2_ext tb/tb_conv_accel_core_axi_lite_axis_stream_conv0_crop_pool_r18_c16_b2_ext.v}
+    {tb_conv_accel_core_axi_lite_axis_stream_conv0_fullwidth_tile2_ext tb/tb_conv_accel_core_axi_lite_axis_stream_conv0_fullwidth_tile2_ext.v diagnostic}
     {tb_conv_accel_core_axi_lite_axis_stream_input_zp tb/tb_conv_accel_core_axi_lite_axis_stream_input_zp.v}
     {tb_conv_accel_core_axi_lite_quant_lut tb/tb_conv_accel_core_axi_lite_quant_lut.v}
     {tb_conv_accel_core_axi_lite_full_stream_input_zp tb/tb_conv_accel_core_axi_lite_full_stream_input_zp.v}
@@ -116,12 +119,15 @@ set tests {
     {tb_axi_lite_cfg_bridge tb/tb_axi_lite_cfg_bridge.v}
     {tb_requant tb/tb_requant.v}
     {tb_ofm_requant_writer tb/tb_ofm_requant_writer.v}
+    {tb_psum_drain_writer tb/tb_psum_drain_writer.v}
     {tb_ofm_activation tb/tb_ofm_activation.v}
     {tb_ofm_pooling tb/tb_ofm_pooling.v}
     {tb_ofm_writeback tb/tb_ofm_writeback.v}
     {tb_bias_weight_stream_loader tb/tb_bias_weight_stream_loader.v}
     {tb_ifm_line_stream_loader tb/tb_ifm_line_stream_loader.v}
     {tb_axis_ifm_line_loader tb/tb_axis_ifm_line_loader.v}
+    {tb_ifm_fill_handshake tb/tb_ifm_fill_handshake.v}
+    {tb_window_extract tb/tb_window_extract.v}
     {tb_axis_bias_weight_loader tb/tb_axis_bias_weight_loader.v}
     {tb_axis_ofm_byte_writer tb/tb_axis_ofm_byte_writer.v}
     {tb_ofm_packet_fifo tb/tb_ofm_packet_fifo.v}

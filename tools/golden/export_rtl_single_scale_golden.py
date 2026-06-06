@@ -93,7 +93,7 @@ def layer_output_ref_file(layer):
     return f"layer{model_index:02d}_Conv_u8_hwc.bin"
 
 
-def export_layer(project, state, cfg, spec, layer, args):
+def export_layer(project, state, cfg, spec, layer, args, ifm_override_array=None):
     model_index = int(layer["model_index"])
     infer_index = int(layer["infer_index"])
     name = layer["name"]
@@ -103,11 +103,17 @@ def export_layer(project, state, cfg, spec, layer, args):
     layer_dir.mkdir(parents=True, exist_ok=True)
 
     input_shape = tuple(layer["input_shape_hwc"])
-    if args.ifm_override:
+    if ifm_override_array is not None:
+        ifm_path = None
+        ifm_u8 = np.ascontiguousarray(ifm_override_array, dtype=np.uint8)
+        if tuple(ifm_u8.shape) != input_shape:
+            raise RuntimeError(f"{name}: chained IFM shape {ifm_u8.shape}, expected {input_shape}")
+    elif args.ifm_override:
         ifm_path = Path(args.ifm_override).resolve()
+        ifm_u8 = np.fromfile(ifm_path, dtype=np.uint8).reshape(input_shape)
     else:
         ifm_path = source_dir / layer["input_file"]
-    ifm_u8 = np.fromfile(ifm_path, dtype=np.uint8).reshape(input_shape)
+        ifm_u8 = np.fromfile(ifm_path, dtype=np.uint8).reshape(input_shape)
     input_zp = int(cfg["izp"][infer_index])
     centered_i16 = ifm_u8.astype(np.int16) - input_zp
     ifm_s8 = clamp_int8(centered_i16)
@@ -195,7 +201,7 @@ def export_layer(project, state, cfg, spec, layer, args):
         "description": "RTL semantic golden metadata for one single-scale YOLOv3-tiny layer.",
         "name": name,
         "project": str(project),
-        "source_layer_file": str(ifm_path),
+        "source_layer_file": "previous RTL semantic layer output" if ifm_path is None else str(ifm_path),
         "model_index": model_index,
         "infer_index": infer_index,
         "array": spec["array"],
@@ -268,7 +274,7 @@ def export_layer(project, state, cfg, spec, layer, args):
         ],
     }
     (layer_dir / "manifest.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
-    return metadata
+    return metadata, final_u8
 
 
 def main():
@@ -279,6 +285,8 @@ def main():
     parser.add_argument("--out-dir", default=None)
     parser.add_argument("--layers", default="all", help="Comma-separated infer indices or names, or 'all'.")
     parser.add_argument("--ifm-override", default=None, help="Override IFM input binary path. Intended for one selected layer.")
+    parser.add_argument("--chain", action="store_true",
+                        help="Feed each selected layer's RTL semantic output into the next selected layer.")
     parser.add_argument("--metadata-only", action="store_true", help="Write manifests only; skip binary output files.")
     args = parser.parse_args()
 
@@ -297,6 +305,12 @@ def main():
         raise RuntimeError("No layer matched --layers")
     if args.ifm_override and len(layers) != 1:
         raise RuntimeError("--ifm-override requires exactly one selected layer")
+    if args.chain and args.ifm_override:
+        raise RuntimeError("--chain and --ifm-override cannot be used together")
+    if args.chain:
+        infer_indices = [int(layer["infer_index"]) for layer in layers]
+        if infer_indices != list(range(infer_indices[0], infer_indices[0] + len(infer_indices))):
+            raise RuntimeError("--chain requires consecutive layers in infer-index order")
 
     state = torch.load(project / "models_files" / "yolov3tiny_facemask_quant.pth", map_location="cpu")
     cfg = read_cfg(project / "infer_bin", args.prefix)
@@ -304,7 +318,12 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "single_scale_layer_spec.json").write_text(json.dumps(spec, indent=2), encoding="utf-8")
 
-    layer_meta = [export_layer(project, state, cfg, spec, layer, args) for layer in layers]
+    layer_meta = []
+    chained_ifm = None
+    for layer in layers:
+        meta, final_u8 = export_layer(project, state, cfg, spec, layer, args, chained_ifm)
+        layer_meta.append(meta)
+        chained_ifm = final_u8 if args.chain else None
     summary = {
         "description": "Single-scale RTL semantic golden export summary.",
         "project": str(project),

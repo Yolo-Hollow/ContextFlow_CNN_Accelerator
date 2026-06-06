@@ -14,6 +14,10 @@ set cols 8
 set k_tile 18
 set cout_tile 16
 set ifm_banks 2
+set ifm_fifo_depth 1024
+set ifm_fifo_aw 10
+set psum_fifo_depth 1024
+set psum_fifo_aw 10
 set jobs 8
 set board_part ""
 set board_connection ""
@@ -54,6 +58,18 @@ for {set i 0} {$i < [llength $argv]} {incr i} {
     } elseif {$arg eq "-ifm_banks"} {
         incr i
         set ifm_banks [lindex $argv $i]
+    } elseif {$arg eq "-ifm_fifo_depth"} {
+        incr i
+        set ifm_fifo_depth [lindex $argv $i]
+    } elseif {$arg eq "-ifm_fifo_aw"} {
+        incr i
+        set ifm_fifo_aw [lindex $argv $i]
+    } elseif {$arg eq "-psum_fifo_depth"} {
+        incr i
+        set psum_fifo_depth [lindex $argv $i]
+    } elseif {$arg eq "-psum_fifo_aw"} {
+        incr i
+        set psum_fifo_aw [lindex $argv $i]
     } elseif {$arg eq "-jobs"} {
         incr i
         set jobs [lindex $argv $i]
@@ -69,6 +85,12 @@ if {$cout_tile != (2 * $cols)} {
 }
 if {$ifm_banks < 1 || $ifm_banks > 8} {
     error "IFM_BANKS must fit in the 64-bit IFM AXI-Stream beat"
+}
+if {(1 << $ifm_fifo_aw) != $ifm_fifo_depth} {
+    error "IFM_FIFO_DEPTH must equal 2^IFM_FIFO_AW"
+}
+if {(1 << $psum_fifo_aw) != $psum_fifo_depth} {
+    error "PSUM_FIFO_DEPTH must equal 2^PSUM_FIFO_AW"
 }
 
 set rtl_files {
@@ -218,6 +240,10 @@ set_property -dict [list \
     CONFIG.K_TILE $k_tile \
     CONFIG.COUT_TILE $cout_tile \
     CONFIG.IFM_BANKS $ifm_banks \
+    CONFIG.IFM_FIFO_DEPTH $ifm_fifo_depth \
+    CONFIG.IFM_FIFO_AW $ifm_fifo_aw \
+    CONFIG.PSUM_FIFO_DEPTH $psum_fifo_depth \
+    CONFIG.PSUM_FIFO_AW $psum_fifo_aw \
 ] [get_bd_cells accel]
 
 # Three DDR-to-stream channels supply layer inputs; one stream-to-DDR channel
@@ -386,7 +412,7 @@ if {$generate_targets} {
 puts "=== Block Design validation complete ==="
 puts "Project: [file join $project_dir ${project_name}.xpr]"
 puts "BD: [get_files ${bd_name}.bd]"
-puts "Accelerator: ROWS=$rows COLS=$cols K_TILE=$k_tile COUT_TILE=$cout_tile IFM_BANKS=$ifm_banks"
+puts "Accelerator: ROWS=$rows COLS=$cols K_TILE=$k_tile COUT_TILE=$cout_tile IFM_BANKS=$ifm_banks IFM_FIFO_DEPTH=$ifm_fifo_depth IFM_FIFO_AW=$ifm_fifo_aw PSUM_FIFO_DEPTH=$psum_fifo_depth PSUM_FIFO_AW=$psum_fifo_aw"
 puts "Clock: PS pl_clk0 at 100 MHz"
 puts "For KV260 use -board_part xilinx.com:kv260_som:part0:1.4 with"
 puts "  -board_connection {som240_1_connector xilinx.com:kv260_carrier:som240_1_connector:1.3}"

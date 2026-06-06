@@ -5,9 +5,9 @@
 module systolic_top #(
     parameter ROWS = 32, parameter COLS = 32,
     parameter IFM_W = 8, parameter WEIGHT_W = 8, parameter PSUM_W = 32,
-    parameter IFM_FIFO_DEPTH = 256, parameter IFM_FIFO_AW = 8,
+    parameter IFM_FIFO_DEPTH = 1024, parameter IFM_FIFO_AW = 10,
     parameter WGT_FIFO_DEPTH = 64,  parameter WGT_FIFO_AW = 6,
-    parameter PSUM_FIFO_DEPTH = 256, parameter PSUM_FIFO_AW = 8,
+    parameter PSUM_FIFO_DEPTH = 1024, parameter PSUM_FIFO_AW = 10,
     parameter USE_DMA_IFM = 1   // 1: DMA line buffer, 0: manual IFM FIFO fill
 ) (
     input  clk, rst,
@@ -29,7 +29,7 @@ module systolic_top #(
     input           dma_line_advance,
     input  [8:0]    fm_h, fm_w,
     input  [1:0]    conv_stride, conv_pad,
-    input  [10:0]   pass_base_k,
+    input  [13:0]   pass_base_k,
     input  [8:0]    oy, ox,
     output [31:0]   ifm_fifo_full,
 

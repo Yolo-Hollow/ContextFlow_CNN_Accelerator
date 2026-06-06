@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("r18_c8", "conv0_crop_pool", "conv0_crop_pool_tiles", "layer06_tile4", "layer06_tiles", "layer06_pool_tiles", "conv4_pool_tiles", "conv3_conv4_chain")]
+    [ValidateSet("r18_c8", "conv0_crop_pool", "conv0_crop_pool_tiles", "layer06_tile4", "layer06_tiles", "layer06_pool_tiles", "conv4_pool_tiles", "conv3_conv4_chain", "conv4_conv5_chain", "conv0_conv4_chain")]
     [string]$Mode = "r18_c8"
 )
 
@@ -79,6 +79,45 @@ if ($Mode -eq "conv3_conv4_chain") {
         "D:\MPSoC\python_prj\rtl_golden\facemask_chain_conv3_conv4_rtl\04_conv4_pool" `
         (Join-Path $AppSrcDir "conv4_pool_data.h") `
         --prefix conv4_pool
+}
+if ($Mode -eq "conv4_conv5_chain") {
+    $Source = Join-Path $AppSrcDir "main_conv3_conv4_chain.c"
+    $Defines += "-DACCEL_CHAIN_CONV4_CONV5=1"
+    & $Python `
+        (Join-Path $ScriptDir "generate_single_scale_layer_header.py") `
+        "D:\MPSoC\python_prj\rtl_golden\facemask_single_scale_rtl\04_conv4_pool" `
+        (Join-Path $AppSrcDir "conv4_pool_data.h") `
+        --prefix conv4_pool
+    & $Python `
+        (Join-Path $ScriptDir "generate_single_scale_layer_header.py") `
+        "D:\MPSoC\python_prj\rtl_golden\facemask_chain_conv4_conv5_rtl\05_conv5_pool_like_tiny" `
+        (Join-Path $AppSrcDir "conv5_pool_data.h") `
+        --prefix conv5_pool
+}
+if ($Mode -eq "conv0_conv4_chain") {
+    $Source = Join-Path $AppSrcDir "main_conv3_conv4_chain.c"
+    $Defines += "-DACCEL_CHAIN_CONV0_CONV4=1"
+    $ChainRoot = "D:\MPSoC\python_prj\rtl_golden\facemask_chain_conv0_conv4_rtl"
+    $Layers = @(
+        @{ Dir = "00_conv0_pool"; Prefix = "conv0_pool"; OmitIfm = $false },
+        @{ Dir = "01_conv1_pool"; Prefix = "conv1_pool"; OmitIfm = $true },
+        @{ Dir = "02_conv2_pool"; Prefix = "conv2_pool"; OmitIfm = $true },
+        @{ Dir = "03_conv3_pool"; Prefix = "conv3_pool"; OmitIfm = $true },
+        @{ Dir = "04_conv4_pool"; Prefix = "conv4_pool"; OmitIfm = $true }
+    )
+    foreach ($Layer in $Layers) {
+        $Args = @(
+            (Join-Path $ScriptDir "generate_single_scale_layer_header.py"),
+            (Join-Path $ChainRoot $Layer.Dir),
+            (Join-Path $AppSrcDir "$($Layer.Prefix)_data.h"),
+            "--prefix",
+            $Layer.Prefix
+        )
+        if ($Layer.OmitIfm) {
+            $Args += "--omit-ifm"
+        }
+        & $Python @Args
+    }
 }
 
 & $Gcc -Wall -O0 -g3 -c -DARMA53_64 @Defines -I $BspInclude -I $AppSrcDir $Source -o $Obj

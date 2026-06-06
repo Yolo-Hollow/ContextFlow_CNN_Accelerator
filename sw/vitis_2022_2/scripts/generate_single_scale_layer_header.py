@@ -27,11 +27,38 @@ def emit_array(f, c_type, name, values, per_line=16):
     f.write("};\n\n")
 
 
+def pack_weight_kco(weight_oihw, cin, cout, kernel, emulate_1x1_as_3x3=False):
+    if emulate_1x1_as_3x3 and kernel != 1:
+        raise RuntimeError("--emulate-1x1-as-3x3 requires a native 1x1 layer")
+
+    hw_kernel = 3 if emulate_1x1_as_3x3 else kernel
+    weight_kco = []
+    for ch in range(cin):
+        for ky in range(hw_kernel):
+            for kx in range(hw_kernel):
+                for co in range(cout):
+                    if emulate_1x1_as_3x3 and (ky != 1 or kx != 1):
+                        weight_kco.append(0)
+                    else:
+                        src_ky = 0 if emulate_1x1_as_3x3 else ky
+                        src_kx = 0 if emulate_1x1_as_3x3 else kx
+                        src = ((co * cin + ch) * kernel + src_ky) * kernel + src_kx
+                        weight_kco.append(int8_value(weight_oihw[src]))
+    return weight_kco, hw_kernel
+
+
 def main():
     parser = argparse.ArgumentParser(description="Generate a Vitis C header for one single-scale RTL golden layer.")
     parser.add_argument("layer_dir", help="Layer directory produced by export_rtl_single_scale_golden.py")
     parser.add_argument("output_header")
     parser.add_argument("--prefix", required=True, help="C symbol prefix, e.g. conv4_pool")
+    parser.add_argument("--omit-ifm", action="store_true",
+                        help="Do not embed the IFM array when it comes from a previous hardware layer.")
+    parser.add_argument(
+        "--emulate-1x1-as-3x3",
+        action="store_true",
+        help="Expand native 1x1 weights to center-only 3x3 weights for the existing 3x3 RTL datapath.",
+    )
     args = parser.parse_args()
 
     layer_dir = Path(args.layer_dir).resolve()
@@ -51,13 +78,17 @@ def main():
     lut = read_exact(layer_dir / "activation_lut_u8.bin", 256)
     golden = read_exact(layer_dir / "golden_ofm_u8_hwc.bin", final_h * final_w * cout)
 
-    weight_kco = []
-    for ch in range(cin):
-        for ky in range(kernel):
-            for kx in range(kernel):
-                for co in range(cout):
-                    src = ((co * cin + ch) * kernel + ky) * kernel + kx
-                    weight_kco.append(int8_value(weight_oihw[src]))
+    weight_kco, hw_kernel = pack_weight_kco(
+        weight_oihw,
+        cin,
+        cout,
+        kernel,
+        emulate_1x1_as_3x3=args.emulate_1x1_as_3x3,
+    )
+    hw_pad = 1 if args.emulate_1x1_as_3x3 else int(meta["conv"]["pad"])
+    hw_k_total = cin * hw_kernel * hw_kernel
+    if hw_k_total >= (1 << 14):
+        raise RuntimeError(f"Hardware K_TOTAL {hw_k_total} does not fit the 14-bit K path")
 
     bias = list(struct.unpack("<" + "i" * cout, bias_raw))
     guard = f"{args.prefix.upper()}_DATA_H"
@@ -69,10 +100,19 @@ def main():
         f.write("#include <stdint.h>\n\n")
         f.write(f"/* Generated from {layer_dir.as_posix()}. */\n")
         f.write(
-            f"/* IFM {ifm_h}x{ifm_w}x{cin}, weight KCO {cin * kernel * kernel}x{cout}, "
+            f"/* IFM {ifm_h}x{ifm_w}x{cin}, weight KCO {hw_k_total}x{cout}, "
             f"golden {final_h}x{final_w}x{cout}. */\n\n"
         )
-        emit_array(f, "uint8_t", f"{args.prefix}_ifm_u8", list(ifm))
+        f.write(f"#define {args.prefix.upper()}_NATIVE_KERNEL {kernel}U\n")
+        f.write(f"#define {args.prefix.upper()}_HW_KERNEL {hw_kernel}U\n")
+        f.write(f"#define {args.prefix.upper()}_HW_PAD {hw_pad}U\n")
+        f.write(f"#define {args.prefix.upper()}_HW_K_TOTAL {hw_k_total}U\n")
+        f.write(
+            f"#define {args.prefix.upper()}_EMULATE_1X1_AS_3X3 "
+            f"{1 if args.emulate_1x1_as_3x3 else 0}U\n\n"
+        )
+        if not args.omit_ifm:
+            emit_array(f, "uint8_t", f"{args.prefix}_ifm_u8", list(ifm))
         emit_array(f, "int8_t", f"{args.prefix}_weight_s8", weight_kco)
         emit_array(f, "int32_t", f"{args.prefix}_bias_i32", bias, per_line=8)
         emit_array(f, "uint8_t", f"{args.prefix}_activation_lut_u8", list(lut))

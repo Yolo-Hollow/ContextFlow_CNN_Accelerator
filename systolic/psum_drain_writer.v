@@ -55,11 +55,11 @@ module psum_drain_writer #(
             count <= {AW{1'b0}};
         end else begin
             done <= 1'b0;
-            packet_valid <= 1'b0;
 
             case (state)
                 ST_IDLE: begin
                     busy <= 1'b0;
+                    packet_valid <= 1'b0;
                     count <= {AW{1'b0}};
                     if (start) begin
                         busy <= 1'b1;
@@ -69,19 +69,23 @@ module psum_drain_writer #(
                 end
 
                 ST_WAIT: begin
+                    packet_valid <= 1'b0;
                     if (fifos_ready)
                         state <= ST_READ;
                 end
 
                 ST_READ: begin
+                    packet_valid <= 1'b0;
                     state <= ST_CAPTURE;
                 end
 
                 ST_CAPTURE: begin
-                    packet_valid <= 1'b1;
-                    packet_addr <= count;
-                    packet_data <= psum_fifo_rd_data;
-                    if (packet_ready) begin
+                    if (!packet_valid) begin
+                        packet_valid <= 1'b1;
+                        packet_addr <= count;
+                        packet_data <= psum_fifo_rd_data;
+                    end else if (packet_ready) begin
+                        packet_valid <= 1'b0;
                         if (count == pixels_to_drain[AW-1:0] - 1'b1) begin
                             busy <= 1'b0;
                             done <= 1'b1;

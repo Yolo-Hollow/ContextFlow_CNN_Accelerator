@@ -6,9 +6,9 @@
 module systolic_top_feeder #(
     parameter ROWS = 32, parameter COLS = 32,
     parameter IFM_W = 8, parameter WEIGHT_W = 8, parameter PSUM_W = 32,
-    parameter IFM_FIFO_DEPTH = 256, parameter IFM_FIFO_AW = 8,
+    parameter IFM_FIFO_DEPTH = 1024, parameter IFM_FIFO_AW = 10,
     parameter WGT_FIFO_DEPTH = 64,  parameter WGT_FIFO_AW = 6,
-    parameter PSUM_FIFO_DEPTH = 256, parameter PSUM_FIFO_AW = 8,
+    parameter PSUM_FIFO_DEPTH = 1024, parameter PSUM_FIFO_AW = 10,
     parameter FM_W_MAX = 416,
     parameter FM_H_MAX = 416,
     parameter IFM_BANKS = 5
@@ -35,7 +35,7 @@ module systolic_top_feeder #(
     input  [8:0] tile_ofm_h,
     input  [1:0] conv_stride,
     input  [1:0] conv_pad,
-    input  [10:0] pass_base_k,
+    input  [13:0] pass_base_k,
 
     input  [IFM_BANKS-1:0] dma_bank_wr_en,
     input  [8:0] dma_wr_x,

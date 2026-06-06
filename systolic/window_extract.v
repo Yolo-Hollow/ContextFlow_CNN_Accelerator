@@ -11,7 +11,7 @@ module window_extract #(
     input  [AW-1:0] fm_h, fm_w,
     input  [1:0]  stride, pad,
     input  [AW-1:0] oy, ox,
-    input  [10:0] pass_base_k,
+    input  [13:0] pass_base_k,
     input  [7:0]  lb_data [0:BANKS-1][0:2][0:2],
     input  [AW:0] line_fy [0:2],
     input         line_valid [0:2],
@@ -47,9 +47,9 @@ module window_extract #(
     genvar r;
     generate
         for (r = 0; r < ROWS; r = r + 1) begin : row_logic
-            wire [10:0] global_k = pass_base_k + r;
-            wire [10:0] ch   = global_k / 11'd9;
-            wire [3:0]  ker  = global_k % 11'd9;
+            wire [13:0] global_k = pass_base_k + r;
+            wire [13:0] ch   = global_k / 14'd9;
+            wire [3:0]  ker  = global_k % 14'd9;
             wire [1:0]  ky   = ker / 3;
             wire [1:0]  kx   = ker % 3;
             wire [2:0]  bank = ch % BANKS;

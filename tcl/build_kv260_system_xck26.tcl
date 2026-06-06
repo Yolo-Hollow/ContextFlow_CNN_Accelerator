@@ -14,6 +14,10 @@ set cols 8
 set k_tile 18
 set cout_tile 16
 set ifm_banks 2
+set ifm_fifo_depth 1024
+set ifm_fifo_aw 10
+set psum_fifo_depth 1024
+set psum_fifo_aw 10
 set jobs 8
 set synth_only 0
 set reuse_synth 0
@@ -50,6 +54,18 @@ for {set i 0} {$i < [llength $argv]} {incr i} {
     } elseif {$arg eq "-ifm_banks"} {
         incr i
         set ifm_banks [lindex $argv $i]
+    } elseif {$arg eq "-ifm_fifo_depth"} {
+        incr i
+        set ifm_fifo_depth [lindex $argv $i]
+    } elseif {$arg eq "-ifm_fifo_aw"} {
+        incr i
+        set ifm_fifo_aw [lindex $argv $i]
+    } elseif {$arg eq "-psum_fifo_depth"} {
+        incr i
+        set psum_fifo_depth [lindex $argv $i]
+    } elseif {$arg eq "-psum_fifo_aw"} {
+        incr i
+        set psum_fifo_aw [lindex $argv $i]
     } elseif {$arg eq "-jobs"} {
         incr i
         set jobs [lindex $argv $i]
@@ -92,6 +108,10 @@ if {$reuse_synth} {
         -k_tile $k_tile \
         -cout_tile $cout_tile \
         -ifm_banks $ifm_banks \
+        -ifm_fifo_depth $ifm_fifo_depth \
+        -ifm_fifo_aw $ifm_fifo_aw \
+        -psum_fifo_depth $psum_fifo_depth \
+        -psum_fifo_aw $psum_fifo_aw \
         -generate_targets \
     ]
     source [file join $script_dir create_ps_dma_bd_xck26.tcl]

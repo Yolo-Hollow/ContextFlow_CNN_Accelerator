@@ -19,11 +19,11 @@ module layer_scheduler_stream #(
     output reg busy,
     output reg done,
 
-    input  [10:0] k_total,
+    input  [13:0] k_total,
     input  [10:0] cout_total,
     input  [15:0] num_pixels,
 
-    output reg [10:0] pass_base_k,
+    output reg [13:0] pass_base_k,
     output reg [10:0] cout_base,
     output reg [10:0] cout_valid,
     output reg [15:0] num_pixels_out,
@@ -60,18 +60,19 @@ module layer_scheduler_stream #(
 
     reg [3:0] state;
 
-    localparam [10:0] K_STEP = K_TILE;
+    localparam [14:0] K_STEP_EXT = K_TILE;
     localparam [10:0] COUT_STEP = COUT_TILE;
-    wire last_k = (pass_base_k + K_STEP >= k_total);
+    wire [14:0] next_k = {1'b0, pass_base_k} + K_STEP_EXT;
+    wire last_k = (next_k >= {1'b0, k_total});
     wire last_cout = (cout_base + COUT_STEP >= cout_total);
     wire [10:0] cout_remaining = cout_total - cout_base;
 
     always @(*) begin
         cout_valid = (cout_remaining < COUT_STEP) ? cout_remaining : COUT_STEP;
-        is_first_pass = (pass_base_k == 11'd0);
+        is_first_pass = (pass_base_k == 14'd0);
         is_final_pass = last_k;
-        use_ext_psum = (pass_base_k != 11'd0);
-        use_psum_stream = (pass_base_k != 11'd0);
+        use_ext_psum = (pass_base_k != 14'd0);
+        use_psum_stream = (pass_base_k != 14'd0);
         psum_rd_bank = 1'b0;
         psum_wr_bank = 1'b0;
     end
@@ -81,7 +82,7 @@ module layer_scheduler_stream #(
             state <= ST_IDLE;
             busy <= 1'b0;
             done <= 1'b0;
-            pass_base_k <= 11'd0;
+            pass_base_k <= 14'd0;
             cout_base <= 11'd0;
             num_pixels_out <= 16'd0;
             bias_load_start <= 1'b0;
@@ -102,7 +103,7 @@ module layer_scheduler_stream #(
                     busy <= 1'b0;
                     if (start) begin
                         busy <= 1'b1;
-                        pass_base_k <= 11'd0;
+                        pass_base_k <= 14'd0;
                         cout_base <= 11'd0;
                         num_pixels_out <= num_pixels;
                         state <= ST_BIAS_START;
@@ -157,11 +158,11 @@ module layer_scheduler_stream #(
                 ST_DRAIN_WAIT: begin
                     if (psum_drain_done) begin
                         if (!last_k) begin
-                            pass_base_k <= pass_base_k + K_STEP;
+                            pass_base_k <= next_k[13:0];
                             state <= ST_WGT_START;
                         end else if (!last_cout) begin
                             cout_base <= cout_base + COUT_STEP;
-                            pass_base_k <= 11'd0;
+                            pass_base_k <= 14'd0;
                             state <= ST_BIAS_START;
                         end else begin
                             state <= ST_DONE;

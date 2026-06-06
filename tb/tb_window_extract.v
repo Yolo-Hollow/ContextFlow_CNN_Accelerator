@@ -5,7 +5,7 @@ module tb_window_extract;
     reg [AW-1:0] fm_h, fm_w;
     reg [1:0] stride, pad;
     reg [AW-1:0] oy, ox;
-    reg [10:0] pass_base_k;
+    reg [13:0] pass_base_k;
     reg [7:0] lb_data [0:4][0:2][0:2];
     reg [AW:0] line_fy [0:2];
     reg line_valid [0:2];
@@ -51,7 +51,7 @@ module tb_window_extract;
     task check_case;
         input [AW-1:0] cy, cx;
         input [1:0] cs, cp;
-        input [10:0] base;
+        input [13:0] base;
         begin
             oy = cy; ox = cx; stride = cs; pad = cp; pass_base_k = base;
             #1;

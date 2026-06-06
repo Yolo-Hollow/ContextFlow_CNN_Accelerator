@@ -6,7 +6,7 @@
 //   0x01 FM_SIZE:     [8:0]=fm_h,   [24:16]=fm_w
 //   0x02 OFM_SIZE:    [8:0]=ofm_h,  [24:16]=ofm_w
 //   0x03 CONV:        [1:0]=stride, [9:8]=pad
-//   0x04 K_TOTAL:     [10:0]=k_total
+//   0x04 K_TOTAL:     [13:0]=k_total
 //   0x05 COUT_TOTAL:  [10:0]=cout_total
 //   0x06 NUM_PIXELS:  [15:0]=num_pixels
 //   0x07 ACT_CFG:     [1:0]=activation_mode, 0=bypass, 1=ReLU, 2=Leaky LUT
@@ -46,7 +46,7 @@ module layer_config_regs (
     output reg [1:0]  conv_stride,
     output reg [1:0]  conv_pad,
     output reg [1:0]  activation_mode,
-    output reg [10:0] k_total,
+    output reg [13:0] k_total,
     output reg [10:0] cout_total,
     output reg [15:0] num_pixels,
     output reg [8:0]  tile_oy_base,
@@ -71,7 +71,7 @@ module layer_config_regs (
             conv_stride <= 2'd1;
             conv_pad <= 2'd0;
             activation_mode <= 2'd0;
-            k_total <= 11'd0;
+            k_total <= 14'd0;
             cout_total <= 11'd0;
             num_pixels <= 16'd0;
             tile_oy_base <= 9'd0;
@@ -114,7 +114,7 @@ module layer_config_regs (
                             conv_pad <= cfg_wdata[9:8];
                         end
                     end
-                    6'h04: if (cfg_idle) k_total <= cfg_wdata[10:0];
+                    6'h04: if (cfg_idle) k_total <= cfg_wdata[13:0];
                     6'h05: if (cfg_idle) cout_total <= cfg_wdata[10:0];
                     6'h06: if (cfg_idle) num_pixels <= cfg_wdata[15:0];
                     6'h07: if (cfg_idle) activation_mode <= cfg_wdata[1:0];
@@ -145,7 +145,7 @@ module layer_config_regs (
             6'h01: cfg_rdata = {7'd0, fm_w, 7'd0, fm_h};
             6'h02: cfg_rdata = {7'd0, ofm_w, 7'd0, ofm_h};
             6'h03: cfg_rdata = {22'd0, conv_pad, 6'd0, conv_stride};
-            6'h04: cfg_rdata = {21'd0, k_total};
+            6'h04: cfg_rdata = {18'd0, k_total};
             6'h05: cfg_rdata = {21'd0, cout_total};
             6'h06: cfg_rdata = {16'd0, num_pixels};
             6'h07: cfg_rdata = {30'd0, activation_mode};
