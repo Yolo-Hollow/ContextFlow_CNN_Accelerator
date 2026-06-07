@@ -391,9 +391,27 @@ powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/run_kv260_image
 ```
 
 Outputs are placed under `demo_output/<timestamp>_<image>/`: the DDR package,
-letterbox metadata and preview, UART-derived detection JSON, and
-`detections.png`. The package includes original dimensions, scale/padding, and
-an FNV-1a tensor checksum validated by the A53 before inference.
+letterbox metadata and preview, UART-derived detection JSON, `performance.json`,
+and `detections.png`. The package includes original dimensions, scale/padding,
+and an FNV-1a tensor checksum validated by the A53 before inference.
+
+The DDR demo is built with `-O2`. Its runtime caches the IFM bank-to-channel
+mapping once per line and prints one machine-readable `PERF` record per layer.
+The demo wrapper summarizes those records with
+`tools/demo/summarize_uart_perf.py`.
+
+The June 7, 2026 full-reprogram measurement used:
+
+```text
+build_system_xck26_kv260_linebuffix/board_smoke_logs/20260607_132050_conv0_conv9_ddr_demo_COM8.log
+```
+
+The ten layer times summed to `23.699203 s`. The largest categories were
+`other_us=12.008225 s`, `ofm_parse_us=5.325749 s`,
+`ifm_pack_us=2.300888 s`, and `ifm_dma_us=1.625445 s`. The detection still
+matched the RTL-chain decode golden. Use these board-side `PERF` values for
+optimization comparisons; the PowerShell wall time also includes JTAG setup,
+bitstream/ELF download, serial capture, and post-run register probing.
 
 Use the full sequence after a board power cycle. `-FastRun` is only appropriate
 when the same bitstream is still programmed and the prior accelerator run left

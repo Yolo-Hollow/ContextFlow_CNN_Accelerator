@@ -9,6 +9,7 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parents[1]
 PREPARE_PATH = ROOT / "tools" / "demo" / "prepare_ddr_image.py"
 VISUALIZE_PATH = ROOT / "tools" / "demo" / "visualize_uart_detections.py"
+PERF_PATH = ROOT / "tools" / "demo" / "summarize_uart_perf.py"
 FIXTURE_IMAGE = Path(r"D:\MPSoC\python_prj\facemask\images\maksssksksss0.png")
 FIXTURE_TENSOR = Path(
     r"D:\MPSoC\python_prj\rtl_golden\facemask_chain_conv0_conv4_rtl"
@@ -25,6 +26,7 @@ def load_module(path, name):
 
 prepare = load_module(PREPARE_PATH, "prepare_ddr_image")
 visualize = load_module(VISUALIZE_PATH, "visualize_uart_detections")
+perf = load_module(PERF_PATH, "summarize_uart_perf")
 
 
 def main():
@@ -74,6 +76,17 @@ def main():
         assert json.loads(detections_json.read_text(encoding="utf-8"))[
             "detections"
         ][0]["class_name"] == "with_mask"
+
+        summary = perf.summarize_perf(
+            "PERF layer=conv0 total_us=100 "
+            "ifm_pack_us=20 ifm_dma_us=30 other_us=50\n"
+            "PERF layer=conv1 total_us=200 "
+            "ifm_pack_us=40 ifm_dma_us=60 other_us=100\n"
+        )
+        assert summary["layer_count"] == 2
+        assert summary["total_microseconds"] == 300
+        assert summary["categories"][0]["name"] == "other_us"
+        assert summary["categories"][0]["microseconds"] == 150
 
     print("PASS: KV260 runtime image package and visualization tests")
 

@@ -280,14 +280,15 @@ if ($Mode -eq "conv0_conv9_chain" -or $Mode -eq "conv0_conv9_ddr_demo") {
     }
 }
 
-& $Gcc -Wall -O0 -g3 -c -DARMA53_64 @Defines -I $BspInclude -I $AppSrcDir $Source -o $Obj
+$Optimization = if ($Mode -eq "conv0_conv9_ddr_demo") { "-O2" } else { "-O0" }
+& $Gcc -Wall $Optimization -g3 -c -DARMA53_64 @Defines -I $BspInclude -I $AppSrcDir $Source -o $Obj
 if ($LASTEXITCODE -ne 0) {
     throw "Failed to compile $Source"
 }
 $Objects = @($Obj)
 $Libraries = "-Wl,--start-group,-lxil,-lgcc,-lc,--end-group"
 if ($Mode -eq "conv0_conv9_chain" -or $Mode -eq "conv0_conv9_ddr_demo") {
-    & $Gcc -Wall -O0 -g3 -c -DARMA53_64 -I $BspInclude -I $AppSrcDir `
+    & $Gcc -Wall $Optimization -g3 -c -DARMA53_64 -I $BspInclude -I $AppSrcDir `
         (Join-Path $AppSrcDir "yolo_decode.c") -o $DecodeObj
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to compile yolo_decode.c"

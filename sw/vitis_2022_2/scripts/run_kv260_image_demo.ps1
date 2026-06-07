@@ -29,8 +29,10 @@ $Metadata = Join-Path $OutputDir "image_metadata.json"
 $Preview = Join-Path $OutputDir "letterbox_preview.png"
 $Visualization = Join-Path $OutputDir "detections.png"
 $DetectionsJson = Join-Path $OutputDir "detections.json"
+$PerformanceJson = Join-Path $OutputDir "performance.json"
 $PrepareScript = Join-Path $Root "tools\demo\prepare_ddr_image.py"
 $VisualizeScript = Join-Path $Root "tools\demo\visualize_uart_detections.py"
+$PerfScript = Join-Path $Root "tools\demo\summarize_uart_perf.py"
 $BuildScript = Join-Path $ScriptDir "manual_build_accel_smoke.ps1"
 $RunScript = Join-Path $ScriptDir "run_kv260_smoke_sequence.ps1"
 $Elf = Join-Path $Root "build_vitis_2022_2\conv_accel_r18_c16_smoke\manual_build\conv_accel_conv0_conv9_ddr_demo_smoke.elf"
@@ -80,8 +82,13 @@ if ($LogText -notmatch "PASS: conv0_pool -> conv9 chained smoke dynamic image in
 if ($LASTEXITCODE -ne 0) {
     throw "Detection visualization failed"
 }
+& $Python $PerfScript $Log.FullName --json $PerformanceJson
+if ($LASTEXITCODE -ne 0) {
+    throw "Performance summary failed"
+}
 
 Write-Host "Image demo complete"
 Write-Host "  UART log: $($Log.FullName)"
 Write-Host "  Detection JSON: $DetectionsJson"
+Write-Host "  Performance JSON: $PerformanceJson"
 Write-Host "  Visualization: $Visualization"
