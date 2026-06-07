@@ -34,7 +34,20 @@ def main():
                 expected = native[co * cin + ch] if ker == 4 else 0
                 assert got == expected, (ch, ker, co, got, expected)
 
-    print("PASS: native 1x1 weights expand to center-only 3x3 KCO")
+    packed_native, native_kernel = MODULE.pack_weight_kco(
+        native,
+        cin,
+        cout,
+        kernel=1,
+        emulate_1x1_as_3x3=False,
+    )
+    assert native_kernel == 1
+    assert len(packed_native) == cin * cout
+    for ch in range(cin):
+        for co in range(cout):
+            assert packed_native[ch * cout + co] == native[co * cin + ch]
+
+    print("PASS: native 1x1 weights preserve KCO or expand to sparse 3x3")
 
 
 if __name__ == "__main__":

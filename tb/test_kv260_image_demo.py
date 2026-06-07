@@ -94,6 +94,10 @@ def main():
             "ifm_starts=3 ofm_starts=1\n"
             "DMASTAT layer=conv1 bias_starts=1 weight_starts=2 "
             "ifm_starts=3 ofm_starts=1\n"
+            "VECTORSTAT layer=conv0 packets=0 pixels=0 beats=0 "
+            "fifo_stall_cycles=0\n"
+            "VECTORSTAT layer=conv1 packets=2 pixels=8 beats=24 "
+            "fifo_stall_cycles=3\n"
         )
         assert summary["layer_count"] == 2
         assert summary["total_microseconds"] == 300
@@ -105,6 +109,10 @@ def main():
         assert summary["dma"]["weight_starts"] == 4
         assert summary["dma"]["ifm_starts"] == 6
         assert summary["dma"]["ofm_starts"] == 2
+        assert summary["vector"]["packets"] == 2
+        assert summary["vector"]["pixels"] == 8
+        assert summary["vector"]["beats"] == 24
+        assert summary["vector"]["fifo_stall_cycles"] == 3
 
     print("PASS: KV260 runtime image package and visualization tests")
 

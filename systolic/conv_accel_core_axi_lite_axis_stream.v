@@ -7,7 +7,7 @@
 // pins with thin protocol wrappers:
 //   - bias AXI-Stream input: 2x int32 per 64-bit beat
 //   - weight AXI-Stream input: 8x int8 per 64-bit beat
-//   - IFM line AXI-Stream input: 5 bank bytes per 64-bit beat
+//   - IFM AXI-Stream input: 3x3 line packets or native 1x1 vectors
 //   - OFM AXI-Stream debug output: {addr, data} per 64-bit beat
 module conv_accel_core_axi_lite_axis_stream #(
     parameter ROWS = 32,
@@ -136,9 +136,23 @@ module conv_accel_core_axi_lite_axis_stream #(
     wire [31:0] configured_stream_weight_packets;
     wire [31:0] configured_stream_ifm_packets;
     wire configured_stream_reset;
+    wire configured_kernel_1x1;
+    wire configured_config_error;
     wire [31:0] bias_completed_packets;
     wire [31:0] weight_completed_packets;
-    wire [31:0] ifm_completed_packets;
+    wire [31:0] line_completed_packets;
+    wire [31:0] vector_completed_packets;
+    wire [31:0] vector_completed_pixels;
+    wire [31:0] vector_accepted_beats;
+    wire [31:0] vector_fifo_stall_cycles;
+    wire [31:0] ifm_completed_packets =
+        configured_kernel_1x1 ? vector_completed_packets : line_completed_packets;
+    wire [ROWS*IFM_W-1:0] vector_ifm_data;
+    wire vector_ifm_valid;
+    wire vector_ifm_ready;
+    wire vector_packet_done;
+    wire line_ifm_tready;
+    wire vector_ifm_tready;
 
     wire bias_tkeep_error;
     wire bias_tlast_error;
@@ -162,7 +176,14 @@ module conv_accel_core_axi_lite_axis_stream #(
     assign ofm_mem_wr_data = ofm_stream_data;
     assign bias_axis_error = bias_tkeep_error || bias_tlast_error;
     assign weight_axis_error = weight_tkeep_error || weight_tlast_error;
-    assign ifm_axis_error = ifm_tkeep_error || ifm_tlast_error;
+    wire vector_tkeep_error;
+    wire vector_tlast_error;
+    assign ifm_axis_error = configured_config_error ||
+                            (configured_kernel_1x1 ?
+                                (vector_tkeep_error || vector_tlast_error) :
+                                (ifm_tkeep_error || ifm_tlast_error));
+    assign ifm_s_axis_tready =
+        configured_kernel_1x1 ? vector_ifm_tready : line_ifm_tready;
     always @(posedge clk) begin
         if (rst) begin
             ofm_byte_count <= 32'd0;
@@ -244,10 +265,10 @@ module conv_accel_core_axi_lite_axis_stream #(
         .batch_mode(configured_stream_batch_mode),
         .expected_packets(configured_stream_ifm_packets),
         .fm_w(ifm_line_words),
-        .fill_req(feeder_fill_req),
+        .fill_req(feeder_fill_req && !configured_kernel_1x1),
         .fill_fy(feeder_fill_fy),
         .input_zero_point(configured_input_zero_point),
-        .s_axis_tready(ifm_s_axis_tready),
+        .s_axis_tready(line_ifm_tready),
         .s_axis_tvalid(ifm_s_axis_tvalid),
         .s_axis_tdata(ifm_s_axis_tdata),
         .s_axis_tkeep(ifm_s_axis_tkeep),
@@ -259,7 +280,37 @@ module conv_accel_core_axi_lite_axis_stream #(
         .dma_line_advance(dma_line_advance),
         .tkeep_error(ifm_tkeep_error),
         .tlast_error(ifm_tlast_error),
-        .completed_packets(ifm_completed_packets)
+        .completed_packets(line_completed_packets)
+    );
+
+    axis_ifm_vector_loader #(
+        .ROWS(ROWS),
+        .AXIS_W(AXIS_W),
+        .KEEP_W(AXIS_KEEP_W)
+    ) u_axis_ifm_vector_loader (
+        .clk(clk),
+        .rst(rst),
+        .stream_reset(configured_stream_reset),
+        .batch_mode(configured_stream_batch_mode),
+        .expected_packets(configured_stream_ifm_packets),
+        .num_pixels(configured_num_pixels),
+        .input_zero_point(configured_input_zero_point),
+        .fill_req(feeder_fill_req && configured_kernel_1x1),
+        .s_axis_tready(vector_ifm_tready),
+        .s_axis_tvalid(ifm_s_axis_tvalid),
+        .s_axis_tdata(ifm_s_axis_tdata),
+        .s_axis_tkeep(ifm_s_axis_tkeep),
+        .s_axis_tlast(ifm_s_axis_tlast),
+        .vector_data(vector_ifm_data),
+        .vector_valid(vector_ifm_valid),
+        .vector_ready(vector_ifm_ready),
+        .packet_done(vector_packet_done),
+        .tkeep_error(vector_tkeep_error),
+        .tlast_error(vector_tlast_error),
+        .completed_packets(vector_completed_packets),
+        .completed_pixels(vector_completed_pixels),
+        .accepted_beats(vector_accepted_beats),
+        .fifo_stall_cycles(vector_fifo_stall_cycles)
     );
 
     conv_accel_core_axi_lite #(
@@ -300,6 +351,7 @@ module conv_accel_core_axi_lite_axis_stream #(
         .configured_num_pixels(configured_num_pixels),
         .configured_input_zero_point(configured_input_zero_point),
         .configured_ofm_w(configured_ofm_w),
+        .configured_kernel_1x1(configured_kernel_1x1),
         .configured_pool_enable(configured_pool_enable),
         .configured_pool_stride(configured_pool_stride),
         .configured_expected_bytes(configured_expected_bytes),
@@ -308,6 +360,7 @@ module conv_accel_core_axi_lite_axis_stream #(
         .configured_stream_weight_packets(configured_stream_weight_packets),
         .configured_stream_ifm_packets(configured_stream_ifm_packets),
         .configured_stream_reset(configured_stream_reset),
+        .configured_config_error(configured_config_error),
         .debug_expected_bytes(ofm_expected_bytes),
         .debug_core_wr_count(core_ofm_wr_count),
         .debug_axis_wr_count(axis_ofm_wr_count),
@@ -316,6 +369,10 @@ module conv_accel_core_axi_lite_axis_stream #(
         .stream_bias_completed(bias_completed_packets),
         .stream_weight_completed(weight_completed_packets),
         .stream_ifm_completed(ifm_completed_packets),
+        .vector_completed_packets(vector_completed_packets),
+        .vector_completed_pixels(vector_completed_pixels),
+        .vector_accepted_beats(vector_accepted_beats),
+        .vector_fifo_stall_cycles(vector_fifo_stall_cycles),
         .bias_wr_addr(bias_wr_addr),
         .bias_wr_data(bias_wr_data),
         .bias_wr_en(bias_wr_en),
@@ -331,6 +388,10 @@ module conv_accel_core_axi_lite_axis_stream #(
         .dma_wr_fy(dma_wr_fy),
         .dma_wr_data(dma_wr_data),
         .dma_line_advance(dma_line_advance),
+        .vector_ifm_data(vector_ifm_data),
+        .vector_ifm_valid(vector_ifm_valid),
+        .vector_ifm_ready(vector_ifm_ready),
+        .vector_packet_done(vector_packet_done),
         .quant_wr_en(1'b0),
         .quant_wr_addr(6'd0),
         .quant_wr_data(32'd0),

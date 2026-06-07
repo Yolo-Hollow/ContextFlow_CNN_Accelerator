@@ -113,6 +113,7 @@ set rtl_files {
     systolic/axis_bias_weight_loader.v
     systolic/ifm_line_stream_loader.v
     systolic/axis_ifm_line_loader.v
+    systolic/axis_ifm_vector_loader.v
     systolic/psum_pingpong_buffer.v
     systolic/psum_stream_feeder.v
     systolic/psum_drain_writer.v

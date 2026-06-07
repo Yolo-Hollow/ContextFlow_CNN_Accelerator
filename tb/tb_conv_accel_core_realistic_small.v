@@ -206,12 +206,18 @@ module `TB_CONV_ACCEL_CORE_MODULE;
                                 (TILE_COUNT == 2) ? (OUT_PIXELS + TILE1_OUT_PIXELS) :
                                 (OUT_PIXELS + TILE1_OUT_PIXELS + TILE2_OUT_PIXELS);
     localparam CIN = `TB_CONV_ACCEL_CORE_CIN;
-    localparam K_TOTAL = CIN * 3 * 3;
+`ifdef TB_CONV_ACCEL_CORE_KERNEL_1X1
+    localparam KERNEL_1X1 = 1;
+`else
+    localparam KERNEL_1X1 = 0;
+`endif
+    localparam K_TOTAL = KERNEL_1X1 ? CIN : CIN * 3 * 3;
     localparam K_PASSES = (K_TOTAL + ROWS - 1) / ROWS;
     localparam COUT_TILE = COLS * 2;
     localparam COUT_TOTAL = `TB_CONV_ACCEL_CORE_COUT_TOTAL;
     localparam COUT_BLOCKS = (COUT_TOTAL + COUT_TILE - 1) / COUT_TILE;
-    localparam [7:0] IFM_TKEEP_MASK = 8'hff >> (8 - IFM_BANKS);
+    localparam [7:0] IFM_TKEEP_MASK =
+        KERNEL_1X1 ? 8'hff : (8'hff >> (8 - IFM_BANKS));
     localparam WGT_TILE_AW = 11;
     localparam PSUM_A = `TB_CONV_ACCEL_CORE_PSUM_BUF_AW;
     localparam PSUM_BUF_D = `TB_CONV_ACCEL_CORE_PSUM_BUF_DEPTH;
@@ -433,6 +439,14 @@ module `TB_CONV_ACCEL_CORE_MODULE;
     integer ps_tile_start_count, ps_done_seen_count, ps_done_clear_count;
     integer layer_done_pulse_count;
     integer ps_bias_service_count, ps_weight_service_count, ps_line_fill_count;
+`ifdef TB_CONV_ACCEL_CORE_CHECK_VECTOR_IFM
+    integer vector_check_pixel;
+    integer vector_check_lane;
+    integer vector_check_ch;
+    integer vector_check_y;
+    integer vector_check_x;
+    reg [7:0] vector_check_expected;
+`endif
 `ifdef TB_CONV_ACCEL_CORE_BATCH_STREAM
     integer batch_ifm_tile_end_count;
     integer batch_ifm_tile_packets;
@@ -795,9 +809,53 @@ module `TB_CONV_ACCEL_CORE_MODULE;
     task write_row;
         input integer row_y;
         integer k_base;
+        integer vector_y;
+        integer vector_beat;
+        integer vector_byte;
+        integer vector_ch;
         reg [63:0] axis_word;
         begin
             k_base = current_pass_base_k;
+`ifdef TB_CONV_ACCEL_CORE_KERNEL_1X1
+`ifdef TB_CONV_ACCEL_CORE_USE_AXIS_STREAM
+            repeat (2) @(negedge clk);
+            k_base = ((ps_line_fill_count - 1) % K_PASSES) * ROWS;
+            for (vector_y = run_oy_base;
+                 vector_y < run_oy_base + run_ofm_h;
+                 vector_y = vector_y + 1) begin
+                for (x = 0; x < FM_W; x = x + 1) begin
+                    for (vector_beat = 0; vector_beat < 3; vector_beat = vector_beat + 1) begin
+                        @(negedge clk);
+                        axis_word = 64'd0;
+                        for (vector_byte = 0; vector_byte < 8; vector_byte = vector_byte + 1) begin
+                            vector_ch = k_base + vector_beat * 8 + vector_byte;
+                            axis_word[vector_byte*8 +: 8] =
+                                (vector_beat * 8 + vector_byte < ROWS &&
+                                 vector_ch < CIN) ?
+                                stream_ifm_byte_tb(vector_ch, vector_y, x) :
+                                INPUT_ZERO_POINT;
+                        end
+                        ifm_axis_tdata = axis_word;
+                        ifm_axis_tkeep = 8'hff;
+                        ifm_axis_tlast =
+                            (vector_y == run_oy_base + run_ofm_h - 1) &&
+                            (x == FM_W - 1) && (vector_beat == 2) &&
+                            (ps_line_fill_count == batch_ifm_tile_end_count);
+                        ifm_axis_tvalid = 1'b1;
+                        wait(ifm_axis_tready);
+                        @(posedge clk);
+                    end
+                end
+            end
+            @(negedge clk);
+            ifm_axis_tvalid = 1'b0;
+            ifm_axis_tdata = 64'd0;
+            ifm_axis_tkeep = 8'd0;
+            ifm_axis_tlast = 1'b0;
+`else
+            $fatal(1, "native 1x1 test requires AXI stream");
+`endif
+`else
 `ifdef TB_CONV_ACCEL_CORE_USE_AXIS_STREAM
             wait(ifm_axis_tready);
 `elsif TB_CONV_ACCEL_CORE_USE_FULL_STREAM
@@ -862,6 +920,7 @@ module `TB_CONV_ACCEL_CORE_MODULE;
             @(negedge clk);
             dma_line_advance = 1'b0;
             dma_bank_wr_en = {IFM_BANKS{1'b0}};
+`endif
 `endif
         end
     endtask
@@ -1048,6 +1107,9 @@ module `TB_CONV_ACCEL_CORE_MODULE;
             cfg_write(6'h08, {7'd0, run_ofm_h[8:0], 7'd0, run_oy_base[8:0]});
             cfg_write(6'h09, run_pixel_base[23:0]);
 `ifdef TB_CONV_ACCEL_CORE_BATCH_STREAM
+`ifdef TB_CONV_ACCEL_CORE_KERNEL_1X1
+            batch_ifm_tile_packets = K_PASSES * COUT_BLOCKS;
+`else
             batch_first_fy = run_oy_base - CONV_PAD;
             if (batch_first_fy < 0)
                 batch_first_fy = 0;
@@ -1056,6 +1118,7 @@ module `TB_CONV_ACCEL_CORE_MODULE;
                 batch_last_fy = FM_H - 1;
             batch_ifm_tile_packets =
                 (batch_last_fy - batch_first_fy + 1) * K_PASSES * COUT_BLOCKS;
+`endif
             batch_ifm_tile_end_count = ps_line_fill_count + batch_ifm_tile_packets;
             cfg_write(6'h19, 32'd1);
             cfg_write(6'h1a, COUT_BLOCKS);
@@ -1244,8 +1307,42 @@ module `TB_CONV_ACCEL_CORE_MODULE;
 `endif
 
     always @(posedge clk) begin
+`ifdef TB_CONV_ACCEL_CORE_KERNEL_1X1
+        if (!rst && `TB_DUT_LAYER.u_top.vector_ifm_valid &&
+            `TB_DUT_LAYER.u_top.vector_ifm_ready) begin
+            ifm_write_count <= ifm_write_count + 1;
+`ifdef TB_CONV_ACCEL_CORE_CHECK_VECTOR_IFM
+            vector_check_y = run_oy_base + vector_check_pixel / FM_W;
+            vector_check_x = vector_check_pixel % FM_W;
+            for (vector_check_lane = 0; vector_check_lane < ROWS;
+                 vector_check_lane = vector_check_lane + 1) begin
+                vector_check_ch =
+                    ((ps_line_fill_count - 1) % K_PASSES) * ROWS +
+                    vector_check_lane;
+                vector_check_expected =
+                    (vector_check_ch < CIN) ?
+                    feat[vector_check_ch][vector_check_y][vector_check_x] : 8'd0;
+                if (`TB_DUT_LAYER.u_top.vector_ifm_data[vector_check_lane*8 +: 8] !==
+                    vector_check_expected) begin
+                    if (fail < 20)
+                        $display("[FAIL] vector IFM packet=%0d pixel=%0d lane=%0d ch=%0d got=%0d exp=%0d",
+                            ps_line_fill_count, vector_check_pixel,
+                            vector_check_lane, vector_check_ch,
+                            $signed(`TB_DUT_LAYER.u_top.vector_ifm_data[vector_check_lane*8 +: 8]),
+                            $signed(vector_check_expected));
+                    fail = fail + 1;
+                end
+            end
+            if (vector_check_pixel + 1 == run_pixels)
+                vector_check_pixel = 0;
+            else
+                vector_check_pixel = vector_check_pixel + 1;
+`endif
+        end
+`else
         if (!rst && `TB_DUT_LAYER.u_top.feeder_ifm_valid)
             ifm_write_count <= ifm_write_count + 1;
+`endif
         if (!rst && `TB_DUT_LAYER.compute_fire)
             compute_fire_count <= compute_fire_count + 1;
 `ifdef TB_CONV_ACCEL_CORE_STAGE_PRINT
@@ -1441,6 +1538,9 @@ module `TB_CONV_ACCEL_CORE_MODULE;
         ps_bias_service_count = 0;
         ps_weight_service_count = 0;
         ps_line_fill_count = 0;
+`ifdef TB_CONV_ACCEL_CORE_CHECK_VECTOR_IFM
+        vector_check_pixel = 0;
+`endif
 `ifdef TB_CONV_ACCEL_CORE_BATCH_STREAM
         batch_ifm_tile_end_count = 0;
         batch_ifm_tile_packets = 0;
@@ -1544,12 +1644,18 @@ module `TB_CONV_ACCEL_CORE_MODULE;
                 x = idx % OFM_W;
                 golden[idx][co] = bias[co];
                 for (k = 0; k < K_TOTAL; k = k + 1) begin
+`ifdef TB_CONV_ACCEL_CORE_KERNEL_1X1
+                    ch = k;
+                    fy = y;
+                    fx = x;
+`else
                     ch = k / 9;
                     ker = k % 9;
                     ky = ker / 3;
                     kx = ker % 3;
                     fy = y * CONV_STRIDE + ky - CONV_PAD;
                     fx = x * CONV_STRIDE + kx - CONV_PAD;
+`endif
                     if (fy >= 0 && fy < FM_H && fx >= 0 && fx < FM_W)
                         golden[idx][co] = golden[idx][co] + feat[ch][fy][fx] * weight[k][co];
                 end
@@ -1587,7 +1693,10 @@ module `TB_CONV_ACCEL_CORE_MODULE;
 `endif
         cfg_write(6'h01, {7'd0, FM_W[8:0], 7'd0, FM_H[8:0]});
         cfg_write(6'h02, {7'd0, OFM_W[8:0], 7'd0, OFM_H[8:0]});
-        cfg_write(6'h03, {22'd0, CONV_PAD, 6'd0, CONV_STRIDE});
+        cfg_write(
+            6'h03,
+            {15'd0, (KERNEL_1X1 != 0),
+             6'd0, CONV_PAD, 6'd0, CONV_STRIDE});
         cfg_write(6'h04, K_TOTAL);
         cfg_write(6'h05, COUT_TOTAL);
         cfg_write(6'h07, `TB_CONV_ACCEL_CORE_ACT_MODE);
@@ -1733,11 +1842,14 @@ module `TB_CONV_ACCEL_CORE_MODULE;
 `ifdef TB_CONV_ACCEL_CORE_USE_EXTERNAL_GOLDEN
                     expected_ofm_byte = ext_golden[(run_pixel_base + idx)*COUT_TOTAL + co];
                     if (ofm_mem[(run_pixel_base + idx)*COUT_TOTAL + co] !== expected_ofm_byte) begin
-                        $display("[FAIL] tile%0d pixel%0d global%0d cout%0d addr%0d got=%0d exp=%0d",
-                            run_idx, idx, run_pixel_base + idx, co,
-                            (run_pixel_base + idx)*COUT_TOTAL + co,
-                            ofm_mem[(run_pixel_base + idx)*COUT_TOTAL + co],
-                            expected_ofm_byte);
+                        if (fail < 20)
+                            $display("[FAIL] tile%0d pixel%0d global%0d cout%0d addr%0d got=%0d exp=%0d raw_got=%0d raw_valid=%0d",
+                                run_idx, idx, run_pixel_base + idx, co,
+                                (run_pixel_base + idx)*COUT_TOTAL + co,
+                                ofm_mem[(run_pixel_base + idx)*COUT_TOTAL + co],
+                                expected_ofm_byte,
+                                final_raw_mem[(run_pixel_base + idx)*COUT_TOTAL + co],
+                                final_raw_valid[(run_pixel_base + idx)*COUT_TOTAL + co]);
                         fail = fail + 1;
                     end else pass = pass + 1;
 `else

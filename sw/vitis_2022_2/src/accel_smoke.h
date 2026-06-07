@@ -46,6 +46,12 @@
 #define ACCEL_QUANT_DATA      0x84U
 #define ACCEL_LUT_ADDR        0x88U
 #define ACCEL_LUT_DATA        0x8cU
+#define ACCEL_VECTOR_PACKETS  0x90U
+#define ACCEL_VECTOR_PIXELS   0x94U
+#define ACCEL_VECTOR_BEATS    0x98U
+#define ACCEL_VECTOR_STALLS   0x9cU
+
+#define ACCEL_CONV_KERNEL_1X1 (1U << 16)
 
 #define ACCEL_QUANT_PACK(mult, shift, zp) \
     ((((uint32_t)(zp)) << 24) | (((uint32_t)(shift)) << 16) | ((uint32_t)(mult)))
@@ -88,6 +94,10 @@
 
 #ifndef ACCEL_BATCH_STREAM
 #define ACCEL_BATCH_STREAM    0
+#endif
+
+#ifndef ACCEL_NATIVE_1X1
+#define ACCEL_NATIVE_1X1      0
 #endif
 
 /* Mirrors tb_conv_accel_core_axi_lite_axis_stream_r18_c8_smoke.v. */

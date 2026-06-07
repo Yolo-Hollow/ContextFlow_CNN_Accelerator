@@ -56,6 +56,7 @@ module conv_accel_core #(
     output [15:0] configured_num_pixels,
     output [7:0]  configured_input_zero_point,
     output [8:0]  configured_ofm_w,
+    output        configured_kernel_1x1,
     output        configured_pool_enable,
     output [1:0]  configured_pool_stride,
     output [31:0] configured_expected_bytes,
@@ -72,6 +73,11 @@ module conv_accel_core #(
     input  [31:0] stream_bias_completed,
     input  [31:0] stream_weight_completed,
     input  [31:0] stream_ifm_completed,
+    input  [31:0] vector_completed_packets,
+    input  [31:0] vector_completed_pixels,
+    input  [31:0] vector_accepted_beats,
+    input  [31:0] vector_fifo_stall_cycles,
+    output        configured_config_error,
 
     input  [5:0]        bias_wr_addr,
     input  [PSUM_W-1:0] bias_wr_data,
@@ -90,6 +96,10 @@ module conv_accel_core #(
     input  [9:0] dma_wr_fy,
     input  [7:0] dma_wr_data [0:IFM_BANKS-1],
     input        dma_line_advance,
+    input  [ROWS*IFM_W-1:0] vector_ifm_data,
+    input                    vector_ifm_valid,
+    output                   vector_ifm_ready,
+    input                    vector_packet_done,
 
     input         quant_wr_en,
     input  [5:0]  quant_wr_addr,
@@ -117,6 +127,7 @@ module conv_accel_core #(
     wire [8:0] ofm_w;
     wire [1:0] conv_stride;
     wire [1:0] conv_pad;
+    wire kernel_1x1;
     wire [1:0] activation_mode;
     wire [13:0] k_total;
     wire [10:0] cout_total;
@@ -132,6 +143,7 @@ module conv_accel_core #(
     wire [31:0] stream_bias_packets;
     wire [31:0] stream_weight_packets;
     wire [31:0] stream_ifm_packets;
+    wire config_error;
     wire [OFM_ADDR_W-1:0] tile_pixel_base_ext = tile_pixel_base[OFM_ADDR_W-1:0];
     wire [COLS*2*MULT_W-1:0] quant_mult_flat;
     wire [COLS*2*SHIFT_W-1:0] quant_shift_flat;
@@ -156,6 +168,7 @@ module conv_accel_core #(
     assign configured_num_pixels = num_pixels;
     assign configured_input_zero_point = input_zero_point;
     assign configured_ofm_w = ofm_w;
+    assign configured_kernel_1x1 = kernel_1x1;
     assign configured_pool_enable = pool_enable;
     assign configured_pool_stride = pool_stride;
     assign configured_expected_bytes = expected_bytes;
@@ -164,6 +177,7 @@ module conv_accel_core #(
     assign configured_stream_weight_packets = stream_weight_packets;
     assign configured_stream_ifm_packets = stream_ifm_packets;
     assign configured_stream_reset = start_pulse;
+    assign configured_config_error = config_error;
     assign quant_rd_data = quant_rd_data_int;
     assign cfg_rdata = (cfg_addr == 6'h20) ? {26'd0, cfg_quant_addr} :
                        (cfg_addr == 6'h21) ? quant_shadow[cfg_quant_addr] :
@@ -191,7 +205,7 @@ module conv_accel_core #(
         end
     end
 
-    layer_config_regs u_cfg (
+    layer_config_regs #(.IFM_FIFO_DEPTH(IFM_FIFO_DEPTH)) u_cfg (
         .clk(clk), .rst(rst),
         .cfg_wr_en(cfg_wr_en), .cfg_addr(cfg_addr), .cfg_wdata(cfg_wdata),
         .cfg_rd_en(cfg_rd_en), .cfg_rdata(layer_cfg_rdata),
@@ -209,9 +223,13 @@ module conv_accel_core #(
         .stream_bias_completed(stream_bias_completed),
         .stream_weight_completed(stream_weight_completed),
         .stream_ifm_completed(stream_ifm_completed),
+        .vector_completed_packets(vector_completed_packets),
+        .vector_completed_pixels(vector_completed_pixels),
+        .vector_accepted_beats(vector_accepted_beats),
+        .vector_fifo_stall_cycles(vector_fifo_stall_cycles),
         .start_pulse(start_pulse),
         .fm_h(fm_h), .fm_w(fm_w), .ofm_h(ofm_h), .ofm_w(ofm_w),
-        .conv_stride(conv_stride), .conv_pad(conv_pad),
+        .conv_stride(conv_stride), .conv_pad(conv_pad), .kernel_1x1(kernel_1x1),
         .activation_mode(activation_mode),
         .k_total(k_total), .cout_total(cout_total), .num_pixels(num_pixels),
         .tile_oy_base(tile_oy_base), .tile_ofm_h(tile_ofm_h),
@@ -222,7 +240,8 @@ module conv_accel_core #(
         .stream_batch_mode(stream_batch_mode),
         .stream_bias_packets(stream_bias_packets),
         .stream_weight_packets(stream_weight_packets),
-        .stream_ifm_packets(stream_ifm_packets)
+        .stream_ifm_packets(stream_ifm_packets),
+        .config_error(config_error)
     );
 
     quant_param_regs #(
@@ -248,7 +267,7 @@ module conv_accel_core #(
         .clk(clk), .rst(rst), .start(start_pulse), .busy(layer_busy), .done(layer_done),
         .perf_compute_fire(layer_compute_fire),
         .fm_h(fm_h), .fm_w(fm_w), .ofm_h(ofm_h), .ofm_w(ofm_w),
-        .conv_stride(conv_stride), .conv_pad(conv_pad),
+        .conv_stride(conv_stride), .conv_pad(conv_pad), .kernel_1x1(kernel_1x1),
         .k_total(k_total), .cout_total(cout_total), .num_pixels(num_pixels),
         .tile_oy_base(tile_oy_base), .tile_ofm_h(tile_ofm_h),
         .tile_pixel_base(tile_pixel_base_ext),
@@ -262,6 +281,8 @@ module conv_accel_core #(
         .feeder_fill_req(feeder_fill_req), .feeder_fill_fy(feeder_fill_fy),
         .dma_bank_wr_en(dma_bank_wr_en), .dma_wr_x(dma_wr_x), .dma_wr_fy(dma_wr_fy),
         .dma_wr_data(dma_wr_data), .dma_line_advance(dma_line_advance),
+        .vector_ifm_data(vector_ifm_data), .vector_ifm_valid(vector_ifm_valid),
+        .vector_ifm_ready(vector_ifm_ready), .vector_packet_done(vector_packet_done),
         .final_valid(), .final_addr(), .final_data(), .final_cout_base(), .final_channel_valid(),
         .quant_mult_flat(quant_mult_flat), .quant_shift_flat(quant_shift_flat), .quant_zp_flat(quant_zp_flat),
         .activation_mode(activation_mode), .act_lut_wr_en(merged_act_lut_wr_en),

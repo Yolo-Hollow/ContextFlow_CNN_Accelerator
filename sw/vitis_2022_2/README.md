@@ -212,23 +212,24 @@ every layer against a chain-specific RTL semantic golden. Conv5 and Conv6 must
 be generated from the preceding output of the same chain; standalone golden
 inputs are not interchangeable because earlier RTL-semantic differences
 propagate. Conv6 runs `13x13x512 -> 13x13x1024` with `K_TOTAL=4608`,
-`K_PASSES=256`, and `COUT_BLOCKS=64`. Conv7 keeps its native 1x1 golden
-semantics but runs on hardware as center-only sparse 3x3 with `K_TOTAL=9216`,
-`K_PASSES=512`, and `COUT_BLOCKS=16`.
+`K_PASSES=256`, and `COUT_BLOCKS=64`. Legacy builds keep the center-only
+sparse 3x3 Conv7 mapping. Batch and DDR builds use the native 1x1 vector path
+with `K_TOTAL=1024`, `K_PASSES=57`, and `COUT_BLOCKS=16`.
 Conv8 is a native 3x3 `13x13x256 -> 13x13x512` layer with
 `K_TOTAL=2304`, `K_PASSES=128`, and `COUT_BLOCKS=32`.
-The 24-channel Conv9 head keeps native 1x1 golden semantics and runs as a
-center-only sparse 3x3 layer with `K_TOTAL=4608`, `K_PASSES=256`, and two
-COUT blocks. The second block contains eight valid output channels.
+The 24-channel Conv9 head similarly uses native 1x1 in batch/DDR builds with
+`K_TOTAL=512`, `K_PASSES=29`, and two COUT blocks. The final K pass and second
+COUT block are both partial.
 
 The current board-validated hardware export is:
 
 ```text
-build_system_xck26_kv260_batchstream/conv_accel_ps_dma_minimal.xsa
+build_system_xck26_kv260_native1x1/conv_accel_ps_dma_minimal.xsa
 ```
 
 It includes the FIFO1024/K14 and stale-row fixes, batch AXI input streams,
-packet counters, 26-bit DMA lengths, and held-request rearm protection.
+the native 18-lane 1x1 feeder, packet/performance counters, 26-bit DMA
+lengths, and held-request rearm protection.
 `run_kv260_smoke_sequence.ps1 -BuildDirName <directory>` selects a specific
 hardware build without overwriting an older validated bitstream.
 
@@ -259,12 +260,34 @@ powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/manual_build_ac
 powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/run_kv260_smoke_sequence.ps1 -PortName COM8 -BuildDirName build_system_xck26_kv260_batchstream -RunConv0Conv9BatchChain -CaptureSeconds 240
 ```
 
-The fully reprogrammed board run is bit-exact through Conv9 and matches the
-RTL-chain decode golden. The deployment-oriented DDR image path runs ten
-layers in about `2.867 s`; PL external wait is `43.40%`, down from `89.41%`,
-and each DMA channel starts 304 times across the network. The fixed golden
-chain is slower because it performs full per-layer output preservation and
-comparison and should not be used as the deployment timing result.
+The native 1x1 build is bit-exact through Conv9 and matches the RTL-chain
+decode golden. The deployment-oriented DDR image path runs ten layers in
+about `1.920 s`; Conv7 takes about `48.4 ms` and Conv9 about `3.4 ms`.
+Two images measured `1.919672 s` and `1.919409 s`, a `0.014%` difference.
+The fixed golden chain is slower because it performs full per-layer output
+preservation and comparison and should not be used as deployment timing.
+
+## Native 1x1 mode
+
+`CONV[16]` selects the native 1x1 path. It requires batch mode, stride 1,
+padding 0, and a spatial tile no larger than the 1024-entry IFM FIFO. Each
+pixel is transported as three full 64-bit beats for lanes 0-7, 8-15, and
+16-17. Unused bytes and tail input channels carry the input zero point.
+
+```text
+0x90 VECTOR_PACKETS   completed vector packets
+0x94 VECTOR_PIXELS    completed 18-lane vectors
+0x98 VECTOR_BEATS     accepted IFM AXIS beats
+0x9c VECTOR_STALLS    cycles waiting for all IFM FIFOs
+```
+
+Build and run the native platform with:
+
+```powershell
+C:\Xilinx\Vivado\2022.2\bin\vivado.bat -mode batch -source tcl/build_kv260_system_xck26.tcl -tclargs -build_dir D:/MPSoC/accelerator_systolic/build_system_xck26_kv260_native1x1 -jobs 12
+powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/manual_build_accel_smoke.ps1 -Mode conv0_conv9_ddr_demo
+powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/run_kv260_image_demo.ps1 -Image D:\MPSoC\python_prj\facemask\images\maksssksksss0.png -PortName COM8 -BuildDirName build_system_xck26_kv260_native1x1
+```
 
 ## Software scheduler skeleton
 

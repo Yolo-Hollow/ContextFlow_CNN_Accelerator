@@ -122,9 +122,9 @@
       "kernel": 1,
       "stride": 1,
       "pad": 0,
-      "hardware_kernel": 3,
-      "hardware_pad": 1,
-      "emulate_1x1_as_3x3": true,
+      "hardware_kernel": 1,
+      "hardware_pad": 0,
+      "emulate_1x1_as_3x3": false,
       "pool": "bypass",
       "activation": "lut"
     },
@@ -157,9 +157,9 @@
       "kernel": 1,
       "stride": 1,
       "pad": 0,
-      "hardware_kernel": 3,
-      "hardware_pad": 1,
-      "emulate_1x1_as_3x3": true,
+      "hardware_kernel": 1,
+      "hardware_pad": 0,
+      "emulate_1x1_as_3x3": false,
       "pool": "bypass",
       "activation": "lut"
     }

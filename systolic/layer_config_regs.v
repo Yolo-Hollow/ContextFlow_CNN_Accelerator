@@ -2,10 +2,11 @@
 // Simple local configuration register bank for one convolution layer.
 //
 // Register map:
-//   0x00 CTRL/STATUS: write bit0=start pulse, bit1=clear done; read bit0=busy, bit1=done_sticky
+//   0x00 CTRL/STATUS: write bit0=start pulse, bit1=clear status;
+//                     read bit0=busy, bit1=done_sticky, bit2=config_error
 //   0x01 FM_SIZE:     [8:0]=fm_h,   [24:16]=fm_w
 //   0x02 OFM_SIZE:    [8:0]=ofm_h,  [24:16]=ofm_w
-//   0x03 CONV:        [1:0]=stride, [9:8]=pad
+//   0x03 CONV:        [1:0]=stride, [9:8]=pad, bit16=native 1x1 vector mode
 //   0x04 K_TOTAL:     [13:0]=k_total
 //   0x05 COUT_TOTAL:  [10:0]=cout_total
 //   0x06 NUM_PIXELS:  [15:0]=num_pixels
@@ -34,7 +35,13 @@
 //   0x1d BIAS_DONE:      completed bias packets for the current tile
 //   0x1e WEIGHT_DONE:    completed weight packets for the current tile
 //   0x1f IFM_DONE:       completed IFM line packets for the current tile
-module layer_config_regs (
+//   0x24 VECTOR_PACKETS: completed native 1x1 vector packets
+//   0x25 VECTOR_PIXELS:  completed native 1x1 pixel vectors
+//   0x26 VECTOR_BEATS:   accepted native 1x1 AXIS beats
+//   0x27 VECTOR_STALLS:  native 1x1 cycles stalled by full IFM FIFOs
+module layer_config_regs #(
+    parameter IFM_FIFO_DEPTH = 1024
+) (
     input  clk,
     input  rst,
 
@@ -59,6 +66,10 @@ module layer_config_regs (
     input  [31:0] stream_bias_completed,
     input  [31:0] stream_weight_completed,
     input  [31:0] stream_ifm_completed,
+    input  [31:0] vector_completed_packets,
+    input  [31:0] vector_completed_pixels,
+    input  [31:0] vector_accepted_beats,
+    input  [31:0] vector_fifo_stall_cycles,
     output reg start_pulse,
 
     output reg [8:0]  fm_h,
@@ -67,6 +78,7 @@ module layer_config_regs (
     output reg [8:0]  ofm_w,
     output reg [1:0]  conv_stride,
     output reg [1:0]  conv_pad,
+    output reg        kernel_1x1,
     output reg [1:0]  activation_mode,
     output reg [13:0] k_total,
     output reg [10:0] cout_total,
@@ -81,7 +93,8 @@ module layer_config_regs (
     output reg        stream_batch_mode,
     output reg [31:0] stream_bias_packets,
     output reg [31:0] stream_weight_packets,
-    output reg [31:0] stream_ifm_packets
+    output reg [31:0] stream_ifm_packets,
+    output reg        config_error
 );
     reg done_sticky;
     reg [31:0] perf_busy_cycles;
@@ -94,6 +107,10 @@ module layer_config_regs (
     wire cfg_idle = !layer_busy;
     wire perf_wait_any = perf_wait_bias || perf_wait_weight ||
                          perf_wait_ifm || perf_wait_ofm;
+    wire invalid_1x1_config =
+        kernel_1x1 &&
+        (!stream_batch_mode || conv_stride != 2'd1 || conv_pad != 2'd0 ||
+         num_pixels > IFM_FIFO_DEPTH);
 
     always @(posedge clk) begin
         if (rst) begin
@@ -105,6 +122,7 @@ module layer_config_regs (
             ofm_w <= 9'd0;
             conv_stride <= 2'd1;
             conv_pad <= 2'd0;
+            kernel_1x1 <= 1'b0;
             activation_mode <= 2'd0;
             k_total <= 14'd0;
             cout_total <= 11'd0;
@@ -120,6 +138,7 @@ module layer_config_regs (
             stream_bias_packets <= 32'd0;
             stream_weight_packets <= 32'd0;
             stream_ifm_packets <= 32'd0;
+            config_error <= 1'b0;
             perf_busy_cycles <= 32'd0;
             perf_wait_any_cycles <= 32'd0;
             perf_wait_bias_cycles <= 32'd0;
@@ -152,18 +171,23 @@ module layer_config_regs (
                 case (cfg_addr)
                     6'h00: begin
                         if (cfg_wdata[0] && cfg_idle) begin
-                            start_pulse <= 1'b1;
                             done_sticky <= 1'b0;
-                            perf_busy_cycles <= 32'd0;
-                            perf_wait_any_cycles <= 32'd0;
-                            perf_wait_bias_cycles <= 32'd0;
-                            perf_wait_weight_cycles <= 32'd0;
-                            perf_wait_ifm_cycles <= 32'd0;
-                            perf_wait_ofm_cycles <= 32'd0;
-                            perf_compute_cycles <= 32'd0;
+                            config_error <= invalid_1x1_config;
+                            if (!invalid_1x1_config) begin
+                                start_pulse <= 1'b1;
+                                perf_busy_cycles <= 32'd0;
+                                perf_wait_any_cycles <= 32'd0;
+                                perf_wait_bias_cycles <= 32'd0;
+                                perf_wait_weight_cycles <= 32'd0;
+                                perf_wait_ifm_cycles <= 32'd0;
+                                perf_wait_ofm_cycles <= 32'd0;
+                                perf_compute_cycles <= 32'd0;
+                            end
                         end
-                        if (cfg_wdata[1])
+                        if (cfg_wdata[1]) begin
                             done_sticky <= 1'b0;
+                            config_error <= 1'b0;
+                        end
                     end
                     6'h01: begin
                         if (cfg_idle) begin
@@ -181,6 +205,7 @@ module layer_config_regs (
                         if (cfg_idle) begin
                             conv_stride <= cfg_wdata[1:0];
                             conv_pad <= cfg_wdata[9:8];
+                            kernel_1x1 <= cfg_wdata[16];
                         end
                     end
                     6'h04: if (cfg_idle) k_total <= cfg_wdata[13:0];
@@ -214,10 +239,10 @@ module layer_config_regs (
 
     always @(*) begin
         case (cfg_addr)
-            6'h00: cfg_rdata = {30'd0, done_sticky, layer_busy};
+            6'h00: cfg_rdata = {29'd0, config_error, done_sticky, layer_busy};
             6'h01: cfg_rdata = {7'd0, fm_w, 7'd0, fm_h};
             6'h02: cfg_rdata = {7'd0, ofm_w, 7'd0, ofm_h};
-            6'h03: cfg_rdata = {22'd0, conv_pad, 6'd0, conv_stride};
+            6'h03: cfg_rdata = {15'd0, kernel_1x1, 6'd0, conv_pad, 6'd0, conv_stride};
             6'h04: cfg_rdata = {18'd0, k_total};
             6'h05: cfg_rdata = {21'd0, cout_total};
             6'h06: cfg_rdata = {16'd0, num_pixels};
@@ -246,6 +271,10 @@ module layer_config_regs (
             6'h1d: cfg_rdata = stream_bias_completed;
             6'h1e: cfg_rdata = stream_weight_completed;
             6'h1f: cfg_rdata = stream_ifm_completed;
+            6'h24: cfg_rdata = vector_completed_packets;
+            6'h25: cfg_rdata = vector_completed_pixels;
+            6'h26: cfg_rdata = vector_accepted_beats;
+            6'h27: cfg_rdata = vector_fifo_stall_cycles;
             default: cfg_rdata = 32'd0;
         endcase
     end

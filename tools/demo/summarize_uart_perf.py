@@ -6,6 +6,7 @@ from pathlib import Path
 PERF_PREFIX = "PERF "
 HWPERF_PREFIX = "HWPERF "
 DMASTAT_PREFIX = "DMASTAT "
+VECTORSTAT_PREFIX = "VECTORSTAT "
 
 
 def parse_metric_line(line, prefix):
@@ -99,6 +100,23 @@ def summarize_perf(log_text):
             "ofm_starts": sum(layer["ofm_starts"] for layer in dma_layers),
         }
 
+    vector_layers = [
+        parse_metric_line(line.strip(), VECTORSTAT_PREFIX)
+        for line in log_text.splitlines()
+        if line.strip().startswith(VECTORSTAT_PREFIX)
+    ]
+    vector = None
+    if vector_layers:
+        vector = {
+            "layers": vector_layers,
+            "packets": sum(layer["packets"] for layer in vector_layers),
+            "pixels": sum(layer["pixels"] for layer in vector_layers),
+            "beats": sum(layer["beats"] for layer in vector_layers),
+            "fifo_stall_cycles": sum(
+                layer["fifo_stall_cycles"] for layer in vector_layers
+            ),
+        }
+
     return {
         "layer_count": len(layers),
         "total_microseconds": total_us,
@@ -107,6 +125,7 @@ def summarize_perf(log_text):
         "categories": categories,
         "hardware": hardware,
         "dma": dma,
+        "vector": vector,
     }
 
 
@@ -135,6 +154,13 @@ def print_summary(summary):
             "DMASTAT summary: "
             f"bias={dma['bias_starts']} weight={dma['weight_starts']} "
             f"ifm={dma['ifm_starts']} ofm={dma['ofm_starts']}"
+        )
+    if summary["vector"]:
+        vector = summary["vector"]
+        print(
+            "VECTORSTAT summary: "
+            f"packets={vector['packets']} pixels={vector['pixels']} "
+            f"beats={vector['beats']} stalls={vector['fifo_stall_cycles']}"
         )
 
 

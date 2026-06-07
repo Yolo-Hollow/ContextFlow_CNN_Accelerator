@@ -13,9 +13,14 @@ module tb_layer_config_regs;
     reg [31:0] stream_bias_completed;
     reg [31:0] stream_weight_completed;
     reg [31:0] stream_ifm_completed;
+    reg [31:0] vector_completed_packets;
+    reg [31:0] vector_completed_pixels;
+    reg [31:0] vector_accepted_beats;
+    reg [31:0] vector_fifo_stall_cycles;
     wire start_pulse;
     wire [8:0] fm_h, fm_w, ofm_h, ofm_w;
     wire [1:0] conv_stride, conv_pad;
+    wire kernel_1x1;
     wire [1:0] activation_mode;
     wire [13:0] k_total;
     wire [10:0] cout_total;
@@ -30,8 +35,11 @@ module tb_layer_config_regs;
     wire [31:0] stream_bias_packets;
     wire [31:0] stream_weight_packets;
     wire [31:0] stream_ifm_packets;
+    wire config_error;
 
-    layer_config_regs dut (
+    layer_config_regs #(
+        .IFM_FIFO_DEPTH(64)
+    ) dut (
         .clk(clk), .rst(rst),
         .cfg_wr_en(cfg_wr_en), .cfg_addr(cfg_addr), .cfg_wdata(cfg_wdata),
         .cfg_rd_en(cfg_rd_en), .cfg_rdata(cfg_rdata),
@@ -45,9 +53,13 @@ module tb_layer_config_regs;
         .stream_bias_completed(stream_bias_completed),
         .stream_weight_completed(stream_weight_completed),
         .stream_ifm_completed(stream_ifm_completed),
+        .vector_completed_packets(vector_completed_packets),
+        .vector_completed_pixels(vector_completed_pixels),
+        .vector_accepted_beats(vector_accepted_beats),
+        .vector_fifo_stall_cycles(vector_fifo_stall_cycles),
         .start_pulse(start_pulse),
         .fm_h(fm_h), .fm_w(fm_w), .ofm_h(ofm_h), .ofm_w(ofm_w),
-        .conv_stride(conv_stride), .conv_pad(conv_pad),
+        .conv_stride(conv_stride), .conv_pad(conv_pad), .kernel_1x1(kernel_1x1),
         .activation_mode(activation_mode),
         .k_total(k_total), .cout_total(cout_total), .num_pixels(num_pixels),
         .tile_oy_base(tile_oy_base), .tile_ofm_h(tile_ofm_h),
@@ -58,7 +70,8 @@ module tb_layer_config_regs;
         .stream_batch_mode(stream_batch_mode),
         .stream_bias_packets(stream_bias_packets),
         .stream_weight_packets(stream_weight_packets),
-        .stream_ifm_packets(stream_ifm_packets)
+        .stream_ifm_packets(stream_ifm_packets),
+        .config_error(config_error)
     );
 
     always #5 clk = ~clk;
@@ -115,6 +128,10 @@ module tb_layer_config_regs;
         stream_bias_completed = 32'd7;
         stream_weight_completed = 32'd11;
         stream_ifm_completed = 32'd13;
+        vector_completed_packets = 32'd17;
+        vector_completed_pixels = 32'd19;
+        vector_accepted_beats = 32'd23;
+        vector_fifo_stall_cycles = 32'd29;
         pass = 0;
         fail = 0;
         start_pulse_count = 0;
@@ -297,6 +314,44 @@ module tb_layer_config_regs;
         check_value(fm_h, 8, "idle accepts fm_h");
         check_value(fm_w, 9, "idle accepts fm_w");
         check_value(start_pulse_count, 2, "idle accepts start");
+
+        write_reg(6'h00, 32'd2);
+        write_reg(6'h03, {15'd0, 1'b1, 6'd0, 2'd0, 6'd0, 2'd1});
+        write_reg(6'h06, 32'd12);
+        write_reg(6'h19, 32'd0);
+        write_reg(6'h00, 32'd1);
+        repeat (2) @(negedge clk);
+        check_value(start_pulse_count, 2, "native 1x1 rejects legacy mode");
+        check_value(config_error, 1, "native 1x1 legacy config error");
+
+        write_reg(6'h00, 32'd2);
+        write_reg(6'h19, 32'd1);
+        write_reg(6'h06, 32'd65);
+        write_reg(6'h00, 32'd1);
+        repeat (2) @(negedge clk);
+        check_value(start_pulse_count, 2, "native 1x1 rejects oversized tile");
+        check_value(config_error, 1, "native 1x1 depth config error");
+
+        write_reg(6'h00, 32'd2);
+        write_reg(6'h06, 32'd64);
+        write_reg(6'h00, 32'd1);
+        repeat (2) @(negedge clk);
+        check_value(start_pulse_count, 3, "native 1x1 accepts valid config");
+        check_value(kernel_1x1, 1, "native 1x1 mode");
+        check_value(config_error, 0, "native 1x1 valid config no error");
+
+        cfg_addr = 6'h24;
+        #1;
+        check_value(cfg_rdata, 17, "vector packet counter");
+        cfg_addr = 6'h25;
+        #1;
+        check_value(cfg_rdata, 19, "vector pixel counter");
+        cfg_addr = 6'h26;
+        #1;
+        check_value(cfg_rdata, 23, "vector beat counter");
+        cfg_addr = 6'h27;
+        #1;
+        check_value(cfg_rdata, 29, "vector stall counter");
 
         $display("=== tb_layer_config_regs: %0d pass, %0d fail ===", pass, fail);
         if (fail != 0) $fatal(1);

@@ -158,6 +158,7 @@ typedef struct {
     const chain_tile_t *tiles;
     uint32_t tile_count;
     uint32_t dynamic_tile_ofm_h;
+    uint32_t kernel_1x1;
 } chain_layer_t;
 
 static uint64_t bias_buf[CHAIN_COUT_TILE / 2U] __attribute__((aligned(64)));
@@ -206,6 +207,10 @@ typedef struct {
     uint64_t hw_wait_ifm_cycles;
     uint64_t hw_wait_ofm_cycles;
     uint64_t hw_compute_cycles;
+    uint64_t vector_packets;
+    uint64_t vector_pixels;
+    uint64_t vector_beats;
+    uint64_t vector_fifo_stall_cycles;
     uint32_t dma_bias_starts;
     uint32_t dma_weight_starts;
     uint32_t dma_ifm_starts;
@@ -426,9 +431,10 @@ static chain_layer_t conv6_layer = {
 
 #if ACCEL_CHAIN_CONV0_CONV7 || ACCEL_CHAIN_CONV0_CONV8 || ACCEL_CHAIN_CONV0_CONV9
 static chain_layer_t conv7_layer = {
-    "conv7_sparse3x3",
+    ACCEL_NATIVE_1X1 ? "conv7_native1x1" : "conv7_sparse3x3",
     13U, 13U, 13U, 13U,
-    1024U, 256U, CONV7_HW_K_TOTAL, 512U, 16U,
+    1024U, 256U, CONV7_HW_K_TOTAL,
+    (CONV7_HW_K_TOTAL + CHAIN_ROWS - 1U) / CHAIN_ROWS, 16U,
     21U, 28217U, 7U, 69U,
     0U, 0U,
     13U * 13U, 13U * 13U * 256U,
@@ -441,6 +447,7 @@ static chain_layer_t conv7_layer = {
     conv7_tiles,
     4U,
     0U,
+    ACCEL_NATIVE_1X1,
 };
 #endif
 
@@ -466,9 +473,10 @@ static chain_layer_t conv8_layer = {
 
 #if ACCEL_CHAIN_CONV0_CONV9
 static chain_layer_t conv9_layer = {
-    "conv9_detect_sparse3x3",
+    ACCEL_NATIVE_1X1 ? "conv9_detect_native1x1" : "conv9_detect_sparse3x3",
     13U, 13U, 13U, 13U,
-    512U, 24U, CONV9_HW_K_TOTAL, 256U, 2U,
+    512U, 24U, CONV9_HW_K_TOTAL,
+    (CONV9_HW_K_TOTAL + CHAIN_ROWS - 1U) / CHAIN_ROWS, 2U,
     11U, 23304U, 8U, 80U,
     0U, 0U,
     13U * 13U, 13U * 13U * 24U,
@@ -481,6 +489,7 @@ static chain_layer_t conv9_layer = {
     conv9_tiles,
     4U,
     0U,
+    ACCEL_NATIVE_1X1,
 };
 #endif
 
@@ -860,6 +869,10 @@ static int wait_ifm_request_advance(uint32_t serviced_status)
 
 static uint32_t expected_ifm_services_for_tile(const chain_layer_t *layer, const chain_tile_t *tile)
 {
+    if (layer->kernel_1x1) {
+        return layer->k_passes * layer->cout_blocks;
+    }
+
     int first_fy = (int)tile->tile_oy_base - 1;
     int last_fy = (int)tile->tile_oy_base + (int)tile->tile_ofm_h;
     if (first_fy < 0) {
@@ -952,6 +965,46 @@ static int pack_batch_ifm_stream(
     int last_fy = (int)tile->tile_oy_base + (int)tile->tile_ofm_h;
     uint32_t packets;
     uint32_t total_bytes;
+
+    if (layer->kernel_1x1) {
+        packets = expected_ifm_services_for_tile(layer, tile);
+        total_bytes = packets * tile->tile_pixels * 3U * sizeof(uint64_t);
+        if (total_bytes > BATCH_IFM_CAPACITY) {
+            xil_printf("%s native 1x1 IFM overflow bytes=%lu cap=%lu\r\n",
+                       layer->name, (unsigned long)total_bytes,
+                       (unsigned long)BATCH_IFM_CAPACITY);
+            return -1;
+        }
+
+        for (uint32_t cb = 0U; cb < layer->cout_blocks; ++cb) {
+            for (uint32_t kp = 0U; kp < layer->k_passes; ++kp) {
+                uint32_t k_base = kp * CHAIN_ROWS;
+                for (uint32_t oy = 0U; oy < tile->tile_ofm_h; ++oy) {
+                    uint32_t y = tile->tile_oy_base + oy;
+                    for (uint32_t x = 0U; x < layer->fm_w; ++x) {
+                        const uint8_t *pixel =
+                            layer->ifm_u8 + (y * layer->fm_w + x) * layer->cin;
+                        for (uint32_t beat = 0U; beat < 3U; ++beat) {
+                            uint64_t word = 0U;
+                            for (uint32_t byte = 0U; byte < 8U; ++byte) {
+                                uint32_t lane = beat * 8U + byte;
+                                uint32_t ch = k_base + lane;
+                                uint8_t value =
+                                    (lane < CHAIN_ROWS && ch < layer->cin) ?
+                                    pixel[ch] : (uint8_t)layer->input_zero_point;
+                                word |= (uint64_t)value << (byte * 8U);
+                            }
+                            *dst++ = word;
+                        }
+                    }
+                }
+            }
+        }
+        stream->words = (uint64_t *)(UINTPTR)address;
+        stream->bytes = total_bytes;
+        stream->packets = packets;
+        return 0;
+    }
 
     if (first_fy < 0) {
         first_fy = 0;
@@ -1147,6 +1200,13 @@ static void print_layer_perf(const chain_layer_t *layer)
         (unsigned long)layer_perf.dma_weight_starts,
         (unsigned long)layer_perf.dma_ifm_starts,
         (unsigned long)layer_perf.dma_ofm_starts);
+    xil_printf(
+        "VECTORSTAT layer=%s packets=%llu pixels=%llu beats=%llu fifo_stall_cycles=%llu\r\n",
+        layer->name,
+        (unsigned long long)layer_perf.vector_packets,
+        (unsigned long long)layer_perf.vector_pixels,
+        (unsigned long long)layer_perf.vector_beats,
+        (unsigned long long)layer_perf.vector_fifo_stall_cycles);
 }
 
 static void clear_ofm(uint8_t *ofm, uint32_t bytes)
@@ -1362,6 +1422,10 @@ static int run_one_tile(const chain_layer_t *layer, const chain_tile_t *tile, ui
     layer_perf.hw_wait_ifm_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_PERF_WAIT_IFM);
     layer_perf.hw_wait_ofm_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_PERF_WAIT_OFM);
     layer_perf.hw_compute_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_PERF_COMPUTE);
+    layer_perf.vector_packets += rd32(ACCEL_BASE_ADDR, ACCEL_VECTOR_PACKETS);
+    layer_perf.vector_pixels += rd32(ACCEL_BASE_ADDR, ACCEL_VECTOR_PIXELS);
+    layer_perf.vector_beats += rd32(ACCEL_BASE_ADDR, ACCEL_VECTOR_BEATS);
+    layer_perf.vector_fifo_stall_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_VECTOR_STALLS);
 
     wr32(ACCEL_BASE_ADDR, ACCEL_CTRL, 2U);
     trace_printf("%s tile[%lu] services bias=%lu weight=%lu ifm=%lu\r\n",
@@ -1573,6 +1637,10 @@ static int run_one_tile_batch(
     layer_perf.hw_wait_ifm_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_PERF_WAIT_IFM);
     layer_perf.hw_wait_ofm_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_PERF_WAIT_OFM);
     layer_perf.hw_compute_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_PERF_COMPUTE);
+    layer_perf.vector_packets += rd32(ACCEL_BASE_ADDR, ACCEL_VECTOR_PACKETS);
+    layer_perf.vector_pixels += rd32(ACCEL_BASE_ADDR, ACCEL_VECTOR_PIXELS);
+    layer_perf.vector_beats += rd32(ACCEL_BASE_ADDR, ACCEL_VECTOR_BEATS);
+    layer_perf.vector_fifo_stall_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_VECTOR_STALLS);
 
     wr32(ACCEL_BASE_ADDR, ACCEL_CTRL, 2U);
     *total_bias += actual_bias;
@@ -1602,7 +1670,10 @@ static int configure_layer(const chain_layer_t *layer)
     wr32(GPIO_BASE_ADDR, GPIO_DATA, layer->fm_w);
     wr32(ACCEL_BASE_ADDR, ACCEL_FM_SIZE, (layer->fm_w << 16) | layer->fm_h);
     wr32(ACCEL_BASE_ADDR, ACCEL_OFM_SIZE, (layer->ofm_w << 16) | layer->ofm_h);
-    wr32(ACCEL_BASE_ADDR, ACCEL_CONV, 0x00000101U);
+    wr32(
+        ACCEL_BASE_ADDR,
+        ACCEL_CONV,
+        layer->kernel_1x1 ? (ACCEL_CONV_KERNEL_1X1 | 1U) : 0x00000101U);
     wr32(ACCEL_BASE_ADDR, ACCEL_K_TOTAL, layer->k_total);
     wr32(ACCEL_BASE_ADDR, ACCEL_COUT_TOTAL, layer->cout_total);
     wr32(ACCEL_BASE_ADDR, ACCEL_ACT_CFG, 2U);

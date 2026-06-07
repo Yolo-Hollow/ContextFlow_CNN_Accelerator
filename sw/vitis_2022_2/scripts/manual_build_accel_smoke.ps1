@@ -248,6 +248,7 @@ if ($Mode -eq "conv0_conv9_chain" -or $Mode -eq "conv0_conv9_batch_chain" -or $M
     $Defines += "-DACCEL_CHAIN_CONV0_CONV9=1"
     if ($Mode -eq "conv0_conv9_batch_chain" -or $Mode -eq "conv0_conv9_ddr_demo") {
         $Defines += "-DACCEL_BATCH_STREAM=1"
+        $Defines += "-DACCEL_NATIVE_1X1=1"
     }
     if ($Mode -eq "conv0_conv9_ddr_demo") {
         $Defines += "-DACCEL_CHAIN_CONV0_CONV9_DDR=1"
@@ -262,9 +263,9 @@ if ($Mode -eq "conv0_conv9_chain" -or $Mode -eq "conv0_conv9_batch_chain" -or $M
         @{ Root = $BackboneRoot; Dir = "04_conv4_pool"; Prefix = "conv4_pool"; OmitIfm = $true; Emulate1x1 = $false },
         @{ Root = "D:\MPSoC\python_prj\rtl_golden\facemask_chain_conv0_conv5_rtl"; Dir = "05_conv5_pool_like_tiny"; Prefix = "conv5_pool"; OmitIfm = $true; Emulate1x1 = $false },
         @{ Root = "D:\MPSoC\python_prj\rtl_golden\facemask_chain_conv0_conv6_rtl"; Dir = "06_head_conv6_3x3"; Prefix = "conv6"; OmitIfm = $true; Emulate1x1 = $false },
-        @{ Root = "D:\MPSoC\python_prj\rtl_golden\facemask_chain_conv0_conv7_rtl"; Dir = "07_head_conv7_1x1"; Prefix = "conv7"; OmitIfm = $true; Emulate1x1 = $true },
+        @{ Root = "D:\MPSoC\python_prj\rtl_golden\facemask_chain_conv0_conv7_rtl"; Dir = "07_head_conv7_1x1"; Prefix = "conv7"; OmitIfm = $true; Emulate1x1 = !($Mode -eq "conv0_conv9_batch_chain" -or $Mode -eq "conv0_conv9_ddr_demo") },
         @{ Root = "D:\MPSoC\python_prj\rtl_golden\facemask_chain_conv0_conv8_rtl"; Dir = "08_head_conv8_3x3"; Prefix = "conv8"; OmitIfm = $true; Emulate1x1 = $false },
-        @{ Root = "D:\MPSoC\python_prj\rtl_golden\facemask_chain_conv0_conv9_rtl"; Dir = "09_head_detect_conv9_1x1"; Prefix = "conv9"; OmitIfm = $true; Emulate1x1 = $true }
+        @{ Root = "D:\MPSoC\python_prj\rtl_golden\facemask_chain_conv0_conv9_rtl"; Dir = "09_head_detect_conv9_1x1"; Prefix = "conv9"; OmitIfm = $true; Emulate1x1 = !($Mode -eq "conv0_conv9_batch_chain" -or $Mode -eq "conv0_conv9_ddr_demo") }
     )
     foreach ($Layer in $Layers) {
         $Args = @(

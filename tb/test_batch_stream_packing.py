@@ -50,6 +50,26 @@ def pack_ifm_packet(ifm, fm_w, cin, fy, k_base):
     return bytes(packet)
 
 
+def pack_native_1x1_ifm_packet(
+    ifm, fm_w, cin, tile_oy, tile_h, k_base, input_zero_point
+):
+    packet = bytearray()
+    for y in range(tile_oy, tile_oy + tile_h):
+        for x in range(fm_w):
+            pixel = (y * fm_w + x) * cin
+            lanes = [
+                ifm[pixel + k_base + lane]
+                if k_base + lane < cin
+                else input_zero_point
+                for lane in range(ROWS)
+            ]
+            packet.extend(lanes[:8])
+            packet.extend(lanes[8:16])
+            packet.extend(lanes[16:18])
+            packet.extend(bytes([input_zero_point]) * 6)
+    return bytes(packet)
+
+
 def check_shape(fm_w, fm_h, cin, cout, k_passes, cout_blocks, tile_oy, tile_h):
     k_total = cin * 9
     bias = [index * 17 - 91 for index in range(cout)]
@@ -95,10 +115,41 @@ def check_shape(fm_w, fm_h, cin, cout, k_passes, cout_blocks, tile_oy, tile_h):
         assert ifm_stream[start : start + len(packet)] == packet
 
 
+def check_native_1x1_shape(
+    fm_w, fm_h, cin, cout, cout_blocks, tile_oy, tile_h, input_zero_point
+):
+    k_passes = (cin + ROWS - 1) // ROWS
+    ifm = bytes((index * 29 + 3) & 0xFF for index in range(fm_w * fm_h * cin))
+    packets = [
+        pack_native_1x1_ifm_packet(
+            ifm, fm_w, cin, tile_oy, tile_h, kpass * ROWS, input_zero_point
+        )
+        for _block in range(cout_blocks)
+        for kpass in range(k_passes)
+    ]
+    stream = b"".join(packets)
+    packet_bytes = fm_w * tile_h * 3 * 8
+
+    assert len(packets) == cout_blocks * k_passes
+    assert all(len(packet) == packet_bytes for packet in packets)
+    assert len(stream) == cout_blocks * k_passes * packet_bytes
+    assert len(stream) <= 20 * 1024 * 1024
+
+    tail = packets[k_passes - 1]
+    first_pixel_tail = tail[:24]
+    valid_tail_lanes = cin - (k_passes - 1) * ROWS
+    assert first_pixel_tail[valid_tail_lanes:18] == bytes(
+        [input_zero_point] * (18 - valid_tail_lanes)
+    )
+    assert first_pixel_tail[18:24] == bytes([input_zero_point] * 6)
+
+
 def main():
     check_shape(416, 416, 3, 16, 2, 1, 0, 2)
     check_shape(13, 13, 1024, 256, 512, 16, 0, 4)
-    print("PASS: batch stream packing matches legacy packet order")
+    check_native_1x1_shape(13, 13, 1024, 256, 16, 0, 4, 21)
+    check_native_1x1_shape(13, 13, 512, 24, 2, 12, 1, 11)
+    print("PASS: batch stream packing matches legacy and native 1x1 order")
 
 
 if __name__ == "__main__":

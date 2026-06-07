@@ -26,8 +26,8 @@ def main():
     ifm_h, ifm_w, cin = meta["shape"]["ifm_hwc"]
     _, _, cout = meta["shape"]["conv_ofm_hwc"]
     kernel = int(meta["conv"]["kernel"])
-    if kernel != 3:
-        raise RuntimeError(f"xsim RTL testbench currently assumes 3x3 K layout, got kernel={kernel}")
+    if kernel not in (1, 3):
+        raise RuntimeError(f"unsupported kernel={kernel}; expected 1 or 3")
 
     ifm = np.fromfile(layer_dir / "ifm_u8_hwc.bin", dtype=np.uint8)
     weight_oihw = np.fromfile(layer_dir / "weight_raw_oihw_s8.bin", dtype=np.int8).reshape(cout, cin, kernel, kernel)
