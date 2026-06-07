@@ -12,6 +12,10 @@ module tb_axis_bias_weight_loader;
 
     reg clk;
     reg rst;
+    reg stream_reset;
+    reg batch_mode;
+    reg [31:0] bias_expected_packets;
+    reg [31:0] weight_expected_packets;
 
     reg bias_load_req;
     wire bias_tready;
@@ -39,6 +43,8 @@ module tb_axis_bias_weight_loader;
     wire bias_tlast_error;
     wire weight_tkeep_error;
     wire weight_tlast_error;
+    wire [31:0] bias_completed_packets;
+    wire [31:0] weight_completed_packets;
 
     integer pass;
     integer fail;
@@ -57,6 +63,10 @@ module tb_axis_bias_weight_loader;
     ) dut (
         .clk(clk),
         .rst(rst),
+        .stream_reset(stream_reset),
+        .batch_mode(batch_mode),
+        .bias_expected_packets(bias_expected_packets),
+        .weight_expected_packets(weight_expected_packets),
         .bias_load_req(bias_load_req),
         .bias_s_axis_tready(bias_tready),
         .bias_s_axis_tvalid(bias_tvalid),
@@ -80,7 +90,9 @@ module tb_axis_bias_weight_loader;
         .bias_tkeep_error(bias_tkeep_error),
         .bias_tlast_error(bias_tlast_error),
         .weight_tkeep_error(weight_tkeep_error),
-        .weight_tlast_error(weight_tlast_error)
+        .weight_tlast_error(weight_tlast_error),
+        .bias_completed_packets(bias_completed_packets),
+        .weight_completed_packets(weight_completed_packets)
     );
 
     always #5 clk = ~clk;
@@ -163,6 +175,10 @@ module tb_axis_bias_weight_loader;
     initial begin
         clk = 1'b0;
         rst = 1'b1;
+        stream_reset = 1'b0;
+        batch_mode = 1'b0;
+        bias_expected_packets = 32'd0;
+        weight_expected_packets = 32'd0;
         bias_load_req = 1'b0;
         bias_tvalid = 1'b0;
         bias_tdata = 64'd0;
@@ -228,6 +244,8 @@ module tb_axis_bias_weight_loader;
         check(weight_ready_seen == 1, "AXIS weight ready pulse count");
         check(!weight_tkeep_error, "AXIS weight TKEEP clean");
         check(!weight_tlast_error, "AXIS weight TLAST clean");
+        check(bias_completed_packets == 1, "legacy bias packet count");
+        check(weight_completed_packets == 1, "legacy weight packet count");
 
         $display("=== %m: %0d pass, %0d fail ===", pass, fail);
         if (fail != 0) $fatal(1);

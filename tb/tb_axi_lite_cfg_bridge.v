@@ -40,6 +40,10 @@ module tb_axi_lite_cfg_bridge;
     wire pool_enable;
     wire [1:0] pool_stride;
     wire [31:0] expected_bytes;
+    wire stream_batch_mode;
+    wire [31:0] stream_bias_packets;
+    wire [31:0] stream_weight_packets;
+    wire [31:0] stream_ifm_packets;
 
     axi_lite_cfg_bridge dut_bridge (
         .clk(clk), .rst(rst),
@@ -63,6 +67,9 @@ module tb_axi_lite_cfg_bridge;
         .perf_wait_bias(1'b0), .perf_wait_weight(1'b0),
         .perf_wait_ifm(1'b0), .perf_wait_ofm(1'b0),
         .perf_compute_fire(1'b0),
+        .stream_bias_completed(32'd7),
+        .stream_weight_completed(32'd11),
+        .stream_ifm_completed(32'd13),
         .start_pulse(start_pulse),
         .fm_h(fm_h), .fm_w(fm_w), .ofm_h(ofm_h), .ofm_w(ofm_w),
         .conv_stride(conv_stride), .conv_pad(conv_pad),
@@ -72,7 +79,11 @@ module tb_axi_lite_cfg_bridge;
         .tile_pixel_base(tile_pixel_base),
         .input_zero_point(input_zero_point),
         .pool_enable(pool_enable), .pool_stride(pool_stride),
-        .expected_bytes(expected_bytes)
+        .expected_bytes(expected_bytes),
+        .stream_batch_mode(stream_batch_mode),
+        .stream_bias_packets(stream_bias_packets),
+        .stream_weight_packets(stream_weight_packets),
+        .stream_ifm_packets(stream_ifm_packets)
     );
 
     always #5 clk = ~clk;
@@ -247,6 +258,18 @@ module tb_axi_lite_cfg_bridge;
         axi_write(8'h24, 32'd6, 4'hf);
         axi_write(8'h3c, 32'd36, 4'hf);
         axi_write(8'h40, {28'd0, 2'd2, 1'b0, 1'b1}, 4'hf);
+        axi_write(8'h64, 32'd1, 4'hf);
+        axi_write(8'h68, 32'd7, 4'hf);
+        axi_write(8'h6c, 32'd11, 4'hf);
+        axi_write(8'h70, 32'd13, 4'hf);
+        axi_read(8'h64, rd);
+        check_eq(rd, 32'd1, "stream batch mode read");
+        axi_read(8'h74, rd);
+        check_eq(rd, 32'd7, "stream bias completed read");
+        axi_read(8'h78, rd);
+        check_eq(rd, 32'd11, "stream weight completed read");
+        axi_read(8'h7c, rd);
+        check_eq(rd, 32'd13, "stream ifm completed read");
         axi_read(8'h3c, rd);
         check_eq(rd, 32'd36, "input_zero_point read");
         check_eq({24'd0, input_zero_point}, 32'd36, "input_zero_point output");

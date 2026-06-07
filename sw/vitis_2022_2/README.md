@@ -224,12 +224,47 @@ COUT blocks. The second block contains eight valid output channels.
 The current board-validated hardware export is:
 
 ```text
-build_system_xck26_kv260_linebuffix/conv_accel_ps_dma_minimal.xsa
+build_system_xck26_kv260_batchstream/conv_accel_ps_dma_minimal.xsa
 ```
 
-It includes the FIFO1024/K14 changes and the stale IFM line-buffer row fix.
+It includes the FIFO1024/K14 and stale-row fixes, batch AXI input streams,
+packet counters, 26-bit DMA lengths, and held-request rearm protection.
 `run_kv260_smoke_sequence.ps1 -BuildDirName <directory>` selects a specific
 hardware build without overwriting an older validated bitstream.
+
+## Batch stream mode
+
+`ACCEL_BATCH_STREAM=1` packs one bias, weight, and IFM AXI stream per spatial
+tile. Each input DMA starts once and pauses through AXIS backpressure while the
+accelerator consumes fixed-size packets. The IFM path uses two fixed DDR
+buffers so software packs tile N+1 while tile N is running. The legacy
+per-request mode remains available at compile time.
+
+The batch control registers are:
+
+```text
+0x64 STREAM_CFG       bit0 = batch mode
+0x68 BIAS_PACKETS     expected packet count
+0x6c WEIGHT_PACKETS   expected packet count
+0x70 IFM_PACKETS      expected packet count
+0x74 BIAS_COMPLETED   completed packet count
+0x78 WEIGHT_COMPLETED completed packet count
+0x7c IFM_COMPLETED    completed packet count
+```
+
+Build and run the fixed batch chain with:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/manual_build_accel_smoke.ps1 -Mode conv0_conv9_batch_chain
+powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/run_kv260_smoke_sequence.ps1 -PortName COM8 -BuildDirName build_system_xck26_kv260_batchstream -RunConv0Conv9BatchChain -CaptureSeconds 240
+```
+
+The fully reprogrammed board run is bit-exact through Conv9 and matches the
+RTL-chain decode golden. The deployment-oriented DDR image path runs ten
+layers in about `2.867 s`; PL external wait is `43.40%`, down from `89.41%`,
+and each DMA channel starts 304 times across the network. The fixed golden
+chain is slower because it performs full per-layer output preservation and
+comparison and should not be used as the deployment timing result.
 
 ## Software scheduler skeleton
 

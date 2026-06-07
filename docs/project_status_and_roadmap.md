@@ -1,6 +1,6 @@
 # Systolic Accelerator 当前状态与后续计划
 
-> 最后更新：2026-06-06
+> 最后更新：2026-06-07
 
 本文档作为当前项目的主入口。旧版 `accelerator_systolic.md` 保留早期设计记录和阶段性实验过程；本文档只记录当前 RTL 状态、已验证内容、已知限制和后续路线。
 
@@ -369,3 +369,9 @@ D:/MPSoC/python_prj
 - 同次运行 PL 累计 `746344195` busy cycles，其中任意外部等待 `667279241` cycles，即 `89.41%`；阵列有效 `compute_fire` 为 `8739328` cycles，仅占 `1.17%`。IFM 等待 `505499633` cycles，约占 busy 的 `67.73%`；weight 等待 `160782718` cycles，约占 `21.54%`；bias 与 OFM 等待合计低于 `0.15%`。在 100 MHz 下，PL busy 约 `7.463 s`，其中外部服务等待约 `6.673 s`，阵列有效计算约 `0.087 s`。
 - 软件侧主要耗时为 `ifm_pack=2.297323 s (30.68%)`、`control=1.660113 s (22.17%)`、`ifm_dma=1.622857 s (21.67%)`、`weight_pack=0.804914 s (10.75%)`、`ifm_sync=0.401887 s (5.37%)`、`weight_dma=0.363073 s (4.85%)` 和 `weight_sync=0.311704 s (4.16%)`。数据证明当前瓶颈不是阵列算力，而是 A53 以细粒度 DMA/GPIO 请求逐次向 PL 分发 IFM 和权重。
 - 当前可靠板级边界是完整 Conv0->Conv9 单尺度卷积链、A53 decode/NMS、运行时 JTAG DDR 图片加载和主机可视化。下一阶段不应先扩大阵列；优先把 IFM/weight 服务改为描述符驱动的批量传输、双缓冲或 PL 自主 DDR 读取，使下一批数据与阵列计算重叠，并以 `HWPERF` 的 wait/compute 比例作为验收指标。
+- 2026-06-07 已完成 AXI batch stream 与 A53 IFM 双缓冲。新增 `STREAM_CFG` 和三类 expected/completed packet 寄存器；batch 模式中 bias、weight、IFM 各 tile 只启动一次 DMA，packet 边界由固定长度恢复，整条流只在最后一拍使用 TLAST。legacy 单包路径继续保留用于 A/B 回归。
+- 首次上板时 Conv0 tile0 停在 IFM `3/6` packet。计数器确认 weight 已提前消费 `2/2` packet，根因是 loader 在同一次保持高电平的请求完成后立即重入。bias、weight、IFM loader 已增加“请求撤销后才能重新武装”的保护；held-high 单测为 `12 pass, 0 fail`，真实 Conv0 batch xsim 为 `532 pass, 0 fail`。
+- 当前板级硬件基线为 `build_system_xck26_kv260_batchstream`。实现签核为 `WNS=0.396 ns, TNS=0, WHS=0.010 ns, THS=0`，`0 routing errors`；资源为 `CLB LUTs=50577 (43.18%)`、`CLB Registers=45004 (19.21%)`、`BRAM Tile=45.5 (31.60%)`、`DSP=177 (14.18%)`。XSA SHA256 为 `3123F4C73CF5FF174ACE58212A302F0C96A0E14F2294BA595B9376D6A487234A`，bitstream SHA256 为 `9DDD49DCC8DD83F5E46DDD0B28230963068EF9F832E2A49E583C2A495DE3CBCA`。
+- 2026-06-07 完整重新烧录后，batch Conv0->Conv9 固定链逐层 bit-exact，Conv9 `4056` bytes 零 mismatch，UART detection 与 RTL-chain decode golden 一致。日志为 `build_system_xck26_kv260_batchstream/board_smoke_logs/20260607_175823_conv0_conv9_batch_chain_COM8.log`。
+- batch DDR demo 的十层推理在两张图片上分别为 `2.866963 s` 和 `2.866821 s`，均低于 `4.0 s`；PL `wait_any` 从 `89.41%` 降至 `43.40%`，DMA 启动汇总降为 bias/weight/IFM/OFM 各 `304` 次。当前最大软件耗时为 `ifm_pack=2.098 s`，下一步应优化 IFM 布局转换或引入 PL 自主 HWC reader，而不是继续优化 DMA 控制。
+- 两张动态图均在同一 bitstream 和 ELF 上通过，输出位于 `demo_output/batchstream_maksssksksss0` 与 `demo_output/batchstream_maksssksksss1`。第二张图片通过 JTAG DDR 替换输入，无需重新编译 ELF。

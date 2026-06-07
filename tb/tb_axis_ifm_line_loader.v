@@ -6,6 +6,9 @@ module tb_axis_ifm_line_loader;
 
     reg clk;
     reg rst;
+    reg stream_reset;
+    reg batch_mode;
+    reg [31:0] expected_packets;
     reg [AW-1:0] fm_w;
     reg fill_req;
     reg [AW-1:0] fill_fy;
@@ -22,6 +25,7 @@ module tb_axis_ifm_line_loader;
     wire dma_line_advance;
     wire tkeep_error;
     wire tlast_error;
+    wire [31:0] completed_packets;
 
     integer pass;
     integer fail;
@@ -35,6 +39,9 @@ module tb_axis_ifm_line_loader;
     axis_ifm_line_loader #(.AW(AW)) dut (
         .clk(clk),
         .rst(rst),
+        .stream_reset(stream_reset),
+        .batch_mode(batch_mode),
+        .expected_packets(expected_packets),
         .fm_w(fm_w),
         .fill_req(fill_req),
         .fill_fy(fill_fy),
@@ -50,7 +57,8 @@ module tb_axis_ifm_line_loader;
         .dma_wr_data(dma_wr_data),
         .dma_line_advance(dma_line_advance),
         .tkeep_error(tkeep_error),
-        .tlast_error(tlast_error)
+        .tlast_error(tlast_error),
+        .completed_packets(completed_packets)
     );
 
     always #5 clk = ~clk;
@@ -168,6 +176,9 @@ module tb_axis_ifm_line_loader;
     initial begin
         clk = 1'b0;
         rst = 1'b1;
+        stream_reset = 1'b0;
+        batch_mode = 1'b0;
+        expected_packets = 32'd0;
         fm_w = FM_W[AW-1:0];
         fill_req = 1'b0;
         fill_fy = 9'd3;
@@ -269,6 +280,7 @@ module tb_axis_ifm_line_loader;
         check(advance_seen == 1, "AXIS zp200 custom row advance count");
         check(!tkeep_error, "no TKEEP error after custom rows");
         check(!tlast_error, "no TLAST error after custom rows");
+        check(completed_packets == 3, "legacy IFM packet count");
 
         $display("=== %m: %0d pass, %0d fail ===", pass, fail);
         if (fail != 0) $fatal(1);

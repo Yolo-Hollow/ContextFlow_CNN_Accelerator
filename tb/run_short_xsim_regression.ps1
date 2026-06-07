@@ -8,6 +8,7 @@ $Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $Tops = @(
     "tb_axis_ofm_byte_writer",
     "tb_conv_accel_core_axi_lite_axis_stream_conv0_crop_pool_r18_c8_b2_ext",
+    "tb_conv_accel_core_axi_lite_axis_stream_conv0_crop_pool_r18_c8_b2_batch_ext",
     "tb_conv_accel_core_axi_lite_quant_lut",
     "tb_requant",
     "tb_ofm_requant_writer"

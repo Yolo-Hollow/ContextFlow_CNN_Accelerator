@@ -433,6 +433,12 @@ module `TB_CONV_ACCEL_CORE_MODULE;
     integer ps_tile_start_count, ps_done_seen_count, ps_done_clear_count;
     integer layer_done_pulse_count;
     integer ps_bias_service_count, ps_weight_service_count, ps_line_fill_count;
+`ifdef TB_CONV_ACCEL_CORE_BATCH_STREAM
+    integer batch_ifm_tile_end_count;
+    integer batch_ifm_tile_packets;
+    integer batch_first_fy;
+    integer batch_last_fy;
+`endif
 `ifdef TB_CONV_ACCEL_CORE_PROGRESS_PRINT
     integer progress_last_ofm_wr_count;
     integer progress_last_compute_fire_count;
@@ -824,7 +830,12 @@ module `TB_CONV_ACCEL_CORE_MODULE;
 `ifdef TB_CONV_ACCEL_CORE_USE_AXIS_STREAM
                 ifm_axis_tdata = axis_word;
                 ifm_axis_tkeep = IFM_TKEEP_MASK;
+`ifdef TB_CONV_ACCEL_CORE_BATCH_STREAM
+                ifm_axis_tlast = (x == FM_W - 1) &&
+                                  (ps_line_fill_count == batch_ifm_tile_end_count);
+`else
                 ifm_axis_tlast = (x == FM_W - 1);
+`endif
                 ifm_axis_tvalid = 1'b1;
                 wait(ifm_axis_tready);
                 @(posedge clk);
@@ -875,7 +886,12 @@ module `TB_CONV_ACCEL_CORE_MODULE;
                 axis_word[63:32] = (base + i + 1 < COUT_TOTAL) ? bias[base + i + 1] : {PSUM_W{1'b0}};
                 bias_axis_tdata = axis_word;
                 bias_axis_tkeep = 8'hff;
+`ifdef TB_CONV_ACCEL_CORE_BATCH_STREAM
+                bias_axis_tlast = (i + 2 >= COUT_TILE) &&
+                                  ((ps_bias_service_count % COUT_BLOCKS) == 0);
+`else
                 bias_axis_tlast = (i + 2 >= COUT_TILE);
+`endif
                 bias_axis_tvalid = 1'b1;
                 wait(bias_axis_tready);
                 @(posedge clk);
@@ -938,7 +954,13 @@ module `TB_CONV_ACCEL_CORE_MODULE;
                         @(negedge clk);
                         weight_axis_tdata = axis_word;
                         weight_axis_tkeep = 8'hff;
+`ifdef TB_CONV_ACCEL_CORE_BATCH_STREAM
+                        weight_axis_tlast =
+                            (kk == ROWS - 1) && (cc == COUT_TILE - 1) &&
+                            ((ps_weight_service_count % (COUT_BLOCKS * K_PASSES)) == 0);
+`else
                         weight_axis_tlast = (kk == ROWS - 1) && (cc == COUT_TILE - 1);
+`endif
                         weight_axis_tvalid = 1'b1;
                         wait(weight_axis_tready);
                         @(posedge clk);
@@ -1025,6 +1047,21 @@ module `TB_CONV_ACCEL_CORE_MODULE;
             cfg_write(6'h06, run_pixels);
             cfg_write(6'h08, {7'd0, run_ofm_h[8:0], 7'd0, run_oy_base[8:0]});
             cfg_write(6'h09, run_pixel_base[23:0]);
+`ifdef TB_CONV_ACCEL_CORE_BATCH_STREAM
+            batch_first_fy = run_oy_base - CONV_PAD;
+            if (batch_first_fy < 0)
+                batch_first_fy = 0;
+            batch_last_fy = run_oy_base + run_ofm_h;
+            if (batch_last_fy >= FM_H)
+                batch_last_fy = FM_H - 1;
+            batch_ifm_tile_packets =
+                (batch_last_fy - batch_first_fy + 1) * K_PASSES * COUT_BLOCKS;
+            batch_ifm_tile_end_count = ps_line_fill_count + batch_ifm_tile_packets;
+            cfg_write(6'h19, 32'd1);
+            cfg_write(6'h1a, COUT_BLOCKS);
+            cfg_write(6'h1b, COUT_BLOCKS * K_PASSES);
+            cfg_write(6'h1c, batch_ifm_tile_packets);
+`endif
             ps_tile_start_count = ps_tile_start_count + 1;
 `ifdef TB_CONV_ACCEL_CORE_EARLY_PRINT
             $display("[EARLY] t=%0t run_tile%0d start", $time, tile_id);
@@ -1039,6 +1076,25 @@ module `TB_CONV_ACCEL_CORE_MODULE;
             while (cfg_read_data[1] != 1'b1 || cfg_read_data[0] != 1'b0)
                 cfg_read(6'h00, cfg_read_data);
             ps_done_seen_count = ps_done_seen_count + 1;
+`ifdef TB_CONV_ACCEL_CORE_BATCH_STREAM
+            cfg_read(6'h1d, cfg_read_data);
+            if (cfg_read_data != COUT_BLOCKS) begin
+                $display("[FAIL] batch bias packets got=%0d exp=%0d", cfg_read_data, COUT_BLOCKS);
+                fail = fail + 1;
+            end else pass = pass + 1;
+            cfg_read(6'h1e, cfg_read_data);
+            if (cfg_read_data != COUT_BLOCKS * K_PASSES) begin
+                $display("[FAIL] batch weight packets got=%0d exp=%0d",
+                         cfg_read_data, COUT_BLOCKS * K_PASSES);
+                fail = fail + 1;
+            end else pass = pass + 1;
+            cfg_read(6'h1f, cfg_read_data);
+            if (cfg_read_data != batch_ifm_tile_packets) begin
+                $display("[FAIL] batch IFM packets got=%0d exp=%0d",
+                         cfg_read_data, batch_ifm_tile_packets);
+                fail = fail + 1;
+            end else pass = pass + 1;
+`endif
 `ifdef TB_CONV_ACCEL_CORE_EARLY_PRINT
             $display("[EARLY] t=%0t run_tile%0d done status=0x%08h", $time, tile_id, cfg_read_data);
             $fflush();
@@ -1385,6 +1441,12 @@ module `TB_CONV_ACCEL_CORE_MODULE;
         ps_bias_service_count = 0;
         ps_weight_service_count = 0;
         ps_line_fill_count = 0;
+`ifdef TB_CONV_ACCEL_CORE_BATCH_STREAM
+        batch_ifm_tile_end_count = 0;
+        batch_ifm_tile_packets = 0;
+        batch_first_fy = 0;
+        batch_last_fy = 0;
+`endif
 `ifdef TB_CONV_ACCEL_CORE_USE_FULL_STREAM
         ifm_loader_write_count = 0;
         ifm_loader_advance_count = 0;

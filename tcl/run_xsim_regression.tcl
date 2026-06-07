@@ -94,6 +94,7 @@ set tests {
     {tb_conv_accel_core_axi_lite_axis_stream_pooling tb/tb_conv_accel_core_axi_lite_axis_stream_pooling.v}
     {tb_conv_accel_core_axi_lite_axis_stream_conv0_crop_pool_ext tb/tb_conv_accel_core_axi_lite_axis_stream_conv0_crop_pool_ext.v}
     {tb_conv_accel_core_axi_lite_axis_stream_conv0_crop_pool_r18_c8_b2_ext tb/tb_conv_accel_core_axi_lite_axis_stream_conv0_crop_pool_r18_c8_b2_ext.v}
+    {tb_conv_accel_core_axi_lite_axis_stream_conv0_crop_pool_r18_c8_b2_batch_ext tb/tb_conv_accel_core_axi_lite_axis_stream_conv0_crop_pool_r18_c8_b2_batch_ext.v}
     {tb_conv_accel_core_axi_lite_axis_stream_conv0_crop_pool_r18_c16_b2_ext tb/tb_conv_accel_core_axi_lite_axis_stream_conv0_crop_pool_r18_c16_b2_ext.v}
     {tb_conv_accel_core_axi_lite_axis_stream_conv0_fullwidth_tile2_ext tb/tb_conv_accel_core_axi_lite_axis_stream_conv0_fullwidth_tile2_ext.v diagnostic}
     {tb_conv_accel_core_axi_lite_axis_stream_input_zp tb/tb_conv_accel_core_axi_lite_axis_stream_input_zp.v}
@@ -131,6 +132,8 @@ set tests {
     {tb_ifm_fill_handshake tb/tb_ifm_fill_handshake.v}
     {tb_window_extract tb/tb_window_extract.v}
     {tb_axis_bias_weight_loader tb/tb_axis_bias_weight_loader.v}
+    {tb_axis_batch_stream_loaders tb/tb_axis_batch_stream_loaders.v}
+    {tb_axis_batch_stream_errors tb/tb_axis_batch_stream_errors.v}
     {tb_axis_ofm_byte_writer tb/tb_axis_ofm_byte_writer.v}
     {tb_ofm_packet_fifo tb/tb_ofm_packet_fifo.v}
     {tb_ofm_byte_stream_fifo tb/tb_ofm_byte_stream_fifo.v}

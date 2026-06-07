@@ -51,6 +51,17 @@
 #define CHAIN_KH              3U
 #define CHAIN_KW              3U
 
+#if ACCEL_BATCH_STREAM
+#define BATCH_BIAS_ADDR       0x18000000U
+#define BATCH_BIAS_CAPACITY   0x00010000U
+#define BATCH_WEIGHT_ADDR     0x18010000U
+#define BATCH_WEIGHT_CAPACITY 0x00800000U
+#define BATCH_IFM0_ADDR       0x18810000U
+#define BATCH_IFM1_ADDR       0x19C10000U
+#define BATCH_IFM_CAPACITY    0x01400000U
+#define BATCH_SCRATCH_END     0x1B010000U
+#endif
+
 #if ACCEL_CHAIN_CONV0_CONV9_DDR
 #define IMAGE_PACKAGE_ADDR    0x10000000U
 #define IMAGE_PACKAGE_MAGIC   0x4F4C4F59U
@@ -195,6 +206,10 @@ typedef struct {
     uint64_t hw_wait_ifm_cycles;
     uint64_t hw_wait_ofm_cycles;
     uint64_t hw_compute_cycles;
+    uint32_t dma_bias_starts;
+    uint32_t dma_weight_starts;
+    uint32_t dma_ifm_starts;
+    uint32_t dma_ofm_starts;
 } layer_perf_t;
 
 static layer_perf_t layer_perf;
@@ -674,18 +689,27 @@ static int channel_for_bank(const chain_layer_t *layer, uint32_t k_base, uint32_
     return -1;
 }
 
-static void pack_bias(const chain_layer_t *layer, uint32_t cout_base)
+static void pack_bias_to(const chain_layer_t *layer, uint32_t cout_base, uint64_t *dst)
 {
     for (uint32_t i = 0U; i < CHAIN_COUT_TILE; i += 2U) {
         uint32_t lo_co = cout_base + i;
         uint32_t hi_co = cout_base + i + 1U;
         uint32_t lo = (lo_co < layer->cout_total) ? (uint32_t)layer->bias_i32[lo_co] : 0U;
         uint32_t hi = (hi_co < layer->cout_total) ? (uint32_t)layer->bias_i32[hi_co] : 0U;
-        bias_buf[i / 2U] = ((uint64_t)hi << 32) | lo;
+        dst[i / 2U] = ((uint64_t)hi << 32) | lo;
     }
 }
 
-static void pack_weight(const chain_layer_t *layer, uint32_t k_base, uint32_t cout_base)
+static void pack_bias(const chain_layer_t *layer, uint32_t cout_base)
+{
+    pack_bias_to(layer, cout_base, bias_buf);
+}
+
+static void pack_weight_to(
+    const chain_layer_t *layer,
+    uint32_t k_base,
+    uint32_t cout_base,
+    uint64_t *dst)
 {
     uint32_t lane = 0U;
     uint64_t word = 0U;
@@ -700,7 +724,7 @@ static void pack_weight(const chain_layer_t *layer, uint32_t k_base, uint32_t co
             }
             word |= ((uint64_t)v) << (lane * 8U);
             if (lane == 7U) {
-                weight_buf[out++] = word;
+                dst[out++] = word;
                 word = 0U;
                 lane = 0U;
             } else {
@@ -710,7 +734,16 @@ static void pack_weight(const chain_layer_t *layer, uint32_t k_base, uint32_t co
     }
 }
 
-static void pack_ifm_line(const chain_layer_t *layer, int fy, uint32_t k_base)
+static void pack_weight(const chain_layer_t *layer, uint32_t k_base, uint32_t cout_base)
+{
+    pack_weight_to(layer, k_base, cout_base, weight_buf);
+}
+
+static void pack_ifm_line_to(
+    const chain_layer_t *layer,
+    int fy,
+    uint32_t k_base,
+    uint64_t *dst)
 {
     int channel[CHAIN_IFM_BANKS];
     const uint8_t *row = layer->ifm_u8 + (uint32_t)fy * layer->fm_w * layer->cin;
@@ -725,8 +758,13 @@ static void pack_ifm_line(const chain_layer_t *layer, int fy, uint32_t k_base)
             uint8_t v = (ch >= 0) ? row[x * layer->cin + (uint32_t)ch] : 0U;
             word |= ((uint64_t)v) << (b * 8U);
         }
-        ifm_buf[x] = word;
+        dst[x] = word;
     }
+}
+
+static void pack_ifm_line(const chain_layer_t *layer, int fy, uint32_t k_base)
+{
+    pack_ifm_line_to(layer, fy, k_base, ifm_buf);
 }
 
 static void dma_reset_named(const char *name, uint32_t base, uint32_t cr_off, uint32_t sr_off)
@@ -836,6 +874,116 @@ static uint32_t expected_ifm_services_for_tile(const chain_layer_t *layer, const
     return (uint32_t)(last_fy - first_fy + 1) * layer->k_passes * layer->cout_blocks;
 }
 
+#if ACCEL_BATCH_STREAM
+typedef struct {
+    uint64_t *words;
+    uint32_t bytes;
+    uint32_t packets;
+} batch_ifm_stream_t;
+
+static int batch_check_layout(void)
+{
+    if (BATCH_BIAS_ADDR + BATCH_BIAS_CAPACITY != BATCH_WEIGHT_ADDR ||
+        BATCH_WEIGHT_ADDR + BATCH_WEIGHT_CAPACITY != BATCH_IFM0_ADDR ||
+        BATCH_IFM0_ADDR + BATCH_IFM_CAPACITY != BATCH_IFM1_ADDR ||
+        BATCH_IFM1_ADDR + BATCH_IFM_CAPACITY != BATCH_SCRATCH_END) {
+        xil_printf("batch scratch layout overlap\r\n");
+        return -1;
+    }
+#if ACCEL_CHAIN_CONV0_CONV9_DDR
+    if (IMAGE_PACKAGE_ADDR + IMAGE_PACKAGE_HEADER_BYTES + 416U * 416U * 3U > BATCH_BIAS_ADDR) {
+        xil_printf("batch scratch overlaps image package\r\n");
+        return -1;
+    }
+#endif
+    return 0;
+}
+
+static int pack_batch_bias_stream(const chain_layer_t *layer, uint32_t *bytes_out)
+{
+    uint64_t *dst = (uint64_t *)(UINTPTR)BATCH_BIAS_ADDR;
+    const uint32_t packet_bytes = CHAIN_COUT_TILE * sizeof(int32_t);
+    const uint32_t total_bytes = layer->cout_blocks * packet_bytes;
+    if (total_bytes > BATCH_BIAS_CAPACITY) {
+        xil_printf("%s batch bias overflow bytes=%lu cap=%lu\r\n",
+                   layer->name, (unsigned long)total_bytes,
+                   (unsigned long)BATCH_BIAS_CAPACITY);
+        return -1;
+    }
+    for (uint32_t cb = 0U; cb < layer->cout_blocks; ++cb) {
+        pack_bias_to(layer, cb * CHAIN_COUT_TILE, dst);
+        dst += packet_bytes / sizeof(uint64_t);
+    }
+    *bytes_out = total_bytes;
+    return 0;
+}
+
+static int pack_batch_weight_stream(const chain_layer_t *layer, uint32_t *bytes_out)
+{
+    uint64_t *dst = (uint64_t *)(UINTPTR)BATCH_WEIGHT_ADDR;
+    const uint32_t packet_bytes = CHAIN_ROWS * CHAIN_COUT_TILE;
+    const uint32_t total_packets = layer->cout_blocks * layer->k_passes;
+    const uint32_t total_bytes = total_packets * packet_bytes;
+    if (total_bytes > BATCH_WEIGHT_CAPACITY) {
+        xil_printf("%s batch weight overflow bytes=%lu cap=%lu\r\n",
+                   layer->name, (unsigned long)total_bytes,
+                   (unsigned long)BATCH_WEIGHT_CAPACITY);
+        return -1;
+    }
+    for (uint32_t cb = 0U; cb < layer->cout_blocks; ++cb) {
+        uint32_t cout_base = cb * CHAIN_COUT_TILE;
+        for (uint32_t kp = 0U; kp < layer->k_passes; ++kp) {
+            pack_weight_to(layer, kp * CHAIN_ROWS, cout_base, dst);
+            dst += packet_bytes / sizeof(uint64_t);
+        }
+    }
+    *bytes_out = total_bytes;
+    return 0;
+}
+
+static int pack_batch_ifm_stream(
+    const chain_layer_t *layer,
+    const chain_tile_t *tile,
+    uint32_t address,
+    batch_ifm_stream_t *stream)
+{
+    uint64_t *dst = (uint64_t *)(UINTPTR)address;
+    int first_fy = (int)tile->tile_oy_base - 1;
+    int last_fy = (int)tile->tile_oy_base + (int)tile->tile_ofm_h;
+    uint32_t packets;
+    uint32_t total_bytes;
+
+    if (first_fy < 0) {
+        first_fy = 0;
+    }
+    if (last_fy >= (int)layer->fm_h) {
+        last_fy = (int)layer->fm_h - 1;
+    }
+    packets = expected_ifm_services_for_tile(layer, tile);
+    total_bytes = packets * layer->fm_w * sizeof(uint64_t);
+    if (total_bytes > BATCH_IFM_CAPACITY) {
+        xil_printf("%s batch IFM overflow bytes=%lu cap=%lu\r\n",
+                   layer->name, (unsigned long)total_bytes,
+                   (unsigned long)BATCH_IFM_CAPACITY);
+        return -1;
+    }
+
+    for (uint32_t cb = 0U; cb < layer->cout_blocks; ++cb) {
+        for (uint32_t kp = 0U; kp < layer->k_passes; ++kp) {
+            uint32_t k_base = kp * CHAIN_ROWS;
+            for (int fy = first_fy; fy <= last_fy; ++fy) {
+                pack_ifm_line_to(layer, fy, k_base, dst);
+                dst += layer->fm_w;
+            }
+        }
+    }
+    stream->words = (uint64_t *)(UINTPTR)address;
+    stream->bytes = total_bytes;
+    stream->packets = packets;
+    return 0;
+}
+#endif
+
 static int service_bias(const chain_layer_t *layer, uint32_t cout_base)
 {
     XTime begin;
@@ -848,6 +996,7 @@ static int service_bias(const chain_layer_t *layer, uint32_t cout_base)
 
     XTime_GetTime(&begin);
     dma_start_mm2s(DMA_BIAS_BASE_ADDR, bias_buf, sizeof(bias_buf));
+    ++layer_perf.dma_bias_starts;
     if (dma_wait(DMA_BIAS_BASE_ADDR, DMA_MM2S_DMASR, "bias MM2S") != 0) {
         return -1;
     }
@@ -877,6 +1026,7 @@ static int service_weight(const chain_layer_t *layer, uint32_t *next_k_pass, uin
 
     XTime_GetTime(&begin);
     dma_start_mm2s(DMA_WEIGHT_BASE_ADDR, weight_buf, sizeof(weight_buf));
+    ++layer_perf.dma_weight_starts;
     if (dma_wait(DMA_WEIGHT_BASE_ADDR, DMA_MM2S_DMASR, "weight MM2S") != 0) {
         return -1;
     }
@@ -910,6 +1060,7 @@ static int service_ifm(const chain_layer_t *layer, uint32_t status, uint32_t act
 
     XTime_GetTime(&begin);
     dma_start_mm2s(DMA_IFM_BASE_ADDR, ifm_buf, layer->fm_w * sizeof(ifm_buf[0]));
+    ++layer_perf.dma_ifm_starts;
     if (dma_wait(DMA_IFM_BASE_ADDR, DMA_MM2S_DMASR, "ifm MM2S") != 0) {
         return -1;
     }
@@ -989,6 +1140,13 @@ static void print_layer_perf(const chain_layer_t *layer)
         (unsigned long long)layer_perf.hw_wait_ifm_cycles,
         (unsigned long long)layer_perf.hw_wait_ofm_cycles,
         (unsigned long long)compute_permille);
+    xil_printf(
+        "DMASTAT layer=%s bias_starts=%lu weight_starts=%lu ifm_starts=%lu ofm_starts=%lu\r\n",
+        layer->name,
+        (unsigned long)layer_perf.dma_bias_starts,
+        (unsigned long)layer_perf.dma_weight_starts,
+        (unsigned long)layer_perf.dma_ifm_starts,
+        (unsigned long)layer_perf.dma_ofm_starts);
 }
 
 static void clear_ofm(uint8_t *ofm, uint32_t bytes)
@@ -1106,6 +1264,7 @@ static int run_one_tile(const chain_layer_t *layer, const chain_tile_t *tile, ui
 
     XTime_GetTime(&begin);
     dma_start_s2mm(DMA_OFM_BASE_ADDR, ofm_axis_buf, tile->expected_ofm_bytes * OFM_AXIS_BEAT_BYTES);
+    ++layer_perf.dma_ofm_starts;
     XTime_GetTime(&end);
     layer_perf.ofm_dma += end - begin;
     wr32(ACCEL_BASE_ADDR, ACCEL_CTRL, 1U);
@@ -1235,6 +1394,203 @@ static int run_one_tile(const chain_layer_t *layer, const chain_tile_t *tile, ui
     return 0;
 }
 
+#if ACCEL_BATCH_STREAM
+static int run_one_tile_batch(
+    const chain_layer_t *layer,
+    const chain_tile_t *tile,
+    uint32_t tile_index,
+    uint32_t bias_bytes,
+    uint32_t weight_bytes,
+    const batch_ifm_stream_t *ifm_stream,
+    const chain_tile_t *next_tile,
+    uint32_t next_ifm_address,
+    batch_ifm_stream_t *next_ifm_stream,
+    uint32_t *total_bias,
+    uint32_t *total_weight,
+    uint32_t *total_ifm)
+{
+    uint32_t expected_bias = layer->cout_blocks;
+    uint32_t expected_weight = layer->cout_blocks * layer->k_passes;
+    uint32_t expected_ifm = expected_ifm_services_for_tile(layer, tile);
+    uint32_t dbg_core_base;
+    uint32_t dbg_axis_base;
+    uint32_t dbg_tlast_base;
+    uint32_t dbg_last_base;
+    XTime begin;
+    XTime end;
+    XTime tile_begin;
+    XTime tile_end;
+
+    if (ifm_stream->packets != expected_ifm) {
+        xil_printf("%s batch IFM packet mismatch prepared=%lu expected=%lu\r\n",
+                   layer->name, (unsigned long)ifm_stream->packets,
+                   (unsigned long)expected_ifm);
+        return -1;
+    }
+
+    trace_printf("%s batch tile[%lu] oy=%lu h=%lu b=%lu w=%lu i=%lu\r\n",
+                 layer->name, (unsigned long)tile_index,
+                 (unsigned long)tile->tile_oy_base,
+                 (unsigned long)tile->tile_ofm_h,
+                 (unsigned long)expected_bias,
+                 (unsigned long)expected_weight,
+                 (unsigned long)expected_ifm);
+    XTime_GetTime(&tile_begin);
+
+    wr32(ACCEL_BASE_ADDR, ACCEL_NUM_PIXELS, tile->tile_pixels);
+    wr32(ACCEL_BASE_ADDR, ACCEL_TILE_ROWS, (tile->tile_ofm_h << 16) | tile->tile_oy_base);
+    wr32(ACCEL_BASE_ADDR, ACCEL_PIXEL_BASE, tile->tile_pixel_base);
+    wr32(ACCEL_BASE_ADDR, ACCEL_EXPECTED_BYTES, tile->expected_ofm_bytes);
+    wr32(ACCEL_BASE_ADDR, ACCEL_STREAM_BIAS_PACKETS, expected_bias);
+    wr32(ACCEL_BASE_ADDR, ACCEL_STREAM_WEIGHT_PACKETS, expected_weight);
+    wr32(ACCEL_BASE_ADDR, ACCEL_STREAM_IFM_PACKETS, expected_ifm);
+
+    dbg_core_base = rd32(ACCEL_BASE_ADDR, ACCEL_DBG_CORE_WR);
+    dbg_axis_base = rd32(ACCEL_BASE_ADDR, ACCEL_DBG_AXIS_WR);
+    dbg_tlast_base = rd32(ACCEL_BASE_ADDR, ACCEL_DBG_TLASTS);
+    dbg_last_base = rd32(ACCEL_BASE_ADDR, ACCEL_DBG_LAST_END);
+
+    XTime_GetTime(&begin);
+    dma_start_s2mm(DMA_OFM_BASE_ADDR, ofm_axis_buf, tile->expected_ofm_bytes * OFM_AXIS_BEAT_BYTES);
+    ++layer_perf.dma_ofm_starts;
+    XTime_GetTime(&end);
+    layer_perf.ofm_dma += end - begin;
+
+    XTime_GetTime(&begin);
+    dma_start_mm2s(DMA_BIAS_BASE_ADDR, (const void *)(UINTPTR)BATCH_BIAS_ADDR, bias_bytes);
+    ++layer_perf.dma_bias_starts;
+    XTime_GetTime(&end);
+    layer_perf.bias_dma += end - begin;
+    XTime_GetTime(&begin);
+    dma_start_mm2s(DMA_WEIGHT_BASE_ADDR, (const void *)(UINTPTR)BATCH_WEIGHT_ADDR, weight_bytes);
+    ++layer_perf.dma_weight_starts;
+    XTime_GetTime(&end);
+    layer_perf.weight_dma += end - begin;
+    XTime_GetTime(&begin);
+    dma_start_mm2s(DMA_IFM_BASE_ADDR, ifm_stream->words, ifm_stream->bytes);
+    ++layer_perf.dma_ifm_starts;
+    XTime_GetTime(&end);
+    layer_perf.ifm_dma += end - begin;
+
+    wr32(ACCEL_BASE_ADDR, ACCEL_CTRL, 1U);
+
+    if (next_tile != 0) {
+        XTime_GetTime(&begin);
+        if (pack_batch_ifm_stream(
+                layer, next_tile, next_ifm_address, next_ifm_stream) != 0) {
+            return -1;
+        }
+        XTime_GetTime(&end);
+        layer_perf.ifm_pack += end - begin;
+    }
+
+    int done_seen = 0;
+    for (uint32_t loops = 0U; loops < 80000000U; ++loops) {
+        uint32_t ctrl = rd32(ACCEL_BASE_ADDR, ACCEL_CTRL);
+        uint32_t st = rd32(GPIO_BASE_ADDR, GPIO2_DATA);
+        debug_value = st;
+        if ((st & ST_ERROR_MASK) != 0U) {
+            xil_printf("%s batch AXIS protocol error gpio2=0x%08lx\r\n",
+                       layer->name, (unsigned long)st);
+            return -1;
+        }
+        if (((ctrl & 0x2U) != 0U) && ((ctrl & 0x1U) == 0U)) {
+            done_seen = 1;
+            break;
+        }
+    }
+    if (!done_seen) {
+        xil_printf("%s batch accelerator timeout tile=%lu ctrl=0x%08lx gpio2=0x%08lx\r\n",
+                   layer->name, (unsigned long)tile_index,
+                   (unsigned long)rd32(ACCEL_BASE_ADDR, ACCEL_CTRL),
+                   (unsigned long)rd32(GPIO_BASE_ADDR, GPIO2_DATA));
+        return -1;
+    }
+
+    XTime_GetTime(&begin);
+    if (dma_wait(DMA_BIAS_BASE_ADDR, DMA_MM2S_DMASR, "batch bias MM2S") != 0) {
+        return -1;
+    }
+    XTime_GetTime(&end);
+    layer_perf.bias_sync += end - begin;
+    XTime_GetTime(&begin);
+    if (dma_wait(DMA_WEIGHT_BASE_ADDR, DMA_MM2S_DMASR, "batch weight MM2S") != 0) {
+        return -1;
+    }
+    XTime_GetTime(&end);
+    layer_perf.weight_sync += end - begin;
+    XTime_GetTime(&begin);
+    if (dma_wait(DMA_IFM_BASE_ADDR, DMA_MM2S_DMASR, "batch IFM MM2S") != 0) {
+        return -1;
+    }
+    XTime_GetTime(&end);
+    layer_perf.ifm_sync += end - begin;
+    XTime_GetTime(&begin);
+    if (dma_wait(DMA_OFM_BASE_ADDR, DMA_S2MM_DMASR, "ofm S2MM") != 0) {
+        return -1;
+    }
+    XTime_GetTime(&end);
+    layer_perf.ofm_dma += end - begin;
+
+    uint32_t actual_bias = rd32(ACCEL_BASE_ADDR, ACCEL_STREAM_BIAS_DONE);
+    uint32_t actual_weight = rd32(ACCEL_BASE_ADDR, ACCEL_STREAM_WEIGHT_DONE);
+    uint32_t actual_ifm = rd32(ACCEL_BASE_ADDR, ACCEL_STREAM_IFM_DONE);
+    if (actual_bias != expected_bias ||
+        actual_weight != expected_weight ||
+        actual_ifm != expected_ifm) {
+        xil_printf("%s batch packet mismatch got b=%lu w=%lu i=%lu expected b=%lu w=%lu i=%lu\r\n",
+                   layer->name,
+                   (unsigned long)actual_bias,
+                   (unsigned long)actual_weight,
+                   (unsigned long)actual_ifm,
+                   (unsigned long)expected_bias,
+                   (unsigned long)expected_weight,
+                   (unsigned long)expected_ifm);
+        return -1;
+    }
+
+    uint32_t dbg_core_delta = rd32(ACCEL_BASE_ADDR, ACCEL_DBG_CORE_WR) - dbg_core_base;
+    uint32_t dbg_axis_delta = rd32(ACCEL_BASE_ADDR, ACCEL_DBG_AXIS_WR) - dbg_axis_base;
+    uint32_t dbg_tlast_delta = rd32(ACCEL_BASE_ADDR, ACCEL_DBG_TLASTS) - dbg_tlast_base;
+    uint32_t dbg_last_delta = rd32(ACCEL_BASE_ADDR, ACCEL_DBG_LAST_END) - dbg_last_base;
+    if (dbg_core_delta != tile->expected_ofm_bytes ||
+        dbg_axis_delta != tile->expected_ofm_bytes ||
+        dbg_tlast_delta != 1U ||
+        dbg_last_delta != tile->expected_ofm_bytes) {
+        xil_printf("%s batch unexpected OFM debug delta core=%lu axis=%lu tlast=%lu last=%lu\r\n",
+                   layer->name,
+                   (unsigned long)dbg_core_delta,
+                   (unsigned long)dbg_axis_delta,
+                   (unsigned long)dbg_tlast_delta,
+                   (unsigned long)dbg_last_delta);
+        return -1;
+    }
+
+    layer_perf.hw_busy_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_PERF_BUSY);
+    layer_perf.hw_wait_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_PERF_WAIT_ANY);
+    layer_perf.hw_wait_bias_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_PERF_WAIT_BIAS);
+    layer_perf.hw_wait_weight_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_PERF_WAIT_WEIGHT);
+    layer_perf.hw_wait_ifm_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_PERF_WAIT_IFM);
+    layer_perf.hw_wait_ofm_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_PERF_WAIT_OFM);
+    layer_perf.hw_compute_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_PERF_COMPUTE);
+
+    wr32(ACCEL_BASE_ADDR, ACCEL_CTRL, 2U);
+    *total_bias += actual_bias;
+    *total_weight += actual_weight;
+    *total_ifm += actual_ifm;
+
+    XTime_GetTime(&begin);
+    if (parse_ofm_tile(layer, tile) != 0) {
+        return -1;
+    }
+    XTime_GetTime(&end);
+    layer_perf.ofm_parse += end - begin;
+    XTime_GetTime(&tile_end);
+    layer_perf.tile_total += tile_end - tile_begin;
+    return 0;
+}
+#endif
+
 static int configure_layer(const chain_layer_t *layer)
 {
     if ((rd32(ACCEL_BASE_ADDR, ACCEL_CTRL) & 0x1U) != 0U) {
@@ -1252,10 +1608,38 @@ static int configure_layer(const chain_layer_t *layer)
     wr32(ACCEL_BASE_ADDR, ACCEL_ACT_CFG, 2U);
     wr32(ACCEL_BASE_ADDR, ACCEL_IFM_ZP, layer->input_zero_point);
     wr32(ACCEL_BASE_ADDR, ACCEL_POOL_CFG, (layer->pool_stride << 2) | layer->pool_enable);
+    wr32(ACCEL_BASE_ADDR, ACCEL_STREAM_CFG, ACCEL_BATCH_STREAM ? 1U : 0U);
     if (program_quant_tile(layer) != 0) {
         return -1;
     }
     return program_activation_lut(layer);
+}
+
+static const chain_tile_t *get_layer_tile(
+    const chain_layer_t *layer,
+    uint32_t index,
+    chain_tile_t *dynamic_tile)
+{
+    if (layer->tiles != 0) {
+        return &layer->tiles[index];
+    }
+
+    uint32_t tile_oy_base = index * layer->dynamic_tile_ofm_h;
+    uint32_t tile_ofm_h = layer->ofm_h - tile_oy_base;
+    uint32_t final_w = layer->pool_enable ? layer->ofm_w / layer->pool_stride : layer->ofm_w;
+    uint32_t final_oy_base = layer->pool_enable ? tile_oy_base / layer->pool_stride : tile_oy_base;
+    uint32_t final_tile_h;
+    if (tile_ofm_h > layer->dynamic_tile_ofm_h) {
+        tile_ofm_h = layer->dynamic_tile_ofm_h;
+    }
+    final_tile_h = layer->pool_enable ? tile_ofm_h / layer->pool_stride : tile_ofm_h;
+    dynamic_tile->name = layer->name;
+    dynamic_tile->tile_oy_base = tile_oy_base;
+    dynamic_tile->tile_ofm_h = tile_ofm_h;
+    dynamic_tile->tile_pixel_base = final_oy_base * final_w;
+    dynamic_tile->tile_pixels = layer->ofm_w * tile_ofm_h;
+    dynamic_tile->expected_ofm_bytes = final_w * final_tile_h * layer->cout_total;
+    return dynamic_tile;
 }
 
 static int run_layer(chain_layer_t *layer)
@@ -1287,33 +1671,66 @@ static int run_layer(chain_layer_t *layer)
     clear_ofm(layer->ofm_u8, layer->total_expected_ofm_bytes);
     XTime_GetTime(&end);
     layer_perf.clear += end - begin;
+#if ACCEL_BATCH_STREAM
+    uint32_t batch_bias_bytes;
+    uint32_t batch_weight_bytes;
+    batch_ifm_stream_t current_ifm_stream;
+    batch_ifm_stream_t next_ifm_stream;
+    chain_tile_t first_tile_storage;
+    const chain_tile_t *first_tile =
+        get_layer_tile(layer, 0U, &first_tile_storage);
+
+    XTime_GetTime(&begin);
+    if (pack_batch_bias_stream(layer, &batch_bias_bytes) != 0) {
+        return -1;
+    }
+    XTime_GetTime(&end);
+    layer_perf.bias_pack += end - begin;
+    XTime_GetTime(&begin);
+    if (pack_batch_weight_stream(layer, &batch_weight_bytes) != 0) {
+        return -1;
+    }
+    XTime_GetTime(&end);
+    layer_perf.weight_pack += end - begin;
+    XTime_GetTime(&begin);
+    if (pack_batch_ifm_stream(
+            layer, first_tile, BATCH_IFM0_ADDR, &current_ifm_stream) != 0) {
+        return -1;
+    }
+    XTime_GetTime(&end);
+    layer_perf.ifm_pack += end - begin;
+
+    for (uint32_t i = 0U; i < layer->tile_count; ++i) {
+        chain_tile_t tile_storage;
+        chain_tile_t next_tile_storage;
+        const chain_tile_t *tile = get_layer_tile(layer, i, &tile_storage);
+        const chain_tile_t *next_tile =
+            (i + 1U < layer->tile_count) ?
+            get_layer_tile(layer, i + 1U, &next_tile_storage) : 0;
+        uint32_t next_ifm_address =
+            (current_ifm_stream.words == (uint64_t *)(UINTPTR)BATCH_IFM0_ADDR) ?
+            BATCH_IFM1_ADDR : BATCH_IFM0_ADDR;
+        if (run_one_tile_batch(
+                layer, tile, i,
+                batch_bias_bytes, batch_weight_bytes,
+                &current_ifm_stream,
+                next_tile, next_ifm_address, &next_ifm_stream,
+                &total_bias, &total_weight, &total_ifm) != 0) {
+            return -1;
+        }
+        if (next_tile != 0) {
+            current_ifm_stream = next_ifm_stream;
+        }
+    }
+#else
     for (uint32_t i = 0U; i < layer->tile_count; ++i) {
         chain_tile_t dynamic_tile;
-        const chain_tile_t *tile;
-        if (layer->tiles == 0) {
-            uint32_t tile_oy_base = i * layer->dynamic_tile_ofm_h;
-            uint32_t tile_ofm_h = layer->ofm_h - tile_oy_base;
-            uint32_t final_w = layer->pool_enable ? layer->ofm_w / layer->pool_stride : layer->ofm_w;
-            uint32_t final_oy_base = layer->pool_enable ? tile_oy_base / layer->pool_stride : tile_oy_base;
-            uint32_t final_tile_h;
-            if (tile_ofm_h > layer->dynamic_tile_ofm_h) {
-                tile_ofm_h = layer->dynamic_tile_ofm_h;
-            }
-            final_tile_h = layer->pool_enable ? tile_ofm_h / layer->pool_stride : tile_ofm_h;
-            dynamic_tile.name = layer->name;
-            dynamic_tile.tile_oy_base = tile_oy_base;
-            dynamic_tile.tile_ofm_h = tile_ofm_h;
-            dynamic_tile.tile_pixel_base = final_oy_base * final_w;
-            dynamic_tile.tile_pixels = layer->ofm_w * tile_ofm_h;
-            dynamic_tile.expected_ofm_bytes = final_w * final_tile_h * layer->cout_total;
-            tile = &dynamic_tile;
-        } else {
-            tile = &layer->tiles[i];
-        }
+        const chain_tile_t *tile = get_layer_tile(layer, i, &dynamic_tile);
         if (run_one_tile(layer, tile, i, &total_bias, &total_weight, &total_ifm) != 0) {
             return -1;
         }
     }
+#endif
     trace_printf("%s total services bias=%lu weight=%lu ifm=%lu\r\n",
                  layer->name, (unsigned long)total_bias,
                  (unsigned long)total_weight, (unsigned long)total_ifm);
@@ -1471,6 +1888,12 @@ static int decode_and_print_conv9(void)
 int main(void)
 {
     xil_printf("\r\n%s\r\n", CHAIN_SMOKE_NAME);
+#if ACCEL_BATCH_STREAM
+    if (batch_check_layout() != 0) {
+        xil_printf("FAIL: batch scratch layout invalid\r\n");
+        return -1;
+    }
+#endif
 #if ACCEL_CHAIN_CONV0_CONV9_DDR
     if (validate_image_package() != 0) {
         xil_printf("FAIL: DDR image package validation failed\r\n");

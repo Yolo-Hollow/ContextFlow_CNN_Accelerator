@@ -35,6 +35,13 @@
 #define ACCEL_PERF_WAIT_IFM   0x58U
 #define ACCEL_PERF_WAIT_OFM   0x5cU
 #define ACCEL_PERF_COMPUTE    0x60U
+#define ACCEL_STREAM_CFG      0x64U
+#define ACCEL_STREAM_BIAS_PACKETS 0x68U
+#define ACCEL_STREAM_WEIGHT_PACKETS 0x6cU
+#define ACCEL_STREAM_IFM_PACKETS 0x70U
+#define ACCEL_STREAM_BIAS_DONE 0x74U
+#define ACCEL_STREAM_WEIGHT_DONE 0x78U
+#define ACCEL_STREAM_IFM_DONE 0x7cU
 #define ACCEL_QUANT_ADDR      0x80U
 #define ACCEL_QUANT_DATA      0x84U
 #define ACCEL_LUT_ADDR        0x88U
@@ -78,6 +85,10 @@
 #define ST_FILL_FY_SHIFT      7U
 #define ST_FILL_FY_MASK       (0x1ffU << ST_FILL_FY_SHIFT)
 #define ST_ERROR_MASK         (ST_BIAS_ERR | ST_WEIGHT_ERR | ST_IFM_ERR)
+
+#ifndef ACCEL_BATCH_STREAM
+#define ACCEL_BATCH_STREAM    0
+#endif
 
 /* Mirrors tb_conv_accel_core_axi_lite_axis_stream_r18_c8_smoke.v. */
 #ifndef ACCEL_SMOKE_REAL_CONV0_CROP_POOL

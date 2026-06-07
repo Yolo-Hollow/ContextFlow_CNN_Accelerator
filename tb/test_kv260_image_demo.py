@@ -90,6 +90,10 @@ def main():
             "nonwait_cycles=150 compute_cycles=90 bias_wait_cycles=2 "
             "weight_wait_cycles=18 ifm_wait_cycles=130 ofm_wait_cycles=0 "
             "compute_permille=300\n"
+            "DMASTAT layer=conv0 bias_starts=1 weight_starts=2 "
+            "ifm_starts=3 ofm_starts=1\n"
+            "DMASTAT layer=conv1 bias_starts=1 weight_starts=2 "
+            "ifm_starts=3 ofm_starts=1\n"
         )
         assert summary["layer_count"] == 2
         assert summary["total_microseconds"] == 300
@@ -97,6 +101,10 @@ def main():
         assert summary["categories"][0]["microseconds"] == 150
         assert summary["hardware"]["busy_cycles"] == 400
         assert summary["hardware"]["compute_percent"] == 25.0
+        assert summary["dma"]["bias_starts"] == 2
+        assert summary["dma"]["weight_starts"] == 4
+        assert summary["dma"]["ifm_starts"] == 6
+        assert summary["dma"]["ofm_starts"] == 2
 
     print("PASS: KV260 runtime image package and visualization tests")
 

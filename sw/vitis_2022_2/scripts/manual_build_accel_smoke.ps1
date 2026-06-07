@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("r18_c8", "conv0_crop_pool", "conv0_crop_pool_tiles", "layer06_tile4", "layer06_tiles", "layer06_pool_tiles", "conv4_pool_tiles", "conv3_conv4_chain", "conv4_conv5_chain", "conv0_conv4_chain", "conv0_conv5_chain", "conv0_conv6_chain", "conv0_conv7_chain", "conv0_conv8_chain", "conv0_conv9_chain", "conv0_conv9_ddr_demo")]
+    [ValidateSet("r18_c8", "conv0_crop_pool", "conv0_crop_pool_tiles", "layer06_tile4", "layer06_tiles", "layer06_pool_tiles", "conv4_pool_tiles", "conv3_conv4_chain", "conv4_conv5_chain", "conv0_conv4_chain", "conv0_conv5_chain", "conv0_conv6_chain", "conv0_conv7_chain", "conv0_conv8_chain", "conv0_conv9_chain", "conv0_conv9_batch_chain", "conv0_conv9_ddr_demo")]
     [string]$Mode = "r18_c8"
 )
 
@@ -243,9 +243,12 @@ if ($Mode -eq "conv0_conv8_chain") {
         & $Python @Args
     }
 }
-if ($Mode -eq "conv0_conv9_chain" -or $Mode -eq "conv0_conv9_ddr_demo") {
+if ($Mode -eq "conv0_conv9_chain" -or $Mode -eq "conv0_conv9_batch_chain" -or $Mode -eq "conv0_conv9_ddr_demo") {
     $Source = Join-Path $AppSrcDir "main_conv3_conv4_chain.c"
     $Defines += "-DACCEL_CHAIN_CONV0_CONV9=1"
+    if ($Mode -eq "conv0_conv9_batch_chain" -or $Mode -eq "conv0_conv9_ddr_demo") {
+        $Defines += "-DACCEL_BATCH_STREAM=1"
+    }
     if ($Mode -eq "conv0_conv9_ddr_demo") {
         $Defines += "-DACCEL_CHAIN_CONV0_CONV9_DDR=1"
         $Defines += "-DACCEL_PERF_ONLY=1"
@@ -281,14 +284,14 @@ if ($Mode -eq "conv0_conv9_chain" -or $Mode -eq "conv0_conv9_ddr_demo") {
     }
 }
 
-$Optimization = if ($Mode -eq "conv0_conv9_ddr_demo") { "-O2" } else { "-O0" }
+$Optimization = if ($Mode -eq "conv0_conv9_ddr_demo" -or $Mode -eq "conv0_conv9_batch_chain") { "-O2" } else { "-O0" }
 & $Gcc -Wall $Optimization -g3 -c -DARMA53_64 @Defines -I $BspInclude -I $AppSrcDir $Source -o $Obj
 if ($LASTEXITCODE -ne 0) {
     throw "Failed to compile $Source"
 }
 $Objects = @($Obj)
 $Libraries = "-Wl,--start-group,-lxil,-lgcc,-lc,--end-group"
-if ($Mode -eq "conv0_conv9_chain" -or $Mode -eq "conv0_conv9_ddr_demo") {
+if ($Mode -eq "conv0_conv9_chain" -or $Mode -eq "conv0_conv9_batch_chain" -or $Mode -eq "conv0_conv9_ddr_demo") {
     & $Gcc -Wall $Optimization -g3 -c -DARMA53_64 -I $BspInclude -I $AppSrcDir `
         (Join-Path $AppSrcDir "yolo_decode.c") -o $DecodeObj
     if ($LASTEXITCODE -ne 0) {

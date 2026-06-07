@@ -21,6 +21,9 @@ module axis_ifm_line_loader #(
 ) (
     input  clk,
     input  rst,
+    input  stream_reset,
+    input  batch_mode,
+    input  [31:0] expected_packets,
 
     input  [AW-1:0] fm_w,
     input           fill_req,
@@ -40,13 +43,18 @@ module axis_ifm_line_loader #(
     output          dma_line_advance,
 
     output reg      tkeep_error,
-    output reg      tlast_error
+    output reg      tlast_error,
+    output reg [31:0] completed_packets
 );
     reg active;
+    reg req_armed;
     reg [AW-1:0] beat_count;
     wire [7:0] line_s_data [0:BANKS-1];
     wire axis_fire = s_axis_tvalid && s_axis_tready;
     wire expected_last = active && (beat_count == fm_w - 1'b1);
+    wire expected_stream_last =
+        !batch_mode || (completed_packets + 1'b1 == expected_packets);
+    wire accepted_fill_req = fill_req && req_armed;
 
     genvar db;
     generate
@@ -59,7 +67,7 @@ module axis_ifm_line_loader #(
         .clk(clk),
         .rst(rst),
         .fm_w(fm_w),
-        .fill_req(fill_req),
+        .fill_req(accepted_fill_req),
         .fill_fy(fill_fy),
         .input_zero_point(input_zero_point),
         .line_s_ready(s_axis_tready),
@@ -75,28 +83,37 @@ module axis_ifm_line_loader #(
     always @(posedge clk) begin
         if (rst) begin
             active <= 1'b0;
+            req_armed <= 1'b1;
             beat_count <= {AW{1'b0}};
             tkeep_error <= 1'b0;
             tlast_error <= 1'b0;
+            completed_packets <= 32'd0;
         end else begin
-            if (!active && fill_req && (fm_w != {AW{1'b0}})) begin
+            if (!fill_req)
+                req_armed <= 1'b1;
+
+            if (!active && accepted_fill_req && (fm_w != {AW{1'b0}})) begin
                 active <= 1'b1;
+                req_armed <= 1'b0;
                 beat_count <= {AW{1'b0}};
             end
 
             if (axis_fire) begin
                 if (s_axis_tkeep[BANKS-1:0] != {BANKS{1'b1}})
                     tkeep_error <= 1'b1;
-                if (s_axis_tlast != expected_last)
+                if (s_axis_tlast != (expected_last && expected_stream_last))
                     tlast_error <= 1'b1;
 
                 if (expected_last) begin
                     active <= 1'b0;
                     beat_count <= {AW{1'b0}};
+                    completed_packets <= completed_packets + 1'b1;
                 end else begin
                     beat_count <= beat_count + 1'b1;
                 end
             end
+            if (stream_reset)
+                completed_packets <= 32'd0;
         end
     end
 endmodule

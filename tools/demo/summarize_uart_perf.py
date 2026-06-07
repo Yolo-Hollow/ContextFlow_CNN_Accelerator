@@ -5,6 +5,7 @@ from pathlib import Path
 
 PERF_PREFIX = "PERF "
 HWPERF_PREFIX = "HWPERF "
+DMASTAT_PREFIX = "DMASTAT "
 
 
 def parse_metric_line(line, prefix):
@@ -83,6 +84,21 @@ def summarize_perf(log_text):
             ),
         }
 
+    dma_layers = [
+        parse_metric_line(line.strip(), DMASTAT_PREFIX)
+        for line in log_text.splitlines()
+        if line.strip().startswith(DMASTAT_PREFIX)
+    ]
+    dma = None
+    if dma_layers:
+        dma = {
+            "layers": dma_layers,
+            "bias_starts": sum(layer["bias_starts"] for layer in dma_layers),
+            "weight_starts": sum(layer["weight_starts"] for layer in dma_layers),
+            "ifm_starts": sum(layer["ifm_starts"] for layer in dma_layers),
+            "ofm_starts": sum(layer["ofm_starts"] for layer in dma_layers),
+        }
+
     return {
         "layer_count": len(layers),
         "total_microseconds": total_us,
@@ -90,6 +106,7 @@ def summarize_perf(log_text):
         "layers": layers,
         "categories": categories,
         "hardware": hardware,
+        "dma": dma,
     }
 
 
@@ -111,6 +128,13 @@ def print_summary(summary):
             f"busy={hardware['busy_cycles']} cycles "
             f"compute={hardware['compute_percent']:.2f}% "
             f"wait={hardware['wait_percent']:.2f}%"
+        )
+    if summary["dma"]:
+        dma = summary["dma"]
+        print(
+            "DMASTAT summary: "
+            f"bias={dma['bias_starts']} weight={dma['weight_starts']} "
+            f"ifm={dma['ifm_starts']} ofm={dma['ofm_starts']}"
         )
 
 

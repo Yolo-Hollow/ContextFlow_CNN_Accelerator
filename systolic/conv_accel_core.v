@@ -59,11 +59,19 @@ module conv_accel_core #(
     output        configured_pool_enable,
     output [1:0]  configured_pool_stride,
     output [31:0] configured_expected_bytes,
+    output        configured_stream_batch_mode,
+    output [31:0] configured_stream_bias_packets,
+    output [31:0] configured_stream_weight_packets,
+    output [31:0] configured_stream_ifm_packets,
+    output        configured_stream_reset,
     input  [31:0] debug_expected_bytes,
     input  [31:0] debug_core_wr_count,
     input  [31:0] debug_axis_wr_count,
     input  [31:0] debug_tlast_count,
     input  [31:0] debug_last_tlast_index,
+    input  [31:0] stream_bias_completed,
+    input  [31:0] stream_weight_completed,
+    input  [31:0] stream_ifm_completed,
 
     input  [5:0]        bias_wr_addr,
     input  [PSUM_W-1:0] bias_wr_data,
@@ -120,6 +128,10 @@ module conv_accel_core #(
     wire pool_enable;
     wire [1:0] pool_stride;
     wire [31:0] expected_bytes;
+    wire stream_batch_mode;
+    wire [31:0] stream_bias_packets;
+    wire [31:0] stream_weight_packets;
+    wire [31:0] stream_ifm_packets;
     wire [OFM_ADDR_W-1:0] tile_pixel_base_ext = tile_pixel_base[OFM_ADDR_W-1:0];
     wire [COLS*2*MULT_W-1:0] quant_mult_flat;
     wire [COLS*2*SHIFT_W-1:0] quant_shift_flat;
@@ -147,6 +159,11 @@ module conv_accel_core #(
     assign configured_pool_enable = pool_enable;
     assign configured_pool_stride = pool_stride;
     assign configured_expected_bytes = expected_bytes;
+    assign configured_stream_batch_mode = stream_batch_mode;
+    assign configured_stream_bias_packets = stream_bias_packets;
+    assign configured_stream_weight_packets = stream_weight_packets;
+    assign configured_stream_ifm_packets = stream_ifm_packets;
+    assign configured_stream_reset = start_pulse;
     assign quant_rd_data = quant_rd_data_int;
     assign cfg_rdata = (cfg_addr == 6'h20) ? {26'd0, cfg_quant_addr} :
                        (cfg_addr == 6'h21) ? quant_shadow[cfg_quant_addr] :
@@ -189,6 +206,9 @@ module conv_accel_core #(
         .perf_wait_ifm(feeder_fill_req),
         .perf_wait_ofm(ofm_packet_full),
         .perf_compute_fire(layer_compute_fire),
+        .stream_bias_completed(stream_bias_completed),
+        .stream_weight_completed(stream_weight_completed),
+        .stream_ifm_completed(stream_ifm_completed),
         .start_pulse(start_pulse),
         .fm_h(fm_h), .fm_w(fm_w), .ofm_h(ofm_h), .ofm_w(ofm_w),
         .conv_stride(conv_stride), .conv_pad(conv_pad),
@@ -198,7 +218,11 @@ module conv_accel_core #(
         .tile_pixel_base(tile_pixel_base),
         .input_zero_point(input_zero_point),
         .pool_enable(pool_enable), .pool_stride(pool_stride),
-        .expected_bytes(expected_bytes)
+        .expected_bytes(expected_bytes),
+        .stream_batch_mode(stream_batch_mode),
+        .stream_bias_packets(stream_bias_packets),
+        .stream_weight_packets(stream_weight_packets),
+        .stream_ifm_packets(stream_ifm_packets)
     );
 
     quant_param_regs #(

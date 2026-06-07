@@ -74,6 +74,8 @@ $tests = @(
     @{ Top = "tb_weight_tile_loader"; Files = @("tb/tb_weight_tile_loader.v") },
     @{ Top = "tb_bias_weight_stream_loader"; Files = @("tb/tb_bias_weight_stream_loader.v") },
     @{ Top = "tb_axis_bias_weight_loader"; Files = @("tb/tb_axis_bias_weight_loader.v") },
+    @{ Top = "tb_axis_batch_stream_loaders"; Files = @("tb/tb_axis_batch_stream_loaders.v") },
+    @{ Top = "tb_axis_batch_stream_errors"; Files = @("tb/tb_axis_batch_stream_errors.v") },
     @{ Top = "tb_ifm_line_stream_loader"; Files = @("tb/tb_ifm_line_stream_loader.v") },
     @{ Top = "tb_axis_ifm_line_loader"; Files = @("tb/tb_axis_ifm_line_loader.v") },
     @{ Top = "tb_psum_pingpong_buffer"; Files = @("tb/tb_psum_pingpong_buffer.v") },

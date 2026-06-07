@@ -131,6 +131,14 @@ module conv_accel_core_axi_lite_axis_stream #(
     wire configured_pool_enable;
     wire [1:0] configured_pool_stride;
     wire [31:0] configured_expected_bytes;
+    wire configured_stream_batch_mode;
+    wire [31:0] configured_stream_bias_packets;
+    wire [31:0] configured_stream_weight_packets;
+    wire [31:0] configured_stream_ifm_packets;
+    wire configured_stream_reset;
+    wire [31:0] bias_completed_packets;
+    wire [31:0] weight_completed_packets;
+    wire [31:0] ifm_completed_packets;
 
     wire bias_tkeep_error;
     wire bias_tlast_error;
@@ -192,6 +200,10 @@ module conv_accel_core_axi_lite_axis_stream #(
     ) u_axis_bw_loader (
         .clk(clk),
         .rst(rst),
+        .stream_reset(configured_stream_reset),
+        .batch_mode(configured_stream_batch_mode),
+        .bias_expected_packets(configured_stream_bias_packets),
+        .weight_expected_packets(configured_stream_weight_packets),
         .bias_load_req(bias_load_req),
         .bias_s_axis_tready(bias_s_axis_tready),
         .bias_s_axis_tvalid(bias_s_axis_tvalid),
@@ -215,7 +227,9 @@ module conv_accel_core_axi_lite_axis_stream #(
         .bias_tkeep_error(bias_tkeep_error),
         .bias_tlast_error(bias_tlast_error),
         .weight_tkeep_error(weight_tkeep_error),
-        .weight_tlast_error(weight_tlast_error)
+        .weight_tlast_error(weight_tlast_error),
+        .bias_completed_packets(bias_completed_packets),
+        .weight_completed_packets(weight_completed_packets)
     );
 
     axis_ifm_line_loader #(
@@ -226,6 +240,9 @@ module conv_accel_core_axi_lite_axis_stream #(
     ) u_axis_ifm_loader (
         .clk(clk),
         .rst(rst),
+        .stream_reset(configured_stream_reset),
+        .batch_mode(configured_stream_batch_mode),
+        .expected_packets(configured_stream_ifm_packets),
         .fm_w(ifm_line_words),
         .fill_req(feeder_fill_req),
         .fill_fy(feeder_fill_fy),
@@ -241,7 +258,8 @@ module conv_accel_core_axi_lite_axis_stream #(
         .dma_wr_data(dma_wr_data),
         .dma_line_advance(dma_line_advance),
         .tkeep_error(ifm_tkeep_error),
-        .tlast_error(ifm_tlast_error)
+        .tlast_error(ifm_tlast_error),
+        .completed_packets(ifm_completed_packets)
     );
 
     conv_accel_core_axi_lite #(
@@ -285,11 +303,19 @@ module conv_accel_core_axi_lite_axis_stream #(
         .configured_pool_enable(configured_pool_enable),
         .configured_pool_stride(configured_pool_stride),
         .configured_expected_bytes(configured_expected_bytes),
+        .configured_stream_batch_mode(configured_stream_batch_mode),
+        .configured_stream_bias_packets(configured_stream_bias_packets),
+        .configured_stream_weight_packets(configured_stream_weight_packets),
+        .configured_stream_ifm_packets(configured_stream_ifm_packets),
+        .configured_stream_reset(configured_stream_reset),
         .debug_expected_bytes(ofm_expected_bytes),
         .debug_core_wr_count(core_ofm_wr_count),
         .debug_axis_wr_count(axis_ofm_wr_count),
         .debug_tlast_count(axis_tlast_count),
         .debug_last_tlast_index(last_tlast_index),
+        .stream_bias_completed(bias_completed_packets),
+        .stream_weight_completed(weight_completed_packets),
+        .stream_ifm_completed(ifm_completed_packets),
         .bias_wr_addr(bias_wr_addr),
         .bias_wr_data(bias_wr_data),
         .bias_wr_en(bias_wr_en),

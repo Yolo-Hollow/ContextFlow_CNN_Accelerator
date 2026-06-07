@@ -252,7 +252,7 @@ foreach name {dma_bias dma_weight dma_ifm} {
     create_bd_cell -type ip -vlnv xilinx.com:ip:axi_dma:* $name
     set_property -dict [list \
         CONFIG.c_include_sg {0} \
-        CONFIG.c_sg_length_width {23} \
+        CONFIG.c_sg_length_width {26} \
         CONFIG.c_include_mm2s {1} \
         CONFIG.c_include_s2mm {0} \
         CONFIG.c_m_axi_mm2s_data_width {64} \
@@ -262,7 +262,7 @@ foreach name {dma_bias dma_weight dma_ifm} {
 create_bd_cell -type ip -vlnv xilinx.com:ip:axi_dma:* dma_ofm
 set_property -dict [list \
     CONFIG.c_include_sg {0} \
-    CONFIG.c_sg_length_width {23} \
+    CONFIG.c_sg_length_width {26} \
     CONFIG.c_include_mm2s {0} \
     CONFIG.c_include_s2mm {1} \
     CONFIG.c_m_axi_s2mm_data_width {64} \

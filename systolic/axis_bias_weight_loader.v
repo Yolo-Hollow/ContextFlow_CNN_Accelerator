@@ -24,6 +24,10 @@ module axis_bias_weight_loader #(
 ) (
     input  clk,
     input  rst,
+    input  stream_reset,
+    input  batch_mode,
+    input  [31:0] bias_expected_packets,
+    input  [31:0] weight_expected_packets,
 
     input  bias_load_req,
     output bias_s_axis_tready,
@@ -50,7 +54,9 @@ module axis_bias_weight_loader #(
     output reg bias_tkeep_error,
     output reg bias_tlast_error,
     output reg weight_tkeep_error,
-    output reg weight_tlast_error
+    output reg weight_tlast_error,
+    output reg [31:0] bias_completed_packets,
+    output reg [31:0] weight_completed_packets
 );
     localparam COUT_TILE = COLS * 2;
     localparam TILE_WORDS = ROWS * COUT_TILE;
@@ -58,12 +64,14 @@ module axis_bias_weight_loader #(
     localparam WGT_PER_BEAT = 8;
 
     reg bias_busy;
+    reg bias_req_armed;
     reg bias_pending;
     reg [0:0] bias_lane;
     reg [63:0] bias_hold;
     reg [BIAS_ADDR_W-1:0] bias_count;
 
     reg weight_busy;
+    reg weight_req_armed;
     reg weight_pending;
     reg [2:0] weight_lane;
     reg [63:0] weight_hold;
@@ -73,6 +81,8 @@ module axis_bias_weight_loader #(
     wire weight_fire = weight_s_axis_tvalid && weight_s_axis_tready;
     wire bias_last_beat = (bias_count + BIAS_PER_BEAT >= COUT_TILE);
     wire weight_last_beat = (weight_count + WGT_PER_BEAT >= TILE_WORDS);
+    wire bias_stream_last = !batch_mode || (bias_completed_packets + 1'b1 == bias_expected_packets);
+    wire weight_stream_last = !batch_mode || (weight_completed_packets + 1'b1 == weight_expected_packets);
     wire [7:0] bias_expect_keep = (bias_last_beat && (COUT_TILE[0] == 1'b1)) ? 8'h0f : 8'hff;
     wire [3:0] weight_rem = TILE_WORDS - weight_count;
     wire [7:0] weight_expect_keep =
@@ -90,6 +100,7 @@ module axis_bias_weight_loader #(
     always @(posedge clk) begin
         if (rst) begin
             bias_busy <= 1'b0;
+            bias_req_armed <= 1'b1;
             bias_pending <= 1'b0;
             bias_lane <= 1'b0;
             bias_hold <= 64'd0;
@@ -100,12 +111,17 @@ module axis_bias_weight_loader #(
             bias_wr_data <= {PSUM_W{1'b0}};
             bias_tkeep_error <= 1'b0;
             bias_tlast_error <= 1'b0;
+            bias_completed_packets <= 32'd0;
         end else begin
             bias_load_done <= 1'b0;
             bias_wr_en <= 1'b0;
 
-            if (!bias_busy && bias_load_req) begin
+            if (!bias_load_req)
+                bias_req_armed <= 1'b1;
+
+            if (!bias_busy && bias_load_req && bias_req_armed) begin
                 bias_busy <= 1'b1;
+                bias_req_armed <= 1'b0;
                 bias_count <= {BIAS_ADDR_W{1'b0}};
             end
 
@@ -115,7 +131,7 @@ module axis_bias_weight_loader #(
                 bias_hold <= bias_s_axis_tdata;
                 if (bias_s_axis_tkeep != bias_expect_keep)
                     bias_tkeep_error <= 1'b1;
-                if (bias_s_axis_tlast != bias_last_beat)
+                if (bias_s_axis_tlast != (bias_last_beat && bias_stream_last))
                     bias_tlast_error <= 1'b1;
             end
 
@@ -130,6 +146,7 @@ module axis_bias_weight_loader #(
                     bias_lane <= 1'b0;
                     bias_count <= {BIAS_ADDR_W{1'b0}};
                     bias_load_done <= 1'b1;
+                    bias_completed_packets <= bias_completed_packets + 1'b1;
                 end else begin
                     bias_count <= bias_count + 1'b1;
                     if (bias_lane == 1'b1) begin
@@ -140,12 +157,15 @@ module axis_bias_weight_loader #(
                     end
                 end
             end
+            if (stream_reset)
+                bias_completed_packets <= 32'd0;
         end
     end
 
     always @(posedge clk) begin
         if (rst) begin
             weight_busy <= 1'b0;
+            weight_req_armed <= 1'b1;
             weight_pending <= 1'b0;
             weight_lane <= 3'd0;
             weight_hold <= 64'd0;
@@ -156,12 +176,17 @@ module axis_bias_weight_loader #(
             wgt_tile_wr_data <= {WEIGHT_W{1'b0}};
             weight_tkeep_error <= 1'b0;
             weight_tlast_error <= 1'b0;
+            weight_completed_packets <= 32'd0;
         end else begin
             weight_tile_ready <= 1'b0;
             wgt_tile_wr_en <= 1'b0;
 
-            if (!weight_busy && weight_load_req) begin
+            if (!weight_load_req)
+                weight_req_armed <= 1'b1;
+
+            if (!weight_busy && weight_load_req && weight_req_armed) begin
                 weight_busy <= 1'b1;
+                weight_req_armed <= 1'b0;
                 weight_count <= {WGT_ADDR_W{1'b0}};
             end
 
@@ -171,7 +196,7 @@ module axis_bias_weight_loader #(
                 weight_hold <= weight_s_axis_tdata;
                 if (weight_s_axis_tkeep != weight_expect_keep)
                     weight_tkeep_error <= 1'b1;
-                if (weight_s_axis_tlast != weight_last_beat)
+                if (weight_s_axis_tlast != (weight_last_beat && weight_stream_last))
                     weight_tlast_error <= 1'b1;
             end
 
@@ -186,6 +211,7 @@ module axis_bias_weight_loader #(
                     weight_lane <= 3'd0;
                     weight_count <= {WGT_ADDR_W{1'b0}};
                     weight_tile_ready <= 1'b1;
+                    weight_completed_packets <= weight_completed_packets + 1'b1;
                 end else begin
                     weight_count <= weight_count + 1'b1;
                     if (weight_lane == WGT_PER_BEAT - 1) begin
@@ -196,6 +222,8 @@ module axis_bias_weight_loader #(
                     end
                 end
             end
+            if (stream_reset)
+                weight_completed_packets <= 32'd0;
         end
     end
 endmodule

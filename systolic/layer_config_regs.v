@@ -27,6 +27,13 @@
 //   0x16 PERF_WAIT_IFM: busy cycles with feeder_fill_req asserted
 //   0x17 PERF_WAIT_OFM: busy cycles with OFM backpressure asserted
 //   0x18 PERF_COMPUTE:  cycles where the systolic array accepts a pixel
+//   0x19 STREAM_CFG:     bit0 enables one-DMA-per-tile batch streams
+//   0x1a BIAS_PACKETS:   expected bias packets for the current tile
+//   0x1b WEIGHT_PACKETS: expected weight packets for the current tile
+//   0x1c IFM_PACKETS:    expected IFM line packets for the current tile
+//   0x1d BIAS_DONE:      completed bias packets for the current tile
+//   0x1e WEIGHT_DONE:    completed weight packets for the current tile
+//   0x1f IFM_DONE:       completed IFM line packets for the current tile
 module layer_config_regs (
     input  clk,
     input  rst,
@@ -49,6 +56,9 @@ module layer_config_regs (
     input         perf_wait_ifm,
     input         perf_wait_ofm,
     input         perf_compute_fire,
+    input  [31:0] stream_bias_completed,
+    input  [31:0] stream_weight_completed,
+    input  [31:0] stream_ifm_completed,
     output reg start_pulse,
 
     output reg [8:0]  fm_h,
@@ -67,7 +77,11 @@ module layer_config_regs (
     output reg [7:0]  input_zero_point,
     output reg        pool_enable,
     output reg [1:0]  pool_stride,
-    output reg [31:0] expected_bytes
+    output reg [31:0] expected_bytes,
+    output reg        stream_batch_mode,
+    output reg [31:0] stream_bias_packets,
+    output reg [31:0] stream_weight_packets,
+    output reg [31:0] stream_ifm_packets
 );
     reg done_sticky;
     reg [31:0] perf_busy_cycles;
@@ -102,6 +116,10 @@ module layer_config_regs (
             pool_enable <= 1'b0;
             pool_stride <= 2'd0;
             expected_bytes <= 32'd0;
+            stream_batch_mode <= 1'b0;
+            stream_bias_packets <= 32'd0;
+            stream_weight_packets <= 32'd0;
+            stream_ifm_packets <= 32'd0;
             perf_busy_cycles <= 32'd0;
             perf_wait_any_cycles <= 32'd0;
             perf_wait_bias_cycles <= 32'd0;
@@ -184,6 +202,10 @@ module layer_config_regs (
                         end
                     end
                     6'h11: if (cfg_idle) expected_bytes <= cfg_wdata;
+                    6'h19: if (cfg_idle) stream_batch_mode <= cfg_wdata[0];
+                    6'h1a: if (cfg_idle) stream_bias_packets <= cfg_wdata;
+                    6'h1b: if (cfg_idle) stream_weight_packets <= cfg_wdata;
+                    6'h1c: if (cfg_idle) stream_ifm_packets <= cfg_wdata;
                     default: begin end
                 endcase
             end
@@ -217,6 +239,13 @@ module layer_config_regs (
             6'h16: cfg_rdata = perf_wait_ifm_cycles;
             6'h17: cfg_rdata = perf_wait_ofm_cycles;
             6'h18: cfg_rdata = perf_compute_cycles;
+            6'h19: cfg_rdata = {31'd0, stream_batch_mode};
+            6'h1a: cfg_rdata = stream_bias_packets;
+            6'h1b: cfg_rdata = stream_weight_packets;
+            6'h1c: cfg_rdata = stream_ifm_packets;
+            6'h1d: cfg_rdata = stream_bias_completed;
+            6'h1e: cfg_rdata = stream_weight_completed;
+            6'h1f: cfg_rdata = stream_ifm_completed;
             default: cfg_rdata = 32'd0;
         endcase
     end

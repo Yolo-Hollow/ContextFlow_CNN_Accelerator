@@ -17,6 +17,7 @@ param(
     [switch]$RunConv0Conv7Chain,
     [switch]$RunConv0Conv8Chain,
     [switch]$RunConv0Conv9Chain,
+    [switch]$RunConv0Conv9BatchChain,
     [switch]$RunConv0Conv9DdrDemo,
     [string]$InputPackage,
     [switch]$RunDeterministic,
@@ -47,6 +48,7 @@ $Conv0Conv6ChainElf = Join-Path $Root "build_vitis_2022_2\conv_accel_r18_c16_smo
 $Conv0Conv7ChainElf = Join-Path $Root "build_vitis_2022_2\conv_accel_r18_c16_smoke\manual_build\conv_accel_conv0_conv7_chain_smoke.elf"
 $Conv0Conv8ChainElf = Join-Path $Root "build_vitis_2022_2\conv_accel_r18_c16_smoke\manual_build\conv_accel_conv0_conv8_chain_smoke.elf"
 $Conv0Conv9ChainElf = Join-Path $Root "build_vitis_2022_2\conv_accel_r18_c16_smoke\manual_build\conv_accel_conv0_conv9_chain_smoke.elf"
+$Conv0Conv9BatchChainElf = Join-Path $Root "build_vitis_2022_2\conv_accel_r18_c16_smoke\manual_build\conv_accel_conv0_conv9_batch_chain_smoke.elf"
 $Conv0Conv9DdrDemoElf = Join-Path $Root "build_vitis_2022_2\conv_accel_r18_c16_smoke\manual_build\conv_accel_conv0_conv9_ddr_demo_smoke.elf"
 $DownloadTcl = Join-Path $ScriptDir "download_run_accel_smoke.tcl"
 $ProbeTcl = Join-Path $ScriptDir "probe_pl_regs.tcl"
@@ -160,7 +162,7 @@ if ($RunConv0Conv9DdrDemo) {
     }
     Run-Smoke "conv0_conv9_ddr_demo" $Conv0Conv9DdrDemoElf (!$SkipBit -and !$FastRun) $FastRun $InputPackage
     & $Xsct $ProbeTcl | Tee-Object -FilePath (Join-Path $LogDir "$Stamp`_pl_probe_after_conv0_conv9_ddr_demo.log")
-} elseif ($RunConv0Conv9Chain) {
+} elseif ($RunConv0Conv9BatchChain -or $RunConv0Conv9Chain) {
     Ensure-Tool $YoloDecodeScript "YOLO decode reference"
     Ensure-Tool $YoloCompareScript "YOLO UART comparator"
     Ensure-Tool $Conv9Tensor "Conv9 RTL-chain tensor"
@@ -168,12 +170,14 @@ if ($RunConv0Conv9DdrDemo) {
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to generate Conv9 decode golden"
     }
-    Run-Smoke "conv0_conv9_chain" $Conv0Conv9ChainElf (!$SkipBit -and !$FastRun) $FastRun
+    $chainName = if ($RunConv0Conv9BatchChain) { "conv0_conv9_batch_chain" } else { "conv0_conv9_chain" }
+    $chainElf = if ($RunConv0Conv9BatchChain) { $Conv0Conv9BatchChainElf } else { $Conv0Conv9ChainElf }
+    Run-Smoke $chainName $chainElf (!$SkipBit -and !$FastRun) $FastRun
     & $Python $YoloCompareScript $script:LastSmokeLog $YoloDecodeGolden
     if ($LASTEXITCODE -ne 0) {
         throw "Conv9 UART detections do not match the RTL-chain decode golden"
     }
-    & $Xsct $ProbeTcl | Tee-Object -FilePath (Join-Path $LogDir "$Stamp`_pl_probe_after_conv0_conv9_chain.log")
+    & $Xsct $ProbeTcl | Tee-Object -FilePath (Join-Path $LogDir "$Stamp`_pl_probe_after_$chainName.log")
 } elseif ($RunConv0Conv8Chain) {
     Run-Smoke "conv0_conv8_chain" $Conv0Conv8ChainElf (!$SkipBit -and !$FastRun) $FastRun
     & $Xsct $ProbeTcl | Tee-Object -FilePath (Join-Path $LogDir "$Stamp`_pl_probe_after_conv0_conv8_chain.log")

@@ -10,6 +10,9 @@ module tb_layer_config_regs;
     reg layer_busy, layer_done;
     reg perf_wait_bias, perf_wait_weight, perf_wait_ifm, perf_wait_ofm;
     reg perf_compute_fire;
+    reg [31:0] stream_bias_completed;
+    reg [31:0] stream_weight_completed;
+    reg [31:0] stream_ifm_completed;
     wire start_pulse;
     wire [8:0] fm_h, fm_w, ofm_h, ofm_w;
     wire [1:0] conv_stride, conv_pad;
@@ -23,6 +26,10 @@ module tb_layer_config_regs;
     wire pool_enable;
     wire [1:0] pool_stride;
     wire [31:0] expected_bytes;
+    wire stream_batch_mode;
+    wire [31:0] stream_bias_packets;
+    wire [31:0] stream_weight_packets;
+    wire [31:0] stream_ifm_packets;
 
     layer_config_regs dut (
         .clk(clk), .rst(rst),
@@ -35,6 +42,9 @@ module tb_layer_config_regs;
         .perf_wait_bias(perf_wait_bias), .perf_wait_weight(perf_wait_weight),
         .perf_wait_ifm(perf_wait_ifm), .perf_wait_ofm(perf_wait_ofm),
         .perf_compute_fire(perf_compute_fire),
+        .stream_bias_completed(stream_bias_completed),
+        .stream_weight_completed(stream_weight_completed),
+        .stream_ifm_completed(stream_ifm_completed),
         .start_pulse(start_pulse),
         .fm_h(fm_h), .fm_w(fm_w), .ofm_h(ofm_h), .ofm_w(ofm_w),
         .conv_stride(conv_stride), .conv_pad(conv_pad),
@@ -44,7 +54,11 @@ module tb_layer_config_regs;
         .tile_pixel_base(tile_pixel_base),
         .input_zero_point(input_zero_point),
         .pool_enable(pool_enable), .pool_stride(pool_stride),
-        .expected_bytes(expected_bytes)
+        .expected_bytes(expected_bytes),
+        .stream_batch_mode(stream_batch_mode),
+        .stream_bias_packets(stream_bias_packets),
+        .stream_weight_packets(stream_weight_packets),
+        .stream_ifm_packets(stream_ifm_packets)
     );
 
     always #5 clk = ~clk;
@@ -98,6 +112,9 @@ module tb_layer_config_regs;
         perf_wait_ifm = 0;
         perf_wait_ofm = 0;
         perf_compute_fire = 0;
+        stream_bias_completed = 32'd7;
+        stream_weight_completed = 32'd11;
+        stream_ifm_completed = 32'd13;
         pass = 0;
         fail = 0;
         start_pulse_count = 0;
@@ -116,6 +133,10 @@ module tb_layer_config_regs;
         write_reg(6'h09, 32'd6);
         write_reg(6'h0f, 32'd36);
         write_reg(6'h10, {28'd0, 2'd2, 1'b0, 1'b1});
+        write_reg(6'h19, 32'd1);
+        write_reg(6'h1a, 32'd7);
+        write_reg(6'h1b, 32'd11);
+        write_reg(6'h1c, 32'd13);
 
         check_value(fm_h, 7, "fm_h");
         check_value(fm_w, 5, "fm_w");
@@ -133,6 +154,19 @@ module tb_layer_config_regs;
         check_value(input_zero_point, 36, "input_zero_point");
         check_value(pool_enable, 1, "pool_enable");
         check_value(pool_stride, 2, "pool_stride");
+        check_value(stream_batch_mode, 1, "stream batch mode");
+        check_value(stream_bias_packets, 7, "stream bias packets");
+        check_value(stream_weight_packets, 11, "stream weight packets");
+        check_value(stream_ifm_packets, 13, "stream ifm packets");
+        cfg_addr = 6'h1d;
+        #1;
+        check_value(cfg_rdata, 7, "stream bias completed");
+        cfg_addr = 6'h1e;
+        #1;
+        check_value(cfg_rdata, 11, "stream weight completed");
+        cfg_addr = 6'h1f;
+        #1;
+        check_value(cfg_rdata, 13, "stream ifm completed");
 
         cfg_addr = 6'h07;
         #1;
@@ -233,6 +267,10 @@ module tb_layer_config_regs;
         write_reg(6'h09, 32'd99);
         write_reg(6'h0f, 32'd99);
         write_reg(6'h10, 32'd0);
+        write_reg(6'h19, 32'd0);
+        write_reg(6'h1a, 32'd99);
+        write_reg(6'h1b, 32'd99);
+        write_reg(6'h1c, 32'd99);
         check_value(fm_h, 7, "busy freeze fm_h");
         check_value(fm_w, 5, "busy freeze fm_w");
         check_value(k_total, 9216, "busy freeze k_total");
@@ -243,6 +281,10 @@ module tb_layer_config_regs;
         check_value(input_zero_point, 36, "busy freeze input zero point");
         check_value(pool_enable, 1, "busy freeze pool enable");
         check_value(pool_stride, 2, "busy freeze pool stride");
+        check_value(stream_batch_mode, 1, "busy freeze stream mode");
+        check_value(stream_bias_packets, 7, "busy freeze bias packets");
+        check_value(stream_weight_packets, 11, "busy freeze weight packets");
+        check_value(stream_ifm_packets, 13, "busy freeze ifm packets");
 
         write_reg(6'h00, 32'd1);
         repeat (2) @(negedge clk);
