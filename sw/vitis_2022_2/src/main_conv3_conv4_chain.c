@@ -755,11 +755,11 @@ static void pack_ifm_line_to(
     uint64_t *dst)
 {
     int channel[CHAIN_IFM_BANKS];
-    const uint8_t *row = layer->ifm_u8 + (uint32_t)fy * layer->fm_w * layer->cin;
 
     for (uint32_t b = 0U; b < CHAIN_IFM_BANKS; ++b) {
         channel[b] = channel_for_bank(layer, k_base, b);
     }
+    const uint8_t *row = layer->ifm_u8 + (uint32_t)fy * layer->fm_w * layer->cin;
     for (uint32_t x = 0U; x < layer->fm_w; ++x) {
         uint64_t word = 0U;
         for (uint32_t b = 0U; b < CHAIN_IFM_BANKS; ++b) {
@@ -768,6 +768,32 @@ static void pack_ifm_line_to(
             word |= ((uint64_t)v) << (b * 8U);
         }
         dst[x] = word;
+    }
+}
+
+static void pack_ifm_line_channels_to(
+    const chain_layer_t *layer,
+    int fy,
+    const int channel[CHAIN_IFM_BANKS],
+    uint64_t *dst)
+{
+    const uint8_t *row = layer->ifm_u8 + (uint32_t)fy * layer->fm_w * layer->cin;
+
+    for (uint32_t x = 0U; x < layer->fm_w; ++x) {
+        uint64_t word = 0U;
+        for (uint32_t b = 0U; b < CHAIN_IFM_BANKS; ++b) {
+            int ch = channel[b];
+            uint8_t v = (ch >= 0) ? row[x * layer->cin + (uint32_t)ch] : 0U;
+            word |= ((uint64_t)v) << (b * 8U);
+        }
+        dst[x] = word;
+    }
+}
+
+static void copy_u64_words(uint64_t *dst, const uint64_t *src, uint32_t words)
+{
+    for (uint32_t i = 0U; i < words; ++i) {
+        dst[i] = src[i];
     }
 }
 
@@ -960,7 +986,8 @@ static int pack_batch_ifm_stream(
     uint32_t address,
     batch_ifm_stream_t *stream)
 {
-    uint64_t *dst = (uint64_t *)(UINTPTR)address;
+    uint64_t *stream_base = (uint64_t *)(UINTPTR)address;
+    uint64_t *dst = stream_base;
     int first_fy = (int)tile->tile_oy_base - 1;
     int last_fy = (int)tile->tile_oy_base + (int)tile->tile_ofm_h;
     uint32_t packets;
@@ -976,29 +1003,35 @@ static int pack_batch_ifm_stream(
             return -1;
         }
 
-        for (uint32_t cb = 0U; cb < layer->cout_blocks; ++cb) {
-            for (uint32_t kp = 0U; kp < layer->k_passes; ++kp) {
-                uint32_t k_base = kp * CHAIN_ROWS;
-                for (uint32_t oy = 0U; oy < tile->tile_ofm_h; ++oy) {
-                    uint32_t y = tile->tile_oy_base + oy;
-                    for (uint32_t x = 0U; x < layer->fm_w; ++x) {
-                        const uint8_t *pixel =
-                            layer->ifm_u8 + (y * layer->fm_w + x) * layer->cin;
-                        for (uint32_t beat = 0U; beat < 3U; ++beat) {
-                            uint64_t word = 0U;
-                            for (uint32_t byte = 0U; byte < 8U; ++byte) {
-                                uint32_t lane = beat * 8U + byte;
-                                uint32_t ch = k_base + lane;
-                                uint8_t value =
-                                    (lane < CHAIN_ROWS && ch < layer->cin) ?
-                                    pixel[ch] : (uint8_t)layer->input_zero_point;
-                                word |= (uint64_t)value << (byte * 8U);
-                            }
-                            *dst++ = word;
+        for (uint32_t kp = 0U; kp < layer->k_passes; ++kp) {
+            uint32_t k_base = kp * CHAIN_ROWS;
+            for (uint32_t oy = 0U; oy < tile->tile_ofm_h; ++oy) {
+                uint32_t y = tile->tile_oy_base + oy;
+                for (uint32_t x = 0U; x < layer->fm_w; ++x) {
+                    const uint8_t *pixel =
+                        layer->ifm_u8 + (y * layer->fm_w + x) * layer->cin;
+                    for (uint32_t beat = 0U; beat < 3U; ++beat) {
+                        uint64_t word = 0U;
+                        for (uint32_t byte = 0U; byte < 8U; ++byte) {
+                            uint32_t lane = beat * 8U + byte;
+                            uint32_t ch = k_base + lane;
+                            uint8_t value =
+                                (lane < CHAIN_ROWS && ch < layer->cin) ?
+                                pixel[ch] : (uint8_t)layer->input_zero_point;
+                            word |= (uint64_t)value << (byte * 8U);
                         }
+                        *dst++ = word;
                     }
                 }
             }
+        }
+        uint32_t words_per_cout_block =
+            layer->k_passes * tile->tile_pixels * 3U;
+        for (uint32_t cb = 1U; cb < layer->cout_blocks; ++cb) {
+            copy_u64_words(
+                stream_base + cb * words_per_cout_block,
+                stream_base,
+                words_per_cout_block);
         }
         stream->words = (uint64_t *)(UINTPTR)address;
         stream->bytes = total_bytes;
@@ -1021,14 +1054,25 @@ static int pack_batch_ifm_stream(
         return -1;
     }
 
-    for (uint32_t cb = 0U; cb < layer->cout_blocks; ++cb) {
-        for (uint32_t kp = 0U; kp < layer->k_passes; ++kp) {
-            uint32_t k_base = kp * CHAIN_ROWS;
-            for (int fy = first_fy; fy <= last_fy; ++fy) {
-                pack_ifm_line_to(layer, fy, k_base, dst);
-                dst += layer->fm_w;
-            }
+    uint32_t physical_rows = (uint32_t)(last_fy - first_fy + 1);
+    for (uint32_t kp = 0U; kp < layer->k_passes; ++kp) {
+        uint32_t k_base = kp * CHAIN_ROWS;
+        int channel[CHAIN_IFM_BANKS];
+        for (uint32_t b = 0U; b < CHAIN_IFM_BANKS; ++b) {
+            channel[b] = channel_for_bank(layer, k_base, b);
         }
+        for (int fy = first_fy; fy <= last_fy; ++fy) {
+            pack_ifm_line_channels_to(layer, fy, channel, dst);
+            dst += layer->fm_w;
+        }
+    }
+    uint32_t words_per_cout_block =
+        layer->k_passes * physical_rows * layer->fm_w;
+    for (uint32_t cb = 1U; cb < layer->cout_blocks; ++cb) {
+        copy_u64_words(
+            stream_base + cb * words_per_cout_block,
+            stream_base,
+            words_per_cout_block);
     }
     stream->words = (uint64_t *)(UINTPTR)address;
     stream->bytes = total_bytes;

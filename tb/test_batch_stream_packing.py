@@ -50,6 +50,19 @@ def pack_ifm_packet(ifm, fm_w, cin, fy, k_base):
     return bytes(packet)
 
 
+def pack_optimized_3x3_ifm_stream(
+    ifm, fm_w, fm_h, cin, k_passes, cout_blocks, tile_oy, tile_h
+):
+    first_fy = max(tile_oy - 1, 0)
+    last_fy = min(tile_oy + tile_h, fm_h - 1)
+    one_cout_block = b"".join(
+        pack_ifm_packet(ifm, fm_w, cin, fy, kpass * ROWS)
+        for kpass in range(k_passes)
+        for fy in range(first_fy, last_fy + 1)
+    )
+    return one_cout_block * cout_blocks
+
+
 def pack_native_1x1_ifm_packet(
     ifm, fm_w, cin, tile_oy, tile_h, k_base, input_zero_point
 ):
@@ -68,6 +81,18 @@ def pack_native_1x1_ifm_packet(
             packet.extend(lanes[16:18])
             packet.extend(bytes([input_zero_point]) * 6)
     return bytes(packet)
+
+
+def pack_optimized_native_1x1_ifm_stream(
+    ifm, fm_w, cin, k_passes, cout_blocks, tile_oy, tile_h, input_zero_point
+):
+    one_cout_block = b"".join(
+        pack_native_1x1_ifm_packet(
+            ifm, fm_w, cin, tile_oy, tile_h, kpass * ROWS, input_zero_point
+        )
+        for kpass in range(k_passes)
+    )
+    return one_cout_block * cout_blocks
 
 
 def check_shape(fm_w, fm_h, cin, cout, k_passes, cout_blocks, tile_oy, tile_h):
@@ -96,6 +121,9 @@ def check_shape(fm_w, fm_h, cin, cout, k_passes, cout_blocks, tile_oy, tile_h):
     bias_stream = b"".join(bias_packets)
     weight_stream = b"".join(weight_packets)
     ifm_stream = b"".join(ifm_packets)
+    optimized_ifm_stream = pack_optimized_3x3_ifm_stream(
+        ifm, fm_w, fm_h, cin, k_passes, cout_blocks, tile_oy, tile_h
+    )
 
     assert len(bias_stream) == cout_blocks * COUT_TILE * 4
     assert len(weight_stream) == cout_blocks * k_passes * ROWS * COUT_TILE
@@ -103,6 +131,7 @@ def check_shape(fm_w, fm_h, cin, cout, k_passes, cout_blocks, tile_oy, tile_h):
     assert len(bias_stream) <= 64 * 1024
     assert len(weight_stream) <= 8 * 1024 * 1024
     assert len(ifm_stream) <= 20 * 1024 * 1024
+    assert optimized_ifm_stream == ifm_stream
 
     for index, packet in enumerate(bias_packets):
         start = index * len(packet)
@@ -128,12 +157,23 @@ def check_native_1x1_shape(
         for kpass in range(k_passes)
     ]
     stream = b"".join(packets)
+    optimized_stream = pack_optimized_native_1x1_ifm_stream(
+        ifm,
+        fm_w,
+        cin,
+        k_passes,
+        cout_blocks,
+        tile_oy,
+        tile_h,
+        input_zero_point,
+    )
     packet_bytes = fm_w * tile_h * 3 * 8
 
     assert len(packets) == cout_blocks * k_passes
     assert all(len(packet) == packet_bytes for packet in packets)
     assert len(stream) == cout_blocks * k_passes * packet_bytes
     assert len(stream) <= 20 * 1024 * 1024
+    assert optimized_stream == stream
 
     tail = packets[k_passes - 1]
     first_pixel_tail = tail[:24]
