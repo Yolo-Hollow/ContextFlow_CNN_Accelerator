@@ -171,6 +171,10 @@ volatile uint32_t debug_value = 0;
 
 typedef struct {
     XTime layer_total;
+    XTime dma_reset;
+    XTime configure;
+    XTime clear;
+    XTime tile_total;
     XTime bias_pack;
     XTime bias_dma;
     XTime bias_sync;
@@ -182,6 +186,15 @@ typedef struct {
     XTime ifm_sync;
     XTime ofm_dma;
     XTime ofm_parse;
+    XTime compare;
+    XTime cache;
+    uint64_t hw_busy_cycles;
+    uint64_t hw_wait_cycles;
+    uint64_t hw_wait_bias_cycles;
+    uint64_t hw_wait_weight_cycles;
+    uint64_t hw_wait_ifm_cycles;
+    uint64_t hw_wait_ofm_cycles;
+    uint64_t hw_compute_cycles;
 } layer_perf_t;
 
 static layer_perf_t layer_perf;
@@ -582,7 +595,7 @@ static void uart_puts_all(const char *s)
 
 static void log_printf(const char *fmt, ...)
 {
-    char buf[256];
+    char buf[512];
     va_list ap;
     va_start(ap, fmt);
     vsnprintf(buf, sizeof(buf), fmt, ap);
@@ -591,6 +604,12 @@ static void log_printf(const char *fmt, ...)
 }
 
 #define xil_printf(...) log_printf(__VA_ARGS__)
+
+#if ACCEL_PERF_ONLY
+#define trace_printf(...) do { } while (0)
+#else
+#define trace_printf(...) xil_printf(__VA_ARGS__)
+#endif
 
 static inline void wr32(uint32_t base, uint32_t off, uint32_t v)
 {
@@ -712,7 +731,7 @@ static void pack_ifm_line(const chain_layer_t *layer, int fy, uint32_t k_base)
 
 static void dma_reset_named(const char *name, uint32_t base, uint32_t cr_off, uint32_t sr_off)
 {
-    xil_printf("dma reset: %s\r\n", name);
+    trace_printf("dma reset: %s\r\n", name);
     wr32(base, cr_off, DMA_DMACR_RESET);
     for (uint32_t i = 0U; i < 1000000U; ++i) {
         if ((rd32(base, cr_off) & DMA_DMACR_RESET) == 0U) {
@@ -908,21 +927,32 @@ static uint64_t ticks_to_us(XTime ticks)
 
 static void print_layer_perf(const chain_layer_t *layer)
 {
-    XTime measured =
+    XTime tile_service =
         layer_perf.bias_pack + layer_perf.bias_dma + layer_perf.bias_sync +
         layer_perf.weight_pack + layer_perf.weight_dma + layer_perf.weight_sync +
         layer_perf.ifm_pack + layer_perf.ifm_dma + layer_perf.ifm_sync +
         layer_perf.ofm_dma + layer_perf.ofm_parse;
+    XTime tile_control =
+        (layer_perf.tile_total > tile_service) ? layer_perf.tile_total - tile_service : 0U;
+    XTime measured =
+        layer_perf.dma_reset + layer_perf.configure + layer_perf.clear +
+        tile_service + tile_control + layer_perf.compare + layer_perf.cache;
     XTime other = (layer_perf.layer_total > measured) ? layer_perf.layer_total - measured : 0U;
 
     xil_printf(
         "PERF layer=%s total_us=%llu "
+        "reset_us=%llu config_us=%llu clear_us=%llu control_us=%llu "
         "bias_pack_us=%llu bias_dma_us=%llu bias_sync_us=%llu "
         "weight_pack_us=%llu weight_dma_us=%llu weight_sync_us=%llu "
         "ifm_pack_us=%llu ifm_dma_us=%llu ifm_sync_us=%llu "
-        "ofm_dma_us=%llu ofm_parse_us=%llu other_us=%llu\r\n",
+        "ofm_dma_us=%llu ofm_parse_us=%llu compare_us=%llu cache_us=%llu "
+        "other_us=%llu\r\n",
         layer->name,
         (unsigned long long)ticks_to_us(layer_perf.layer_total),
+        (unsigned long long)ticks_to_us(layer_perf.dma_reset),
+        (unsigned long long)ticks_to_us(layer_perf.configure),
+        (unsigned long long)ticks_to_us(layer_perf.clear),
+        (unsigned long long)ticks_to_us(tile_control),
         (unsigned long long)ticks_to_us(layer_perf.bias_pack),
         (unsigned long long)ticks_to_us(layer_perf.bias_dma),
         (unsigned long long)ticks_to_us(layer_perf.bias_sync),
@@ -934,7 +964,31 @@ static void print_layer_perf(const chain_layer_t *layer)
         (unsigned long long)ticks_to_us(layer_perf.ifm_sync),
         (unsigned long long)ticks_to_us(layer_perf.ofm_dma),
         (unsigned long long)ticks_to_us(layer_perf.ofm_parse),
+        (unsigned long long)ticks_to_us(layer_perf.compare),
+        (unsigned long long)ticks_to_us(layer_perf.cache),
         (unsigned long long)ticks_to_us(other));
+
+    uint64_t nonwait_cycles =
+        (layer_perf.hw_busy_cycles > layer_perf.hw_wait_cycles) ?
+        layer_perf.hw_busy_cycles - layer_perf.hw_wait_cycles : 0U;
+    uint64_t compute_permille =
+        (layer_perf.hw_busy_cycles != 0U) ?
+        (layer_perf.hw_compute_cycles * 1000U) / layer_perf.hw_busy_cycles : 0U;
+    xil_printf(
+        "HWPERF layer=%s busy_cycles=%llu wait_cycles=%llu nonwait_cycles=%llu "
+        "compute_cycles=%llu "
+        "bias_wait_cycles=%llu weight_wait_cycles=%llu ifm_wait_cycles=%llu "
+        "ofm_wait_cycles=%llu compute_permille=%llu\r\n",
+        layer->name,
+        (unsigned long long)layer_perf.hw_busy_cycles,
+        (unsigned long long)layer_perf.hw_wait_cycles,
+        (unsigned long long)nonwait_cycles,
+        (unsigned long long)layer_perf.hw_compute_cycles,
+        (unsigned long long)layer_perf.hw_wait_bias_cycles,
+        (unsigned long long)layer_perf.hw_wait_weight_cycles,
+        (unsigned long long)layer_perf.hw_wait_ifm_cycles,
+        (unsigned long long)layer_perf.hw_wait_ofm_cycles,
+        (unsigned long long)compute_permille);
 }
 
 static void clear_ofm(uint8_t *ofm, uint32_t bytes)
@@ -947,13 +1001,15 @@ static void clear_ofm(uint8_t *ofm, uint32_t bytes)
 static int parse_ofm_tile(const chain_layer_t *layer, const chain_tile_t *tile)
 {
     Xil_DCacheInvalidateRange((UINTPTR)ofm_axis_buf, tile->expected_ofm_bytes * OFM_AXIS_BEAT_BYTES);
+#if !ACCEL_PERF_ONLY
     for (uint32_t i = 0U; i < 4U && i < tile->expected_ofm_bytes; ++i) {
         uint32_t raw = (uint32_t)(ofm_axis_buf[i] & 0xffffffffULL);
-        xil_printf("%s raw[%lu] addr=%lu data=%u\r\n",
-                   tile->name, (unsigned long)i,
-                   (unsigned long)(raw & 0x00ffffffU),
-                   (unsigned)((raw >> 24) & 0xffU));
+        trace_printf("%s raw[%lu] addr=%lu data=%u\r\n",
+                     tile->name, (unsigned long)i,
+                     (unsigned long)(raw & 0x00ffffffU),
+                     (unsigned)((raw >> 24) & 0xffU));
     }
+#endif
     for (uint32_t i = 0U; i < tile->expected_ofm_bytes; ++i) {
         uint32_t raw = (uint32_t)(ofm_axis_buf[i] & 0xffffffffULL);
         uint32_t addr = raw & 0x00ffffffU;
@@ -965,17 +1021,17 @@ static int parse_ofm_tile(const chain_layer_t *layer, const chain_tile_t *tile)
         }
         layer->ofm_u8[addr] = data;
     }
-    xil_printf("%s ofm parsed=%lu expected=%lu\r\n",
-               tile->name, (unsigned long)tile->expected_ofm_bytes,
-               (unsigned long)tile->expected_ofm_bytes);
+    trace_printf("%s ofm parsed=%lu expected=%lu\r\n",
+                 tile->name, (unsigned long)tile->expected_ofm_bytes,
+                 (unsigned long)tile->expected_ofm_bytes);
     return 0;
 }
 
 static int compare_layer_ofm(const chain_layer_t *layer)
 {
 #if ACCEL_CHAIN_CONV0_CONV9_DDR
-    xil_printf("%s generated=%lu bytes (dynamic input, fixed golden compare skipped)\r\n",
-               layer->name, (unsigned long)layer->total_expected_ofm_bytes);
+    trace_printf("%s generated=%lu bytes (dynamic input, fixed golden compare skipped)\r\n",
+                 layer->name, (unsigned long)layer->total_expected_ofm_bytes);
     return 0;
 #else
     uint32_t mismatch_count = 0U;
@@ -1029,11 +1085,14 @@ static int run_one_tile(const chain_layer_t *layer, const chain_tile_t *tile, ui
     uint32_t dbg_last_base;
     XTime begin;
     XTime end;
+    XTime tile_begin;
+    XTime tile_end;
 
-    xil_printf("%s tile[%lu] oy=%lu h=%lu pixel_base=%lu expected=%lu\r\n",
-               layer->name, (unsigned long)tile_index,
-               (unsigned long)tile->tile_oy_base, (unsigned long)tile->tile_ofm_h,
-               (unsigned long)tile->tile_pixel_base, (unsigned long)tile->expected_ofm_bytes);
+    trace_printf("%s tile[%lu] oy=%lu h=%lu pixel_base=%lu expected=%lu\r\n",
+                 layer->name, (unsigned long)tile_index,
+                 (unsigned long)tile->tile_oy_base, (unsigned long)tile->tile_ofm_h,
+                 (unsigned long)tile->tile_pixel_base, (unsigned long)tile->expected_ofm_bytes);
+    XTime_GetTime(&tile_begin);
 
     wr32(ACCEL_BASE_ADDR, ACCEL_NUM_PIXELS, tile->tile_pixels);
     wr32(ACCEL_BASE_ADDR, ACCEL_TILE_ROWS, (tile->tile_ofm_h << 16) | tile->tile_oy_base);
@@ -1072,10 +1131,10 @@ static int run_one_tile(const chain_layer_t *layer, const chain_tile_t *tile, ui
         if ((st & ST_WEIGHT_REQ) != 0U) {
             uint32_t cout_base = ((weight_services / layer->k_passes) % layer->cout_blocks) * CHAIN_COUT_TILE;
             if ((weight_services % layer->k_passes) == 0U) {
-                xil_printf("%s tile[%lu] weight block=%lu cout_base=%lu\r\n",
-                           layer->name, (unsigned long)tile_index,
-                           (unsigned long)(weight_services / layer->k_passes),
-                           (unsigned long)cout_base);
+                trace_printf("%s tile[%lu] weight block=%lu cout_base=%lu\r\n",
+                             layer->name, (unsigned long)tile_index,
+                             (unsigned long)(weight_services / layer->k_passes),
+                             (unsigned long)cout_base);
             }
             if (service_weight(layer, &k_pass, &active_k_base, cout_base) != 0) {
                 return -1;
@@ -1085,10 +1144,10 @@ static int run_one_tile(const chain_layer_t *layer, const chain_tile_t *tile, ui
         }
         if ((st & ST_IFM_REQ) != 0U) {
             if ((ifm_services % (layer->k_passes * 5U)) == 0U) {
-                xil_printf("%s tile[%lu] ifm progress=%lu fy=%d k_base=%lu\r\n",
-                           layer->name, (unsigned long)tile_index,
-                           (unsigned long)ifm_services, status_fill_fy(st),
-                           (unsigned long)active_k_base);
+                trace_printf("%s tile[%lu] ifm progress=%lu fy=%d k_base=%lu\r\n",
+                             layer->name, (unsigned long)tile_index,
+                             (unsigned long)ifm_services, status_fill_fy(st),
+                             (unsigned long)active_k_base);
             }
             if (service_ifm(layer, st, active_k_base) != 0) {
                 return -1;
@@ -1125,10 +1184,10 @@ static int run_one_tile(const chain_layer_t *layer, const chain_tile_t *tile, ui
     uint32_t dbg_axis_delta = rd32(ACCEL_BASE_ADDR, ACCEL_DBG_AXIS_WR) - dbg_axis_base;
     uint32_t dbg_tlast_delta = rd32(ACCEL_BASE_ADDR, ACCEL_DBG_TLASTS) - dbg_tlast_base;
     uint32_t dbg_last_delta = rd32(ACCEL_BASE_ADDR, ACCEL_DBG_LAST_END) - dbg_last_base;
-    xil_printf("%s tile[%lu] debug delta core=%lu axis=%lu tlast=%lu last=%lu\r\n",
-               layer->name, (unsigned long)tile_index,
-               (unsigned long)dbg_core_delta, (unsigned long)dbg_axis_delta,
-               (unsigned long)dbg_tlast_delta, (unsigned long)dbg_last_delta);
+    trace_printf("%s tile[%lu] debug delta core=%lu axis=%lu tlast=%lu last=%lu\r\n",
+                 layer->name, (unsigned long)tile_index,
+                 (unsigned long)dbg_core_delta, (unsigned long)dbg_axis_delta,
+                 (unsigned long)dbg_tlast_delta, (unsigned long)dbg_last_delta);
     if (dbg_core_delta != tile->expected_ofm_bytes ||
         dbg_axis_delta != tile->expected_ofm_bytes ||
         dbg_tlast_delta != 1U ||
@@ -1137,11 +1196,19 @@ static int run_one_tile(const chain_layer_t *layer, const chain_tile_t *tile, ui
         return -1;
     }
 
+    layer_perf.hw_busy_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_PERF_BUSY);
+    layer_perf.hw_wait_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_PERF_WAIT_ANY);
+    layer_perf.hw_wait_bias_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_PERF_WAIT_BIAS);
+    layer_perf.hw_wait_weight_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_PERF_WAIT_WEIGHT);
+    layer_perf.hw_wait_ifm_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_PERF_WAIT_IFM);
+    layer_perf.hw_wait_ofm_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_PERF_WAIT_OFM);
+    layer_perf.hw_compute_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_PERF_COMPUTE);
+
     wr32(ACCEL_BASE_ADDR, ACCEL_CTRL, 2U);
-    xil_printf("%s tile[%lu] services bias=%lu weight=%lu ifm=%lu\r\n",
-               layer->name, (unsigned long)tile_index,
-               (unsigned long)bias_services, (unsigned long)weight_services,
-               (unsigned long)ifm_services);
+    trace_printf("%s tile[%lu] services bias=%lu weight=%lu ifm=%lu\r\n",
+                 layer->name, (unsigned long)tile_index,
+                 (unsigned long)bias_services, (unsigned long)weight_services,
+                 (unsigned long)ifm_services);
 
     uint32_t expected_ifm = expected_ifm_services_for_tile(layer, tile);
     if (bias_services != layer->cout_blocks ||
@@ -1163,6 +1230,8 @@ static int run_one_tile(const chain_layer_t *layer, const chain_tile_t *tile, ui
     }
     XTime_GetTime(&end);
     layer_perf.ofm_parse += end - begin;
+    XTime_GetTime(&tile_end);
+    layer_perf.tile_total += tile_end - tile_begin;
     return 0;
 }
 
@@ -1196,17 +1265,28 @@ static int run_layer(chain_layer_t *layer)
     uint32_t total_ifm = 0U;
     XTime layer_begin;
     XTime layer_end;
+    XTime begin;
+    XTime end;
 
-    xil_printf("\r\n=== run %s ===\r\n", layer->name);
+    trace_printf("\r\n=== run %s ===\r\n", layer->name);
     for (uint32_t i = 0U; i < sizeof(layer_perf); ++i) {
         ((uint8_t *)&layer_perf)[i] = 0U;
     }
     XTime_GetTime(&layer_begin);
+    XTime_GetTime(&begin);
     dma_reset_all();
+    XTime_GetTime(&end);
+    layer_perf.dma_reset += end - begin;
+    XTime_GetTime(&begin);
     if (configure_layer(layer) != 0) {
         return -1;
     }
+    XTime_GetTime(&end);
+    layer_perf.configure += end - begin;
+    XTime_GetTime(&begin);
     clear_ofm(layer->ofm_u8, layer->total_expected_ofm_bytes);
+    XTime_GetTime(&end);
+    layer_perf.clear += end - begin;
     for (uint32_t i = 0U; i < layer->tile_count; ++i) {
         chain_tile_t dynamic_tile;
         const chain_tile_t *tile;
@@ -1234,13 +1314,19 @@ static int run_layer(chain_layer_t *layer)
             return -1;
         }
     }
-    xil_printf("%s total services bias=%lu weight=%lu ifm=%lu\r\n",
-               layer->name, (unsigned long)total_bias,
-               (unsigned long)total_weight, (unsigned long)total_ifm);
+    trace_printf("%s total services bias=%lu weight=%lu ifm=%lu\r\n",
+                 layer->name, (unsigned long)total_bias,
+                 (unsigned long)total_weight, (unsigned long)total_ifm);
+    XTime_GetTime(&begin);
     if (compare_layer_ofm(layer) != 0) {
         return -1;
     }
+    XTime_GetTime(&end);
+    layer_perf.compare += end - begin;
+    XTime_GetTime(&begin);
     Xil_DCacheFlushRange((UINTPTR)layer->ofm_u8, layer->total_expected_ofm_bytes);
+    XTime_GetTime(&end);
+    layer_perf.cache += end - begin;
     XTime_GetTime(&layer_end);
     layer_perf.layer_total = layer_end - layer_begin;
     print_layer_perf(layer);

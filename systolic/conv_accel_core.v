@@ -101,6 +101,7 @@ module conv_accel_core #(
     wire start_pulse;
     wire layer_busy;
     wire layer_done;
+    wire layer_compute_fire;
     wire [31:0] layer_cfg_rdata;
     wire [8:0] fm_h;
     wire [8:0] fm_w;
@@ -183,6 +184,11 @@ module conv_accel_core #(
         .dbg_axis_wr_count(debug_axis_wr_count),
         .dbg_tlast_count(debug_tlast_count),
         .dbg_last_tlast_index(debug_last_tlast_index),
+        .perf_wait_bias(bias_load_req),
+        .perf_wait_weight(weight_load_req),
+        .perf_wait_ifm(feeder_fill_req),
+        .perf_wait_ofm(ofm_packet_full),
+        .perf_compute_fire(layer_compute_fire),
         .start_pulse(start_pulse),
         .fm_h(fm_h), .fm_w(fm_w), .ofm_h(ofm_h), .ofm_w(ofm_w),
         .conv_stride(conv_stride), .conv_pad(conv_pad),
@@ -216,6 +222,7 @@ module conv_accel_core #(
         .OFM_ADDR_W(OFM_ADDR_W), .OFM_FIFO_DEPTH(OFM_FIFO_DEPTH), .OFM_FIFO_AW(OFM_FIFO_AW)
     ) u_layer (
         .clk(clk), .rst(rst), .start(start_pulse), .busy(layer_busy), .done(layer_done),
+        .perf_compute_fire(layer_compute_fire),
         .fm_h(fm_h), .fm_w(fm_w), .ofm_h(ofm_h), .ofm_w(ofm_w),
         .conv_stride(conv_stride), .conv_pad(conv_pad),
         .k_total(k_total), .cout_total(cout_total), .num_pixels(num_pixels),

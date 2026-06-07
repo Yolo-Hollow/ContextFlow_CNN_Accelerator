@@ -400,18 +400,50 @@ mapping once per line and prints one machine-readable `PERF` record per layer.
 The demo wrapper summarizes those records with
 `tools/demo/summarize_uart_perf.py`.
 
-The June 7, 2026 full-reprogram measurement used:
+An initial June 7, 2026 full-reprogram measurement used:
 
 ```text
 build_system_xck26_kv260_linebuffix/board_smoke_logs/20260607_132050_conv0_conv9_ddr_demo_COM8.log
 ```
 
-The ten layer times summed to `23.699203 s`. The largest categories were
+The ten layer times summed to `23.699203 s`. This run still emitted extensive
+synchronous UART progress logs, so it is retained as a diagnostic result rather
+than a clean inference baseline. The largest apparent categories were
 `other_us=12.008225 s`, `ofm_parse_us=5.325749 s`,
 `ifm_pack_us=2.300888 s`, and `ifm_dma_us=1.625445 s`. The detection still
-matched the RTL-chain decode golden. Use these board-side `PERF` values for
-optimization comparisons; the PowerShell wall time also includes JTAG setup,
-bitstream/ELF download, serial capture, and post-run register probing.
+matched the RTL-chain decode golden.
+
+The DDR demo now builds with `ACCEL_PERF_ONLY=1`, suppressing successful
+per-service progress messages while preserving errors, `PERF`, `HWPERF`,
+detections, and final status. The clean software baseline on the old
+`linebuffix` bitstream was approximately `7.482622 s`.
+
+The performance-counter bitstream is:
+
+```text
+build_system_xck26_kv260_perfcount
+```
+
+It exposes tile-local PL counters at byte offsets `0x48..0x60` for busy cycles,
+external-service waits, and exact systolic-array `compute_fire` cycles. The
+full-reprogram board run passed on June 7, 2026:
+
+```text
+build_system_xck26_kv260_perfcount/board_smoke_logs/20260607_155114_conv0_conv9_ddr_demo_COM8.log
+```
+
+The ten layers took `7.489041 s`. PL counters accumulated `746344195` busy
+cycles, `667279241` external-wait cycles (`89.41%`), and `8739328`
+compute-fire cycles (`1.17%`). IFM waits alone occupied about `67.73%` of busy
+time and weight waits about `21.54%`. The result remained one `with_mask`
+detection with score `0.357321`, matching the RTL-chain decode golden.
+
+The measured bottleneck is therefore fine-grained A53 IFM/weight service, not
+systolic-array arithmetic. The next hardware/software architecture should batch
+or autonomously fetch those streams and overlap transfers with compute. Use
+board-side `PERF` and `HWPERF` values for optimization comparisons; PowerShell
+wall time additionally includes JTAG setup, downloads, capture, and post-run
+probing.
 
 Use the full sequence after a board power cycle. `-FastRun` is only appropriate
 when the same bitstream is still programmed and the prior accelerator run left

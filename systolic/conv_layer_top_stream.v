@@ -36,6 +36,7 @@ module conv_layer_top_stream #(
     input  start,
     output busy,
     output reg done,
+    output perf_compute_fire,
 
     input  [8:0] fm_h,
     input  [8:0] fm_w,
@@ -248,6 +249,7 @@ module conv_layer_top_stream #(
     wire [COLS*2*PSUM_W-1:0] psum_stream_data;
     wire psum_stream_valid;
     wire compute_fire;
+    assign perf_compute_fire = compute_fire;
     wire [31:0] psum_fifo_rd_en;
     wire [COLS*PSUM_W*2-1:0] psum_fifo_rd_data;
     wire [31:0] psum_fifo_empty;

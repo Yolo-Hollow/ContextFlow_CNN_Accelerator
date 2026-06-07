@@ -82,11 +82,21 @@ def main():
             "ifm_pack_us=20 ifm_dma_us=30 other_us=50\n"
             "PERF layer=conv1 total_us=200 "
             "ifm_pack_us=40 ifm_dma_us=60 other_us=100\n"
+            "HWPERF layer=conv0 busy_cycles=100 wait_cycles=80 "
+            "nonwait_cycles=20 compute_cycles=10 bias_wait_cycles=1 "
+            "weight_wait_cycles=9 ifm_wait_cycles=70 ofm_wait_cycles=0 "
+            "compute_permille=100\n"
+            "HWPERF layer=conv1 busy_cycles=300 wait_cycles=150 "
+            "nonwait_cycles=150 compute_cycles=90 bias_wait_cycles=2 "
+            "weight_wait_cycles=18 ifm_wait_cycles=130 ofm_wait_cycles=0 "
+            "compute_permille=300\n"
         )
         assert summary["layer_count"] == 2
         assert summary["total_microseconds"] == 300
         assert summary["categories"][0]["name"] == "other_us"
         assert summary["categories"][0]["microseconds"] == 150
+        assert summary["hardware"]["busy_cycles"] == 400
+        assert summary["hardware"]["compute_percent"] == 25.0
 
     print("PASS: KV260 runtime image package and visualization tests")
 

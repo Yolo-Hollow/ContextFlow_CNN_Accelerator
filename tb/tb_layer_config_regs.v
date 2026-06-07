@@ -8,6 +8,8 @@ module tb_layer_config_regs;
     reg cfg_rd_en;
     wire [31:0] cfg_rdata;
     reg layer_busy, layer_done;
+    reg perf_wait_bias, perf_wait_weight, perf_wait_ifm, perf_wait_ofm;
+    reg perf_compute_fire;
     wire start_pulse;
     wire [8:0] fm_h, fm_w, ofm_h, ofm_w;
     wire [1:0] conv_stride, conv_pad;
@@ -29,7 +31,11 @@ module tb_layer_config_regs;
         .layer_busy(layer_busy), .layer_done(layer_done),
         .dbg_expected_bytes(32'd0), .dbg_core_wr_count(32'd0),
         .dbg_axis_wr_count(32'd0), .dbg_tlast_count(32'd0),
-        .dbg_last_tlast_index(32'd0), .start_pulse(start_pulse),
+        .dbg_last_tlast_index(32'd0),
+        .perf_wait_bias(perf_wait_bias), .perf_wait_weight(perf_wait_weight),
+        .perf_wait_ifm(perf_wait_ifm), .perf_wait_ofm(perf_wait_ofm),
+        .perf_compute_fire(perf_compute_fire),
+        .start_pulse(start_pulse),
         .fm_h(fm_h), .fm_w(fm_w), .ofm_h(ofm_h), .ofm_w(ofm_w),
         .conv_stride(conv_stride), .conv_pad(conv_pad),
         .activation_mode(activation_mode),
@@ -87,6 +93,11 @@ module tb_layer_config_regs;
         cfg_rd_en = 0;
         layer_busy = 0;
         layer_done = 0;
+        perf_wait_bias = 0;
+        perf_wait_weight = 0;
+        perf_wait_ifm = 0;
+        perf_wait_ofm = 0;
+        perf_compute_fire = 0;
         pass = 0;
         fail = 0;
         start_pulse_count = 0;
@@ -170,6 +181,30 @@ module tb_layer_config_regs;
         @(posedge clk);
         #1;
         check_value(start_pulse, 0, "start one cycle");
+
+        @(negedge clk);
+        layer_busy = 1'b1;
+        perf_wait_ifm = 1'b1;
+        perf_compute_fire = 1'b1;
+        repeat (3) @(posedge clk);
+        @(negedge clk);
+        perf_wait_ifm = 1'b0;
+        perf_compute_fire = 1'b0;
+        repeat (2) @(posedge clk);
+        @(negedge clk);
+        layer_busy = 1'b0;
+        cfg_addr = 6'h12;
+        #1;
+        check_value(cfg_rdata, 5, "perf busy cycles");
+        cfg_addr = 6'h13;
+        #1;
+        check_value(cfg_rdata, 3, "perf wait any cycles");
+        cfg_addr = 6'h16;
+        #1;
+        check_value(cfg_rdata, 3, "perf wait ifm cycles");
+        cfg_addr = 6'h18;
+        #1;
+        check_value(cfg_rdata, 3, "perf compute cycles");
 
         @(negedge clk);
         layer_done = 1'b1;

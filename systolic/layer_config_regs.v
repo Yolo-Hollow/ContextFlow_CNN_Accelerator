@@ -20,6 +20,13 @@
 //   0x0f IFM_ZP:       [7:0]=input_zero_point for uint8-to-sint8 IFM centering
 //   0x10 POOL_CFG:     bit0=pool_enable, [3:2]=pool_stride, 0/bypass by default
 //   0x11 EXPECTED_BYTES: expected OFM byte-stream payload bytes for TLAST/debug
+//   0x12 PERF_BUSY:     layer_busy cycles for the current tile
+//   0x13 PERF_WAIT_ANY: busy cycles stalled on any external service request
+//   0x14 PERF_WAIT_BIAS: busy cycles with bias_load_req asserted
+//   0x15 PERF_WAIT_WEIGHT: busy cycles with weight_load_req asserted
+//   0x16 PERF_WAIT_IFM: busy cycles with feeder_fill_req asserted
+//   0x17 PERF_WAIT_OFM: busy cycles with OFM backpressure asserted
+//   0x18 PERF_COMPUTE:  cycles where the systolic array accepts a pixel
 module layer_config_regs (
     input  clk,
     input  rst,
@@ -37,6 +44,11 @@ module layer_config_regs (
     input  [31:0] dbg_axis_wr_count,
     input  [31:0] dbg_tlast_count,
     input  [31:0] dbg_last_tlast_index,
+    input         perf_wait_bias,
+    input         perf_wait_weight,
+    input         perf_wait_ifm,
+    input         perf_wait_ofm,
+    input         perf_compute_fire,
     output reg start_pulse,
 
     output reg [8:0]  fm_h,
@@ -58,7 +70,16 @@ module layer_config_regs (
     output reg [31:0] expected_bytes
 );
     reg done_sticky;
+    reg [31:0] perf_busy_cycles;
+    reg [31:0] perf_wait_any_cycles;
+    reg [31:0] perf_wait_bias_cycles;
+    reg [31:0] perf_wait_weight_cycles;
+    reg [31:0] perf_wait_ifm_cycles;
+    reg [31:0] perf_wait_ofm_cycles;
+    reg [31:0] perf_compute_cycles;
     wire cfg_idle = !layer_busy;
+    wire perf_wait_any = perf_wait_bias || perf_wait_weight ||
+                         perf_wait_ifm || perf_wait_ofm;
 
     always @(posedge clk) begin
         if (rst) begin
@@ -81,10 +102,33 @@ module layer_config_regs (
             pool_enable <= 1'b0;
             pool_stride <= 2'd0;
             expected_bytes <= 32'd0;
+            perf_busy_cycles <= 32'd0;
+            perf_wait_any_cycles <= 32'd0;
+            perf_wait_bias_cycles <= 32'd0;
+            perf_wait_weight_cycles <= 32'd0;
+            perf_wait_ifm_cycles <= 32'd0;
+            perf_wait_ofm_cycles <= 32'd0;
+            perf_compute_cycles <= 32'd0;
         end else begin
             start_pulse <= 1'b0;
             if (layer_done)
                 done_sticky <= 1'b1;
+
+            if (layer_busy) begin
+                perf_busy_cycles <= perf_busy_cycles + 1'b1;
+                if (perf_wait_any)
+                    perf_wait_any_cycles <= perf_wait_any_cycles + 1'b1;
+                if (perf_wait_bias)
+                    perf_wait_bias_cycles <= perf_wait_bias_cycles + 1'b1;
+                if (perf_wait_weight)
+                    perf_wait_weight_cycles <= perf_wait_weight_cycles + 1'b1;
+                if (perf_wait_ifm)
+                    perf_wait_ifm_cycles <= perf_wait_ifm_cycles + 1'b1;
+                if (perf_wait_ofm)
+                    perf_wait_ofm_cycles <= perf_wait_ofm_cycles + 1'b1;
+                if (perf_compute_fire)
+                    perf_compute_cycles <= perf_compute_cycles + 1'b1;
+            end
 
             if (cfg_wr_en) begin
                 case (cfg_addr)
@@ -92,6 +136,13 @@ module layer_config_regs (
                         if (cfg_wdata[0] && cfg_idle) begin
                             start_pulse <= 1'b1;
                             done_sticky <= 1'b0;
+                            perf_busy_cycles <= 32'd0;
+                            perf_wait_any_cycles <= 32'd0;
+                            perf_wait_bias_cycles <= 32'd0;
+                            perf_wait_weight_cycles <= 32'd0;
+                            perf_wait_ifm_cycles <= 32'd0;
+                            perf_wait_ofm_cycles <= 32'd0;
+                            perf_compute_cycles <= 32'd0;
                         end
                         if (cfg_wdata[1])
                             done_sticky <= 1'b0;
@@ -159,6 +210,13 @@ module layer_config_regs (
             6'h0f: cfg_rdata = {24'd0, input_zero_point};
             6'h10: cfg_rdata = {28'd0, pool_stride, 1'b0, pool_enable};
             6'h11: cfg_rdata = expected_bytes;
+            6'h12: cfg_rdata = perf_busy_cycles;
+            6'h13: cfg_rdata = perf_wait_any_cycles;
+            6'h14: cfg_rdata = perf_wait_bias_cycles;
+            6'h15: cfg_rdata = perf_wait_weight_cycles;
+            6'h16: cfg_rdata = perf_wait_ifm_cycles;
+            6'h17: cfg_rdata = perf_wait_ofm_cycles;
+            6'h18: cfg_rdata = perf_compute_cycles;
             default: cfg_rdata = 32'd0;
         endcase
     end

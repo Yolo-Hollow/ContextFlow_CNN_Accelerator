@@ -248,6 +248,7 @@ if ($Mode -eq "conv0_conv9_chain" -or $Mode -eq "conv0_conv9_ddr_demo") {
     $Defines += "-DACCEL_CHAIN_CONV0_CONV9=1"
     if ($Mode -eq "conv0_conv9_ddr_demo") {
         $Defines += "-DACCEL_CHAIN_CONV0_CONV9_DDR=1"
+        $Defines += "-DACCEL_PERF_ONLY=1"
     }
     $BackboneRoot = "D:\MPSoC\python_prj\rtl_golden\facemask_chain_conv0_conv4_rtl"
     $Layers = @(

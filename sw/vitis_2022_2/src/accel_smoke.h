@@ -28,6 +28,13 @@
 #define ACCEL_IFM_ZP          0x3cU
 #define ACCEL_POOL_CFG        0x40U
 #define ACCEL_EXPECTED_BYTES  0x44U
+#define ACCEL_PERF_BUSY       0x48U
+#define ACCEL_PERF_WAIT_ANY   0x4cU
+#define ACCEL_PERF_WAIT_BIAS  0x50U
+#define ACCEL_PERF_WAIT_WEIGHT 0x54U
+#define ACCEL_PERF_WAIT_IFM   0x58U
+#define ACCEL_PERF_WAIT_OFM   0x5cU
+#define ACCEL_PERF_COMPUTE    0x60U
 #define ACCEL_QUANT_ADDR      0x80U
 #define ACCEL_QUANT_DATA      0x84U
 #define ACCEL_LUT_ADDR        0x88U

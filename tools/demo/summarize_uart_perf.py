@@ -4,28 +4,25 @@ from pathlib import Path
 
 
 PERF_PREFIX = "PERF "
+HWPERF_PREFIX = "HWPERF "
 
 
-def parse_perf_line(line):
+def parse_metric_line(line, prefix):
     fields = {}
-    for token in line[len(PERF_PREFIX):].split():
+    for token in line[len(prefix):].split():
         key, value = token.split("=", 1)
         fields[key] = value
 
     layer = fields.pop("layer")
     metrics = {}
     for key, value in fields.items():
-        if not key.endswith("_us"):
-            raise ValueError(f"unexpected PERF field: {key}")
         metrics[key] = int(value)
-    if "total_us" not in metrics:
-        raise ValueError("PERF line is missing total_us")
     return {"layer": layer, **metrics}
 
 
 def summarize_perf(log_text):
     layers = [
-        parse_perf_line(line.strip())
+        parse_metric_line(line.strip(), PERF_PREFIX)
         for line in log_text.splitlines()
         if line.strip().startswith(PERF_PREFIX)
     ]
@@ -49,12 +46,50 @@ def summarize_perf(log_text):
     ]
     categories.sort(key=lambda item: item["microseconds"], reverse=True)
 
+    hardware_layers = [
+        parse_metric_line(line.strip(), HWPERF_PREFIX)
+        for line in log_text.splitlines()
+        if line.strip().startswith(HWPERF_PREFIX)
+    ]
+    hardware = None
+    if hardware_layers:
+        busy_cycles = sum(layer["busy_cycles"] for layer in hardware_layers)
+        wait_cycles = sum(layer["wait_cycles"] for layer in hardware_layers)
+        nonwait_cycles = sum(layer["nonwait_cycles"] for layer in hardware_layers)
+        compute_cycles = sum(layer["compute_cycles"] for layer in hardware_layers)
+        hardware = {
+            "layers": hardware_layers,
+            "busy_cycles": busy_cycles,
+            "wait_cycles": wait_cycles,
+            "nonwait_cycles": nonwait_cycles,
+            "compute_cycles": compute_cycles,
+            "compute_percent": (
+                compute_cycles * 100.0 / busy_cycles if busy_cycles else 0.0
+            ),
+            "wait_percent": (
+                wait_cycles * 100.0 / busy_cycles if busy_cycles else 0.0
+            ),
+            "bias_wait_cycles": sum(
+                layer["bias_wait_cycles"] for layer in hardware_layers
+            ),
+            "weight_wait_cycles": sum(
+                layer["weight_wait_cycles"] for layer in hardware_layers
+            ),
+            "ifm_wait_cycles": sum(
+                layer["ifm_wait_cycles"] for layer in hardware_layers
+            ),
+            "ofm_wait_cycles": sum(
+                layer["ofm_wait_cycles"] for layer in hardware_layers
+            ),
+        }
+
     return {
         "layer_count": len(layers),
         "total_microseconds": total_us,
         "total_seconds": total_us / 1_000_000.0,
         "layers": layers,
         "categories": categories,
+        "hardware": hardware,
     }
 
 
@@ -68,6 +103,14 @@ def print_summary(summary):
             f"  {category['name']:<16} "
             f"{category['seconds']:>10.6f} s "
             f"{category['percent']:>6.2f}%"
+        )
+    if summary["hardware"]:
+        hardware = summary["hardware"]
+        print(
+            "HWPERF summary: "
+            f"busy={hardware['busy_cycles']} cycles "
+            f"compute={hardware['compute_percent']:.2f}% "
+            f"wait={hardware['wait_percent']:.2f}%"
         )
 
 
