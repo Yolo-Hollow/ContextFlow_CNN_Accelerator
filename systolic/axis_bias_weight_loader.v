@@ -50,6 +50,10 @@ module axis_bias_weight_loader #(
     output reg wgt_tile_wr_en,
     output reg [WGT_ADDR_W-1:0] wgt_tile_wr_addr,
     output reg [WEIGHT_W-1:0] wgt_tile_wr_data,
+    output reg wgt_tile_wr8_en,
+    output reg [WGT_ADDR_W-1:0] wgt_tile_wr8_addr,
+    output reg [WEIGHT_W*8-1:0] wgt_tile_wr8_data,
+    output reg [7:0] wgt_tile_wr8_keep,
 
     output reg bias_tkeep_error,
     output reg bias_tlast_error,
@@ -62,6 +66,7 @@ module axis_bias_weight_loader #(
     localparam TILE_WORDS = ROWS * COUT_TILE;
     localparam BIAS_PER_BEAT = 2;
     localparam WGT_PER_BEAT = 8;
+    localparam [WGT_ADDR_W-1:0] WGT_PER_BEAT_W = WGT_PER_BEAT;
 
     reg bias_busy;
     reg bias_req_armed;
@@ -72,9 +77,6 @@ module axis_bias_weight_loader #(
 
     reg weight_busy;
     reg weight_req_armed;
-    reg weight_pending;
-    reg [2:0] weight_lane;
-    reg [63:0] weight_hold;
     reg [WGT_ADDR_W-1:0] weight_count;
 
     wire bias_fire = bias_s_axis_tvalid && bias_s_axis_tready;
@@ -95,7 +97,7 @@ module axis_bias_weight_loader #(
         (weight_last_beat && weight_rem == 4'd7) ? 8'h7f : 8'hff;
 
     assign bias_s_axis_tready = bias_busy && !bias_pending;
-    assign weight_s_axis_tready = weight_busy && !weight_pending;
+    assign weight_s_axis_tready = weight_busy;
 
     always @(posedge clk) begin
         if (rst) begin
@@ -166,20 +168,22 @@ module axis_bias_weight_loader #(
         if (rst) begin
             weight_busy <= 1'b0;
             weight_req_armed <= 1'b1;
-            weight_pending <= 1'b0;
-            weight_lane <= 3'd0;
-            weight_hold <= 64'd0;
             weight_count <= {WGT_ADDR_W{1'b0}};
             weight_tile_ready <= 1'b0;
             wgt_tile_wr_en <= 1'b0;
             wgt_tile_wr_addr <= {WGT_ADDR_W{1'b0}};
             wgt_tile_wr_data <= {WEIGHT_W{1'b0}};
+            wgt_tile_wr8_en <= 1'b0;
+            wgt_tile_wr8_addr <= {WGT_ADDR_W{1'b0}};
+            wgt_tile_wr8_data <= {WEIGHT_W*8{1'b0}};
+            wgt_tile_wr8_keep <= 8'd0;
             weight_tkeep_error <= 1'b0;
             weight_tlast_error <= 1'b0;
             weight_completed_packets <= 32'd0;
         end else begin
             weight_tile_ready <= 1'b0;
             wgt_tile_wr_en <= 1'b0;
+            wgt_tile_wr8_en <= 1'b0;
 
             if (!weight_load_req)
                 weight_req_armed <= 1'b1;
@@ -191,35 +195,22 @@ module axis_bias_weight_loader #(
             end
 
             if (weight_fire) begin
-                weight_pending <= 1'b1;
-                weight_lane <= 3'd0;
-                weight_hold <= weight_s_axis_tdata;
+                wgt_tile_wr8_en <= 1'b1;
+                wgt_tile_wr8_addr <= weight_count;
+                wgt_tile_wr8_data <= weight_s_axis_tdata;
+                wgt_tile_wr8_keep <= weight_s_axis_tkeep;
                 if (weight_s_axis_tkeep != weight_expect_keep)
                     weight_tkeep_error <= 1'b1;
                 if (weight_s_axis_tlast != (weight_last_beat && weight_stream_last))
                     weight_tlast_error <= 1'b1;
-            end
 
-            if (weight_pending) begin
-                wgt_tile_wr_en <= 1'b1;
-                wgt_tile_wr_addr <= weight_count;
-                wgt_tile_wr_data <= weight_hold[weight_lane*8 +: 8];
-
-                if (weight_count == TILE_WORDS - 1) begin
-                    weight_pending <= 1'b0;
+                if (weight_last_beat) begin
                     weight_busy <= 1'b0;
-                    weight_lane <= 3'd0;
                     weight_count <= {WGT_ADDR_W{1'b0}};
                     weight_tile_ready <= 1'b1;
                     weight_completed_packets <= weight_completed_packets + 1'b1;
                 end else begin
-                    weight_count <= weight_count + 1'b1;
-                    if (weight_lane == WGT_PER_BEAT - 1) begin
-                        weight_pending <= 1'b0;
-                        weight_lane <= 3'd0;
-                    end else begin
-                        weight_lane <= weight_lane + 1'b1;
-                    end
+                    weight_count <= weight_count + WGT_PER_BEAT_W;
                 end
             end
             if (stream_reset)

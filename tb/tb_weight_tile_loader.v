@@ -12,6 +12,10 @@ module tb_weight_tile_loader;
     reg tile_wr_en;
     reg [ADDR_W-1:0] tile_wr_addr;
     reg [WEIGHT_W-1:0] tile_wr_data;
+    reg tile_wr8_en;
+    reg [ADDR_W-1:0] tile_wr8_addr;
+    reg [WEIGHT_W*8-1:0] tile_wr8_data;
+    reg [7:0] tile_wr8_keep;
     reg start;
     wire busy, done;
     reg [ROWS-1:0] wgt_fifo_full;
@@ -23,6 +27,8 @@ module tb_weight_tile_loader;
     ) dut (
         .clk(clk), .rst(rst),
         .tile_wr_en(tile_wr_en), .tile_wr_addr(tile_wr_addr), .tile_wr_data(tile_wr_data),
+        .tile_wr8_en(tile_wr8_en), .tile_wr8_addr(tile_wr8_addr),
+        .tile_wr8_data(tile_wr8_data), .tile_wr8_keep(tile_wr8_keep),
         .start(start), .busy(busy), .done(done),
         .wgt_fifo_full(wgt_fifo_full),
         .wgt_fifo_wr_en(wgt_fifo_wr_en), .wgt_fifo_wr_data(wgt_fifo_wr_data)
@@ -31,7 +37,7 @@ module tb_weight_tile_loader;
     always #5 clk = ~clk;
 
     integer pass, fail;
-    integer row, col, addr, cycle_count;
+    integer row, col, addr, cycle_count, lane;
     reg [7:0] expected0, expected1, got0, got1;
 
     function [7:0] weight_value;
@@ -73,6 +79,10 @@ module tb_weight_tile_loader;
         tile_wr_en = 0;
         tile_wr_addr = 0;
         tile_wr_data = 0;
+        tile_wr8_en = 0;
+        tile_wr8_addr = 0;
+        tile_wr8_data = 0;
+        tile_wr8_keep = 0;
         start = 0;
         wgt_fifo_full = 0;
         pass = 0;
@@ -89,6 +99,20 @@ module tb_weight_tile_loader;
         end
         @(negedge clk);
         tile_wr_en = 1'b0;
+
+        for (addr = 0; addr < TILE_WORDS; addr = addr + 8) begin
+            @(negedge clk);
+            tile_wr8_en = 1'b1;
+            tile_wr8_addr = addr[ADDR_W-1:0];
+            tile_wr8_keep = 8'hff;
+            tile_wr8_data = 64'd0;
+            for (lane = 0; lane < 8; lane = lane + 1)
+                tile_wr8_data[lane*8 +: 8] =
+                    weight_value((addr + lane) / COUT_TILE, (addr + lane) % COUT_TILE);
+        end
+        @(negedge clk);
+        tile_wr8_en = 1'b0;
+        tile_wr8_keep = 8'd0;
 
         start = 1'b1;
         @(negedge clk);

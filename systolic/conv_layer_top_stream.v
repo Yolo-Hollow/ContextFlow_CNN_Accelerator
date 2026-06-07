@@ -68,6 +68,10 @@ module conv_layer_top_stream #(
     input  wgt_tile_wr_en,
     input  [WGT_TILE_AW-1:0] wgt_tile_wr_addr,
     input  [WEIGHT_W-1:0]    wgt_tile_wr_data,
+    input                    wgt_tile_wr8_en,
+    input  [WGT_TILE_AW-1:0] wgt_tile_wr8_addr,
+    input  [WEIGHT_W*8-1:0]  wgt_tile_wr8_data,
+    input  [7:0]             wgt_tile_wr8_keep,
 
     output feeder_fill_req,
     output [8:0] feeder_fill_fy,
@@ -231,6 +235,8 @@ module conv_layer_top_stream #(
     ) u_weight_loader (
         .clk(clk), .rst(rst),
         .tile_wr_en(wgt_tile_wr_en), .tile_wr_addr(wgt_tile_wr_addr), .tile_wr_data(wgt_tile_wr_data),
+        .tile_wr8_en(wgt_tile_wr8_en), .tile_wr8_addr(wgt_tile_wr8_addr),
+        .tile_wr8_data(wgt_tile_wr8_data), .tile_wr8_keep(wgt_tile_wr8_keep),
         .start(wgt_loader_start), .busy(), .done(wgt_loader_done),
         .wgt_fifo_full(wgt_fifo_full),
         .wgt_fifo_wr_en(wgt_fifo_wr_en),

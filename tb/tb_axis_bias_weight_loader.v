@@ -38,6 +38,10 @@ module tb_axis_bias_weight_loader;
     wire wgt_tile_wr_en;
     wire [WGT_AW-1:0] wgt_tile_wr_addr;
     wire [WEIGHT_W-1:0] wgt_tile_wr_data;
+    wire wgt_tile_wr8_en;
+    wire [WGT_AW-1:0] wgt_tile_wr8_addr;
+    wire [WEIGHT_W*8-1:0] wgt_tile_wr8_data;
+    wire [7:0] wgt_tile_wr8_keep;
 
     wire bias_tkeep_error;
     wire bias_tlast_error;
@@ -87,6 +91,10 @@ module tb_axis_bias_weight_loader;
         .wgt_tile_wr_en(wgt_tile_wr_en),
         .wgt_tile_wr_addr(wgt_tile_wr_addr),
         .wgt_tile_wr_data(wgt_tile_wr_data),
+        .wgt_tile_wr8_en(wgt_tile_wr8_en),
+        .wgt_tile_wr8_addr(wgt_tile_wr8_addr),
+        .wgt_tile_wr8_data(wgt_tile_wr8_data),
+        .wgt_tile_wr8_keep(wgt_tile_wr8_keep),
         .bias_tkeep_error(bias_tkeep_error),
         .bias_tlast_error(bias_tlast_error),
         .weight_tkeep_error(weight_tkeep_error),
@@ -152,6 +160,7 @@ module tb_axis_bias_weight_loader;
         end
     endtask
 
+    integer weight_lane_check;
     always @(posedge clk) begin
         #1;
         if (!rst && bias_wr_en) begin
@@ -159,10 +168,17 @@ module tb_axis_bias_weight_loader;
             check(bias_wr_data == 32'h1000_0000 + bias_seen, "AXIS bias data order");
             bias_seen = bias_seen + 1;
         end
-        if (!rst && wgt_tile_wr_en) begin
-            check(wgt_tile_wr_addr == weight_seen[WGT_AW-1:0], "AXIS weight address order");
-            check(wgt_tile_wr_data == (weight_seen[7:0] ^ 8'h5a), "AXIS weight data order");
-            weight_seen = weight_seen + 1;
+        if (!rst && wgt_tile_wr_en)
+            check(1'b0, "AXIS weight narrow write should be idle");
+        if (!rst && wgt_tile_wr8_en) begin
+            check(wgt_tile_wr8_addr == weight_seen[WGT_AW-1:0], "AXIS packed weight base address order");
+            check(wgt_tile_wr8_keep == 8'hff, "AXIS packed weight keep");
+            for (weight_lane_check = 0; weight_lane_check < 8; weight_lane_check = weight_lane_check + 1) begin
+                check(wgt_tile_wr8_data[weight_lane_check*8 +: 8] ==
+                      (((weight_seen + weight_lane_check) & 8'hff) ^ 8'h5a),
+                      "AXIS packed weight data order");
+            end
+            weight_seen = weight_seen + 8;
         end
         if (!rst && bias_load_done)
             bias_done_seen = bias_done_seen + 1;

@@ -386,6 +386,8 @@ module `TB_CONV_ACCEL_CORE_MODULE;
         .weight_load_req(weight_load_req), .weight_tile_ready(weight_tile_ready),
         .wgt_tile_wr_en(wgt_tile_wr_en), .wgt_tile_wr_addr(wgt_tile_wr_addr),
         .wgt_tile_wr_data(wgt_tile_wr_data),
+        .wgt_tile_wr8_en(1'b0), .wgt_tile_wr8_addr({WGT_TILE_AW{1'b0}}),
+        .wgt_tile_wr8_data(64'd0), .wgt_tile_wr8_keep(8'd0),
 `endif
 `ifdef TB_CONV_ACCEL_CORE_USE_AXIS_STREAM
         .feeder_fill_req(feeder_fill_req), .feeder_fill_fy(feeder_fill_fy),

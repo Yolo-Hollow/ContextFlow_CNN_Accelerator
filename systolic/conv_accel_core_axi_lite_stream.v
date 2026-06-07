@@ -156,6 +156,8 @@ module conv_accel_core_axi_lite_stream #(
         .weight_load_req(weight_load_req), .weight_tile_ready(weight_tile_ready),
         .wgt_tile_wr_en(wgt_tile_wr_en), .wgt_tile_wr_addr(wgt_tile_wr_addr),
         .wgt_tile_wr_data(wgt_tile_wr_data),
+        .wgt_tile_wr8_en(1'b0), .wgt_tile_wr8_addr({WGT_TILE_AW{1'b0}}),
+        .wgt_tile_wr8_data({(WEIGHT_W*8){1'b0}}), .wgt_tile_wr8_keep(8'd0),
         .feeder_fill_req(feeder_fill_req), .feeder_fill_fy(feeder_fill_fy),
         .dma_bank_wr_en(dma_bank_wr_en), .dma_wr_x(dma_wr_x), .dma_wr_fy(dma_wr_fy),
         .dma_wr_data(dma_wr_data), .dma_line_advance(dma_line_advance),

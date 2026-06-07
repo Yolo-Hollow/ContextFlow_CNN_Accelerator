@@ -272,6 +272,16 @@ Aggregate IFM packing is about `43.5 ms`, and weight packing is eliminated.
 The fixed golden chain is slower because it performs full per-layer output
 preservation and comparison and should not be used as deployment timing.
 
+The `wgt64` hardware build keeps the same software ABI and prepacked weight
+stream format, but the PL weight loader now writes each 64-bit AXIS beat into
+eight byte banks in one cycle.  Build directory
+`build_system_xck26_kv260_wgt64` closes timing with `WNS=0.051 ns` and `0`
+routing errors.  On the same two-image DDR demo, ten-layer latency is
+`0.861417 s` and `0.861422 s`; fixed-chain bit-exact validation and detection
+outputs are unchanged.  The aggregate PL weight wait drops from about
+`359.1 ms` to `41.9 ms`, with Conv6 weight wait dropping from `213.647 ms` to
+`24.904 ms`.
+
 ## Native 1x1 mode
 
 `CONV[16]` selects the native 1x1 path. It requires batch mode, stride 1,
@@ -292,6 +302,16 @@ Build and run the native platform with:
 C:\Xilinx\Vivado\2022.2\bin\vivado.bat -mode batch -source tcl/build_kv260_system_xck26.tcl -tclargs -build_dir D:/MPSoC/accelerator_systolic/build_system_xck26_kv260_native1x1 -jobs 12
 powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/manual_build_accel_smoke.ps1 -Mode conv0_conv9_ddr_demo
 powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/run_kv260_image_demo.ps1 -Image D:\MPSoC\python_prj\facemask\images\maksssksksss0.png -PortName COM8 -BuildDirName build_system_xck26_kv260_native1x1
+```
+
+Build and run the current weight-loader-optimized platform with:
+
+```powershell
+C:\Xilinx\Vivado\2022.2\bin\vivado.bat -mode batch -source tcl/build_kv260_system_xck26.tcl -tclargs -build_dir D:/MPSoC/accelerator_systolic/build_system_xck26_kv260_wgt64 -jobs 12
+powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/manual_build_accel_smoke.ps1 -Mode conv0_conv9_batch_chain
+powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/run_kv260_smoke_sequence.ps1 -PortName COM8 -BuildDirName build_system_xck26_kv260_wgt64 -RunConv0Conv9BatchChain -CaptureSeconds 300
+powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/manual_build_accel_smoke.ps1 -Mode conv0_conv9_ddr_demo
+powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/run_kv260_image_demo.ps1 -Image D:\MPSoC\python_prj\facemask\images\maksssksksss0.png -PortName COM8 -BuildDirName build_system_xck26_kv260_wgt64
 ```
 
 ## Software scheduler skeleton

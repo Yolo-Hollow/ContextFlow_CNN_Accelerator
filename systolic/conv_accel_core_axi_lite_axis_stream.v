@@ -107,6 +107,10 @@ module conv_accel_core_axi_lite_axis_stream #(
     wire wgt_tile_wr_en;
     wire [WGT_TILE_AW-1:0] wgt_tile_wr_addr;
     wire [WEIGHT_W-1:0] wgt_tile_wr_data;
+    wire wgt_tile_wr8_en;
+    wire [WGT_TILE_AW-1:0] wgt_tile_wr8_addr;
+    wire [WEIGHT_W*8-1:0] wgt_tile_wr8_data;
+    wire [7:0] wgt_tile_wr8_keep;
 
     wire [IFM_BANKS-1:0] dma_bank_wr_en;
     wire [8:0] dma_wr_x;
@@ -245,6 +249,10 @@ module conv_accel_core_axi_lite_axis_stream #(
         .wgt_tile_wr_en(wgt_tile_wr_en),
         .wgt_tile_wr_addr(wgt_tile_wr_addr),
         .wgt_tile_wr_data(wgt_tile_wr_data),
+        .wgt_tile_wr8_en(wgt_tile_wr8_en),
+        .wgt_tile_wr8_addr(wgt_tile_wr8_addr),
+        .wgt_tile_wr8_data(wgt_tile_wr8_data),
+        .wgt_tile_wr8_keep(wgt_tile_wr8_keep),
         .bias_tkeep_error(bias_tkeep_error),
         .bias_tlast_error(bias_tlast_error),
         .weight_tkeep_error(weight_tkeep_error),
@@ -381,6 +389,10 @@ module conv_accel_core_axi_lite_axis_stream #(
         .wgt_tile_wr_en(wgt_tile_wr_en),
         .wgt_tile_wr_addr(wgt_tile_wr_addr),
         .wgt_tile_wr_data(wgt_tile_wr_data),
+        .wgt_tile_wr8_en(wgt_tile_wr8_en),
+        .wgt_tile_wr8_addr(wgt_tile_wr8_addr),
+        .wgt_tile_wr8_data(wgt_tile_wr8_data),
+        .wgt_tile_wr8_keep(wgt_tile_wr8_keep),
         .feeder_fill_req(feeder_fill_req),
         .feeder_fill_fy(feeder_fill_fy),
         .dma_bank_wr_en(dma_bank_wr_en),

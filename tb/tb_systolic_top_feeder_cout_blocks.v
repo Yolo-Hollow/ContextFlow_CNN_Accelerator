@@ -82,6 +82,8 @@ module tb_systolic_top_feeder_cout_blocks;
     ) u_weight_loader (
         .clk(clk), .rst(rst),
         .tile_wr_en(wgt_tile_wr_en), .tile_wr_addr(wgt_tile_wr_addr), .tile_wr_data(wgt_tile_wr_data),
+        .tile_wr8_en(1'b0), .tile_wr8_addr({WGT_TILE_AW{1'b0}}),
+        .tile_wr8_data(64'd0), .tile_wr8_keep(8'd0),
         .start(wgt_loader_start), .busy(wgt_loader_busy), .done(wgt_loader_done),
         .wgt_fifo_full(wgt_fifo_full),
         .wgt_fifo_wr_en(wgt_fifo_wr_en),
