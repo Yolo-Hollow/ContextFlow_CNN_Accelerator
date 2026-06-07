@@ -249,6 +249,7 @@ if ($Mode -eq "conv0_conv9_chain" -or $Mode -eq "conv0_conv9_batch_chain" -or $M
     if ($Mode -eq "conv0_conv9_batch_chain" -or $Mode -eq "conv0_conv9_ddr_demo") {
         $Defines += "-DACCEL_BATCH_STREAM=1"
         $Defines += "-DACCEL_NATIVE_1X1=1"
+        $Defines += "-DACCEL_PREPACKED_WEIGHT=1"
     }
     if ($Mode -eq "conv0_conv9_ddr_demo") {
         $Defines += "-DACCEL_CHAIN_CONV0_CONV9_DDR=1"
@@ -280,6 +281,9 @@ if ($Mode -eq "conv0_conv9_chain" -or $Mode -eq "conv0_conv9_batch_chain" -or $M
         }
         if ($Layer.Emulate1x1) {
             $Args += "--emulate-1x1-as-3x3"
+        }
+        if ($Mode -eq "conv0_conv9_batch_chain" -or $Mode -eq "conv0_conv9_ddr_demo") {
+            $Args += "--prepack-weight-stream"
         }
         & $Python @Args
     }

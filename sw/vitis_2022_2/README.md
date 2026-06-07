@@ -263,11 +263,12 @@ powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/run_kv260_smoke
 The native 1x1 build is bit-exact through Conv9 and matches the RTL-chain
 decode golden. IFM batch packing generates one COUT block and copies the
 identical stream to the remaining blocks; 3x3 bank-to-channel lookup is also
-performed once per K pass. This software-only optimization requires no PL
-reprogramming. The deployment-oriented DDR image path runs ten layers in
-about `1.340 s`; two images measured `1.340404 s` and `1.340376 s`.
-Aggregate IFM packing fell from `1.224793 s` to about `43.4 ms`, while Conv6
-fell from `1.162454 s` to about `0.663 s`.
+performed once per K pass. Batch/DDR header generation additionally emits
+weights directly in AXI packet order, so DMA reads the ELF read-only arrays
+without runtime repacking or a scratch copy. These software-only optimizations
+require no PL reprogramming. The deployment-oriented DDR image path runs ten
+layers in about `1.179 s`; two images measured `1.178568 s` and `1.178591 s`.
+Aggregate IFM packing is about `43.5 ms`, and weight packing is eliminated.
 The fixed golden chain is slower because it performs full per-layer output
 preservation and comparison and should not be used as deployment timing.
 

@@ -20,6 +20,15 @@
 #if ACCEL_CHAIN_CONV0_CONV9
 #include "conv9_data.h"
 #include "yolo_decode.h"
+#if ACCEL_PREPACKED_WEIGHT
+#if !CONV0_POOL_WEIGHT_PREPACKED || !CONV1_POOL_WEIGHT_PREPACKED || \
+    !CONV2_POOL_WEIGHT_PREPACKED || !CONV3_POOL_WEIGHT_PREPACKED || \
+    !CONV4_POOL_WEIGHT_PREPACKED || !CONV5_POOL_WEIGHT_PREPACKED || \
+    !CONV6_WEIGHT_PREPACKED || !CONV7_WEIGHT_PREPACKED || \
+    !CONV8_WEIGHT_PREPACKED || !CONV9_WEIGHT_PREPACKED
+#error "ACCEL_PREPACKED_WEIGHT requires prepacked headers for every layer"
+#endif
+#endif
 #endif
 #else
 #include "conv4_pool_data.h"
@@ -957,9 +966,11 @@ static int pack_batch_bias_stream(const chain_layer_t *layer, uint32_t *bytes_ou
     return 0;
 }
 
-static int pack_batch_weight_stream(const chain_layer_t *layer, uint32_t *bytes_out)
+static int prepare_batch_weight_stream(
+    const chain_layer_t *layer,
+    const void **stream_out,
+    uint32_t *bytes_out)
 {
-    uint64_t *dst = (uint64_t *)(UINTPTR)BATCH_WEIGHT_ADDR;
     const uint32_t packet_bytes = CHAIN_ROWS * CHAIN_COUT_TILE;
     const uint32_t total_packets = layer->cout_blocks * layer->k_passes;
     const uint32_t total_bytes = total_packets * packet_bytes;
@@ -969,6 +980,12 @@ static int pack_batch_weight_stream(const chain_layer_t *layer, uint32_t *bytes_
                    (unsigned long)BATCH_WEIGHT_CAPACITY);
         return -1;
     }
+#if ACCEL_PREPACKED_WEIGHT
+    *stream_out = layer->weight_s8;
+    *bytes_out = total_bytes;
+    return 0;
+#else
+    uint64_t *dst = (uint64_t *)(UINTPTR)BATCH_WEIGHT_ADDR;
     for (uint32_t cb = 0U; cb < layer->cout_blocks; ++cb) {
         uint32_t cout_base = cb * CHAIN_COUT_TILE;
         for (uint32_t kp = 0U; kp < layer->k_passes; ++kp) {
@@ -976,8 +993,10 @@ static int pack_batch_weight_stream(const chain_layer_t *layer, uint32_t *bytes_
             dst += packet_bytes / sizeof(uint64_t);
         }
     }
+    *stream_out = (const void *)(UINTPTR)BATCH_WEIGHT_ADDR;
     *bytes_out = total_bytes;
     return 0;
+#endif
 }
 
 static int pack_batch_ifm_stream(
@@ -1508,6 +1527,7 @@ static int run_one_tile_batch(
     const chain_tile_t *tile,
     uint32_t tile_index,
     uint32_t bias_bytes,
+    const void *weight_stream,
     uint32_t weight_bytes,
     const batch_ifm_stream_t *ifm_stream,
     const chain_tile_t *next_tile,
@@ -1570,7 +1590,7 @@ static int run_one_tile_batch(
     XTime_GetTime(&end);
     layer_perf.bias_dma += end - begin;
     XTime_GetTime(&begin);
-    dma_start_mm2s(DMA_WEIGHT_BASE_ADDR, (const void *)(UINTPTR)BATCH_WEIGHT_ADDR, weight_bytes);
+    dma_start_mm2s(DMA_WEIGHT_BASE_ADDR, weight_stream, weight_bytes);
     ++layer_perf.dma_weight_starts;
     XTime_GetTime(&end);
     layer_perf.weight_dma += end - begin;
@@ -1788,6 +1808,7 @@ static int run_layer(chain_layer_t *layer)
     layer_perf.clear += end - begin;
 #if ACCEL_BATCH_STREAM
     uint32_t batch_bias_bytes;
+    const void *batch_weight_stream;
     uint32_t batch_weight_bytes;
     batch_ifm_stream_t current_ifm_stream;
     batch_ifm_stream_t next_ifm_stream;
@@ -1802,7 +1823,8 @@ static int run_layer(chain_layer_t *layer)
     XTime_GetTime(&end);
     layer_perf.bias_pack += end - begin;
     XTime_GetTime(&begin);
-    if (pack_batch_weight_stream(layer, &batch_weight_bytes) != 0) {
+    if (prepare_batch_weight_stream(
+            layer, &batch_weight_stream, &batch_weight_bytes) != 0) {
         return -1;
     }
     XTime_GetTime(&end);
@@ -1827,7 +1849,7 @@ static int run_layer(chain_layer_t *layer)
             BATCH_IFM1_ADDR : BATCH_IFM0_ADDR;
         if (run_one_tile_batch(
                 layer, tile, i,
-                batch_bias_bytes, batch_weight_bytes,
+                batch_bias_bytes, batch_weight_stream, batch_weight_bytes,
                 &current_ifm_stream,
                 next_tile, next_ifm_address, &next_ifm_stream,
                 &total_bias, &total_weight, &total_ifm) != 0) {

@@ -47,6 +47,26 @@ def pack_weight_kco(weight_oihw, cin, cout, kernel, emulate_1x1_as_3x3=False):
     return weight_kco, hw_kernel
 
 
+def pack_weight_stream(weight_kco, k_total, cout, rows=18, cout_tile=16):
+    k_passes = (k_total + rows - 1) // rows
+    cout_blocks = (cout + cout_tile - 1) // cout_tile
+    packed = []
+    for block in range(cout_blocks):
+        cout_base = block * cout_tile
+        for kpass in range(k_passes):
+            k_base = kpass * rows
+            for kk in range(rows):
+                for lane in range(cout_tile):
+                    gk = k_base + kk
+                    co = cout_base + lane
+                    packed.append(
+                        weight_kco[gk * cout + co]
+                        if gk < k_total and co < cout
+                        else 0
+                    )
+    return packed
+
+
 def main():
     parser = argparse.ArgumentParser(description="Generate a Vitis C header for one single-scale RTL golden layer.")
     parser.add_argument("layer_dir", help="Layer directory produced by export_rtl_single_scale_golden.py")
@@ -58,6 +78,11 @@ def main():
         "--emulate-1x1-as-3x3",
         action="store_true",
         help="Expand native 1x1 weights to center-only 3x3 weights for the existing 3x3 RTL datapath.",
+    )
+    parser.add_argument(
+        "--prepack-weight-stream",
+        action="store_true",
+        help="Emit weights directly in COUT-block/K-pass AXI packet order.",
     )
     args = parser.parse_args()
 
@@ -93,6 +118,11 @@ def main():
         raise RuntimeError(f"Hardware K_TOTAL {hw_k_total} does not fit the 14-bit K path")
 
     bias = list(struct.unpack("<" + "i" * cout, bias_raw))
+    emitted_weight = (
+        pack_weight_stream(weight_kco, hw_k_total, cout)
+        if args.prepack_weight_stream
+        else weight_kco
+    )
     guard = f"{args.prefix.upper()}_DATA_H"
 
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -101,8 +131,13 @@ def main():
         f.write(f"#define {guard}\n\n")
         f.write("#include <stdint.h>\n\n")
         f.write(f"/* Generated from {layer_dir.as_posix()}. */\n")
+        weight_layout = (
+            f"prepacked stream {len(emitted_weight)} bytes"
+            if args.prepack_weight_stream
+            else f"KCO {hw_k_total}x{cout}"
+        )
         f.write(
-            f"/* IFM {ifm_h}x{ifm_w}x{cin}, weight KCO {hw_k_total}x{cout}, "
+            f"/* IFM {ifm_h}x{ifm_w}x{cin}, weight {weight_layout}, "
             f"golden {final_h}x{final_w}x{cout}. */\n\n"
         )
         f.write(f"#define {args.prefix.upper()}_NATIVE_KERNEL {kernel}U\n")
@@ -113,9 +148,17 @@ def main():
             f"#define {args.prefix.upper()}_EMULATE_1X1_AS_3X3 "
             f"{1 if args.emulate_1x1_as_3x3 else 0}U\n\n"
         )
+        f.write(
+            f"#define {args.prefix.upper()}_WEIGHT_PREPACKED "
+            f"{1 if args.prepack_weight_stream else 0}U\n"
+        )
+        f.write(
+            f"#define {args.prefix.upper()}_WEIGHT_STREAM_BYTES "
+            f"{len(emitted_weight)}U\n\n"
+        )
         if ifm is not None:
             emit_array(f, "uint8_t", f"{args.prefix}_ifm_u8", list(ifm))
-        emit_array(f, "int8_t", f"{args.prefix}_weight_s8", weight_kco)
+        emit_array(f, "int8_t", f"{args.prefix}_weight_s8", emitted_weight)
         emit_array(f, "int32_t", f"{args.prefix}_bias_i32", bias, per_line=8)
         emit_array(f, "uint8_t", f"{args.prefix}_activation_lut_u8", list(lut))
         emit_array(f, "uint8_t", f"{args.prefix}_golden_ofm_u8", list(golden))
