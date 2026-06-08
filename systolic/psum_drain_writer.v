@@ -28,79 +28,98 @@ module psum_drain_writer #(
     output reg [COLS*PSUM_W*2-1:0] packet_data,
     output reg packet_is_final
 );
-    localparam ST_IDLE    = 2'd0;
-    localparam ST_WAIT    = 2'd1;
-    localparam ST_READ    = 2'd2;
-    localparam ST_CAPTURE = 2'd3;
-
     localparam [31:0] COL_MASK = (32'h1 << COLS) - 1;
 
-    reg [1:0] state;
-    reg [AW-1:0] count;
+    reg [15:0] rd_count;
+    reg [15:0] out_count;
+    reg [AW-1:0] pending_addr;
+    reg read_pending;
+    reg hold_valid;
+    reg [AW-1:0] hold_addr;
+    reg [COLS*PSUM_W*2-1:0] hold_data;
 
     wire fifos_ready = ((psum_fifo_empty & COL_MASK) == 32'd0);
     wire [15:0] pixels_to_drain = (num_pixels == 16'd0) ? 16'd1 : num_pixels;
+    wire packet_pop = packet_valid && packet_ready;
+    wire [1:0] stored_count = {1'b0, packet_valid} + {1'b0, hold_valid};
+    wire [1:0] stored_after_pop = stored_count - {1'b0, packet_pop};
+    wire [1:0] stored_after_return = stored_after_pop + {1'b0, read_pending};
+    wire can_accept_future_return = (stored_after_return < 2'd2);
+    wire issue_read = busy && (rd_count < pixels_to_drain) &&
+                      fifos_ready && can_accept_future_return;
 
-    assign psum_fifo_rd_en = (state == ST_READ) ? COL_MASK : 32'd0;
+    assign psum_fifo_rd_en = issue_read ? COL_MASK : 32'd0;
 
     always @(posedge clk) begin
         if (rst) begin
-            state <= ST_IDLE;
             busy <= 1'b0;
             done <= 1'b0;
             packet_valid <= 1'b0;
             packet_addr <= {AW{1'b0}};
             packet_data <= {COLS*PSUM_W*2{1'b0}};
             packet_is_final <= 1'b0;
-            count <= {AW{1'b0}};
+            rd_count <= 16'd0;
+            out_count <= 16'd0;
+            pending_addr <= {AW{1'b0}};
+            read_pending <= 1'b0;
+            hold_valid <= 1'b0;
+            hold_addr <= {AW{1'b0}};
+            hold_data <= {COLS*PSUM_W*2{1'b0}};
         end else begin
             done <= 1'b0;
 
-            case (state)
-                ST_IDLE: begin
+            if (!busy) begin
+                packet_valid <= 1'b0;
+                hold_valid <= 1'b0;
+                read_pending <= 1'b0;
+                rd_count <= 16'd0;
+                out_count <= 16'd0;
+                pending_addr <= {AW{1'b0}};
+                if (start) begin
+                    busy <= 1'b1;
+                    packet_is_final <= is_final_pass;
+                end
+            end else begin
+                if (packet_pop && (out_count == pixels_to_drain - 16'd1)) begin
                     busy <= 1'b0;
+                    done <= 1'b1;
                     packet_valid <= 1'b0;
-                    count <= {AW{1'b0}};
-                    if (start) begin
-                        busy <= 1'b1;
-                        packet_is_final <= is_final_pass;
-                        state <= ST_WAIT;
-                    end
-                end
+                    hold_valid <= 1'b0;
+                    read_pending <= 1'b0;
+                end else begin
+                    if (packet_pop)
+                        out_count <= out_count + 16'd1;
 
-                ST_WAIT: begin
-                    packet_valid <= 1'b0;
-                    if (fifos_ready)
-                        state <= ST_READ;
-                end
-
-                ST_READ: begin
-                    packet_valid <= 1'b0;
-                    state <= ST_CAPTURE;
-                end
-
-                ST_CAPTURE: begin
-                    if (!packet_valid) begin
-                        packet_valid <= 1'b1;
-                        packet_addr <= count;
-                        packet_data <= psum_fifo_rd_data;
-                    end else if (packet_ready) begin
-                        packet_valid <= 1'b0;
-                        if (count == pixels_to_drain[AW-1:0] - 1'b1) begin
-                            busy <= 1'b0;
-                            done <= 1'b1;
-                            state <= ST_IDLE;
+                    if (packet_pop || !packet_valid) begin
+                        if (hold_valid) begin
+                            packet_valid <= 1'b1;
+                            packet_addr <= hold_addr;
+                            packet_data <= hold_data;
+                            hold_valid <= read_pending;
+                            if (read_pending) begin
+                                hold_addr <= pending_addr;
+                                hold_data <= psum_fifo_rd_data;
+                            end
+                        end else if (read_pending) begin
+                            packet_valid <= 1'b1;
+                            packet_addr <= pending_addr;
+                            packet_data <= psum_fifo_rd_data;
                         end else begin
-                            count <= count + 1'b1;
-                            state <= ST_WAIT;
+                            packet_valid <= 1'b0;
                         end
+                    end else if (read_pending) begin
+                        hold_valid <= 1'b1;
+                        hold_addr <= pending_addr;
+                        hold_data <= psum_fifo_rd_data;
                     end
-                end
 
-                default: begin
-                    state <= ST_IDLE;
+                    if (issue_read) begin
+                        pending_addr <= rd_count[AW-1:0];
+                        rd_count <= rd_count + 16'd1;
+                    end
+                    read_pending <= issue_read;
                 end
-            endcase
+            end
         end
     end
 endmodule

@@ -320,6 +320,48 @@ The aggregate split is `bias=29904`, `weight=5617752`, `feeder=22054628`,
 shows that the largest remaining PL stages are PSUM drain, compute-stage
 overhead, and IFM feeder, not the weight-loader path.
 
+The `drainpipe` hardware build pipelines `psum_drain_writer` without changing
+the software ABI or OFM debug packet format. The writer now uses 16-bit
+internal read/output counters, a one-cycle read-return tracker, and a one-entry
+hold register so it can emit one PSUM packet per cycle when downstream is
+ready. This also fixes the `num_pixels == 2^PSUM_BUF_AW` boundary that appears
+in Conv0 batch tiles (`128` pixels with `AW=7`).
+
+Local validation completed before board bring-up:
+
+```text
+tb_psum_drain_writer                         203 pass, 0 fail
+tb_layer_config_regs                         70 pass, 0 fail
+tb_axi_lite_cfg_bridge                       81 pass, 0 fail
+tb_conv_accel_core_axi_lite_axis_stream_native1x1_small 80 pass, 0 fail
+tb_conv_accel_core_axi_lite_axis_stream_conv0_crop_pool_r18_c8_b2_batch_ext 532 pass, 0 fail
+tb_conv_accel_core_axi_lite_axis_stream_conv7_native1x1_ext_tile0 13332 pass, 0 fail
+tb_conv_accel_core_axi_lite_axis_stream_conv9_native1x1_ext_tail 332 pass, 0 fail
+tb_conv_accel_core_axi_lite_axis_stream_r18_c8_b2_layer06_ext_tile4 26641 pass, 0 fail
+```
+
+The build directory is `build_system_xck26_kv260_drainpipe`. It was generated
+from the active shell Vivado (`2025.2`) and closes timing with `WNS=0.348 ns`,
+`TNS=0`, `WHS=0.007 ns`, `THS=0`, and `0` routing errors. Resources are
+`CLB LUTs=52509 (44.83%)`, `CLB Registers=46731 (19.95%)`,
+`BRAM Tile=45.5 (31.60%)`, and `DSP=177 (14.18%)`. The XSA SHA256 is
+`A04D7BAA94C1F6F71F457B9EF361887DB042B02744EDBB00E802DA4F4C025634`; the
+bitstream SHA256 is
+`FF53FB9BB0EA579B37AB7F0D6D59EE66F0A92F4A064E8607B0D4CDEFE416F5FE`.
+
+Board validation is pending because the current host session does not see the
+KV260 UART or JTAG target. `Win32_SerialPort` only reports Bluetooth COM3/COM4,
+and `C:\Xilinx\Vitis\2022.2\bin\xsct.bat sw/vitis_2022_2/scripts/probe_jtag_targets.tcl`
+prints no JTAG targets. Reconnect or power-cycle the KV260 until the board UART
+and `Cortex-A53 #0` target enumerate, then run the full sequence without
+`-FastRun`:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/run_kv260_smoke_sequence.ps1 -PortName COM8 -BuildDirName build_system_xck26_kv260_drainpipe -RunConv0Conv9BatchChain -CaptureSeconds 240
+powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/run_kv260_image_demo.ps1 -Image D:\MPSoC\python_prj\facemask\images\maksssksksss0.png -PortName COM8 -BuildDirName build_system_xck26_kv260_drainpipe -FastRun -CaptureSeconds 300
+powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/run_kv260_image_demo.ps1 -Image D:\MPSoC\python_prj\facemask\images\maksssksksss1.png -PortName COM8 -BuildDirName build_system_xck26_kv260_drainpipe -FastRun -CaptureSeconds 300
+```
+
 ## Native 1x1 mode
 
 `CONV[16]` selects the native 1x1 path. It requires batch mode, stride 1,

@@ -140,6 +140,7 @@ module conv_layer_top_stream #(
     wire [PSUM_BUF_AW-1:0] drain_packet_addr;
     wire [COLS*2*PSUM_W-1:0] drain_packet_data;
     wire drain_packet_is_final;
+    wire drain_packet_fire;
     wire final_fifo_ready;
     wire final_fifo_valid;
     wire [PSUM_BUF_AW-1:0] final_fifo_addr;
@@ -264,7 +265,8 @@ module conv_layer_top_stream #(
         end else begin
             if (bias_wr_en && bias_wr_addr == 6'd0)
                 bias_col0 <= bias_wr_data;
-            if (drain_packet_valid && !drain_packet_is_final && drain_packet_addr == {PSUM_BUF_AW{1'b0}})
+            if (drain_packet_fire && !drain_packet_is_final &&
+                drain_packet_addr == {PSUM_BUF_AW{1'b0}})
                 partial_col0 <= drain_packet_data[PSUM_W-1:0];
         end
     end
@@ -278,7 +280,7 @@ module conv_layer_top_stream #(
     wire [31:0] psum_fifo_empty;
     wire [ROWS-1:0] ifm_fifo_full;
 
-    wire pp_wr_en = drain_packet_valid && !drain_packet_is_final;
+    wire pp_wr_en = drain_packet_fire && !drain_packet_is_final;
     wire [PSUM_BUF_AW-1:0] pp_wr_addr = drain_packet_addr;
     wire [COLS*2*PSUM_W-1:0] pp_wr_data = drain_packet_data;
     wire pp_rd_en;
@@ -362,6 +364,7 @@ module conv_layer_top_stream #(
     endgenerate
 
     assign drain_packet_ready = !drain_packet_is_final || final_fifo_ready;
+    assign drain_packet_fire = drain_packet_valid && drain_packet_ready;
 
     psum_packet_fifo #(
         .DATA_W(COLS*2*PSUM_W), .MASK_W(COLS*2), .ADDR_W(PSUM_BUF_AW),

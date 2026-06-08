@@ -1366,7 +1366,8 @@ module `TB_CONV_ACCEL_CORE_MODULE;
 `endif
         if (!rst && `TB_DUT_LAYER.u_top.u_core.psum_fifo_wr_en[0])
             psum_wr_count <= psum_wr_count + 1;
-        if (!rst && `TB_DUT_LAYER.u_drain.state == 2'd3)
+        if (!rst && `TB_DUT_LAYER.drain_packet_valid &&
+            `TB_DUT_LAYER.drain_packet_ready)
             drain_capture_count <= drain_capture_count + 1;
         if (!rst && `TB_DUT_LAYER.done)
             layer_done_pulse_count <= layer_done_pulse_count + 1;
