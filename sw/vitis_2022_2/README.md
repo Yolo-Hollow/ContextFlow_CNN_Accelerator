@@ -390,6 +390,37 @@ powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/run_kv260_image
 powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/run_kv260_image_demo.ps1 -Image D:\MPSoC\python_prj\facemask\images\maksssksksss1.png -PortName COM8 -BuildDirName build_system_xck26_kv260_drainpipe -CaptureSeconds 240
 ```
 
+The `subperf_2022_2` hardware build keeps the drainpipe datapath and adds
+read-only feeder/compute sub-stage counters. This is the first post-drainpipe
+build generated with an explicit Vivado `2022.2` command line instead of the
+active shell PATH:
+
+```powershell
+C:\Xilinx\Vivado\2022.2\bin\vivado.bat -mode batch -source tcl/build_kv260_system_xck26.tcl -tclargs -build_dir D:/MPSoC/accelerator_systolic/build_system_xck26_kv260_subperf_2022_2 -jobs 12
+```
+
+The build closes timing with `WNS=0.302 ns`, `TNS=0`, `WHS=0.010 ns`,
+`THS=0`, and `0` routing errors. Resources are `CLB LUTs=52254 (44.62%)`,
+`CLB Registers=46452 (19.83%)`, `BRAM Tile=45.5 (31.60%)`, and
+`DSP=177 (14.18%)`. XSA SHA256 is
+`ECD4AE2294182AD33C40E2A4C1981940581244F41C210A1903391369121D5A64`; bitstream
+SHA256 is
+`1877EECE3855A6176A7C5C800A1EBA115A21A2E273B9B6E564179600CB779B2A`.
+
+The runtime prints one additional line per layer:
+
+```text
+SUBPERF layer=... feed_fill=... feed_push=... feed_fifo_stall=... feed_win_not_ready=... comp_wload=... comp_active=... comp_fire=... comp_ifm_stall=... comp_tail=... version=1
+```
+
+`tools/demo/summarize_uart_perf.py` reports aggregate `SUBPERF` totals and
+residuals against `STAGEPERF`. Local xsim validation has passed for
+configuration register reads, AXI-Lite reads, native1x1, Conv0 batch,
+Conv7/Conv9 native1x1, and the r18_c8 Layer06 tile. Board validation for
+`build_system_xck26_kv260_subperf_2022_2` is deferred; use a full bitstream
+programming run before treating its UART performance numbers as the next
+baseline.
+
 ## Native 1x1 mode
 
 `CONV[16]` selects the native 1x1 path. It requires batch mode, stride 1,

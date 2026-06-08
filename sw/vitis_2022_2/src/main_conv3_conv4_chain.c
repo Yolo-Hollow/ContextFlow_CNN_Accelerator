@@ -222,6 +222,16 @@ typedef struct {
     uint64_t hw_stage_compute_cycles;
     uint64_t hw_stage_drain_cycles;
     uint64_t hw_stage_ofm_post_cycles;
+    uint64_t hw_feed_fill_wait_cycles;
+    uint64_t hw_feed_push_cycles;
+    uint64_t hw_feed_fifo_stall_cycles;
+    uint64_t hw_feed_win_not_ready_cycles;
+    uint64_t hw_comp_wload_cycles;
+    uint64_t hw_comp_active_cycles;
+    uint64_t hw_comp_fire_cycles;
+    uint64_t hw_comp_ifm_stall_cycles;
+    uint64_t hw_comp_tail_cycles;
+    uint64_t hw_subperf_version;
     uint64_t vector_packets;
     uint64_t vector_pixels;
     uint64_t vector_beats;
@@ -1274,6 +1284,21 @@ static void print_layer_perf(const chain_layer_t *layer)
         (unsigned long long)layer_perf.hw_stage_drain_cycles,
         (unsigned long long)layer_perf.hw_stage_ofm_post_cycles);
     xil_printf(
+        "SUBPERF layer=%s feed_fill=%llu feed_push=%llu feed_fifo_stall=%llu "
+        "feed_win_not_ready=%llu comp_wload=%llu comp_active=%llu "
+        "comp_fire=%llu comp_ifm_stall=%llu comp_tail=%llu version=%llu\r\n",
+        layer->name,
+        (unsigned long long)layer_perf.hw_feed_fill_wait_cycles,
+        (unsigned long long)layer_perf.hw_feed_push_cycles,
+        (unsigned long long)layer_perf.hw_feed_fifo_stall_cycles,
+        (unsigned long long)layer_perf.hw_feed_win_not_ready_cycles,
+        (unsigned long long)layer_perf.hw_comp_wload_cycles,
+        (unsigned long long)layer_perf.hw_comp_active_cycles,
+        (unsigned long long)layer_perf.hw_comp_fire_cycles,
+        (unsigned long long)layer_perf.hw_comp_ifm_stall_cycles,
+        (unsigned long long)layer_perf.hw_comp_tail_cycles,
+        (unsigned long long)layer_perf.hw_subperf_version);
+    xil_printf(
         "DMASTAT layer=%s bias_starts=%lu weight_starts=%lu ifm_starts=%lu ofm_starts=%lu\r\n",
         layer->name,
         (unsigned long)layer_perf.dma_bias_starts,
@@ -1508,6 +1533,16 @@ static int run_one_tile(const chain_layer_t *layer, const chain_tile_t *tile, ui
     layer_perf.hw_stage_compute_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_STAGE_COMPUTE);
     layer_perf.hw_stage_drain_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_STAGE_DRAIN);
     layer_perf.hw_stage_ofm_post_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_STAGE_OFM_POST);
+    layer_perf.hw_feed_fill_wait_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_FEED_FILL_WAIT);
+    layer_perf.hw_feed_push_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_FEED_PUSH);
+    layer_perf.hw_feed_fifo_stall_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_FEED_FIFO_STALL);
+    layer_perf.hw_feed_win_not_ready_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_FEED_WIN_NOT_READY);
+    layer_perf.hw_comp_wload_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_COMP_WLOAD);
+    layer_perf.hw_comp_active_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_COMP_ACTIVE);
+    layer_perf.hw_comp_fire_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_COMP_FIRE);
+    layer_perf.hw_comp_ifm_stall_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_COMP_IFM_STALL);
+    layer_perf.hw_comp_tail_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_COMP_TAIL);
+    layer_perf.hw_subperf_version = rd32(ACCEL_BASE_ADDR, ACCEL_SUBPERF_VERSION);
     layer_perf.vector_packets += rd32(ACCEL_BASE_ADDR, ACCEL_VECTOR_PACKETS);
     layer_perf.vector_pixels += rd32(ACCEL_BASE_ADDR, ACCEL_VECTOR_PIXELS);
     layer_perf.vector_beats += rd32(ACCEL_BASE_ADDR, ACCEL_VECTOR_BEATS);
@@ -1730,6 +1765,16 @@ static int run_one_tile_batch(
     layer_perf.hw_stage_compute_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_STAGE_COMPUTE);
     layer_perf.hw_stage_drain_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_STAGE_DRAIN);
     layer_perf.hw_stage_ofm_post_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_STAGE_OFM_POST);
+    layer_perf.hw_feed_fill_wait_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_FEED_FILL_WAIT);
+    layer_perf.hw_feed_push_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_FEED_PUSH);
+    layer_perf.hw_feed_fifo_stall_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_FEED_FIFO_STALL);
+    layer_perf.hw_feed_win_not_ready_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_FEED_WIN_NOT_READY);
+    layer_perf.hw_comp_wload_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_COMP_WLOAD);
+    layer_perf.hw_comp_active_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_COMP_ACTIVE);
+    layer_perf.hw_comp_fire_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_COMP_FIRE);
+    layer_perf.hw_comp_ifm_stall_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_COMP_IFM_STALL);
+    layer_perf.hw_comp_tail_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_COMP_TAIL);
+    layer_perf.hw_subperf_version = rd32(ACCEL_BASE_ADDR, ACCEL_SUBPERF_VERSION);
     layer_perf.vector_packets += rd32(ACCEL_BASE_ADDR, ACCEL_VECTOR_PACKETS);
     layer_perf.vector_pixels += rd32(ACCEL_BASE_ADDR, ACCEL_VECTOR_PIXELS);
     layer_perf.vector_beats += rd32(ACCEL_BASE_ADDR, ACCEL_VECTOR_BEATS);

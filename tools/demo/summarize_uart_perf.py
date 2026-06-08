@@ -8,6 +8,7 @@ HWPERF_PREFIX = "HWPERF "
 DMASTAT_PREFIX = "DMASTAT "
 VECTORSTAT_PREFIX = "VECTORSTAT "
 STAGEPERF_PREFIX = "STAGEPERF "
+SUBPERF_PREFIX = "SUBPERF "
 
 
 def parse_metric_line(line, prefix):
@@ -148,6 +149,54 @@ def summarize_perf(log_text):
             ),
         }
 
+    subperf_layers = [
+        parse_metric_line(line.strip(), SUBPERF_PREFIX)
+        for line in log_text.splitlines()
+        if line.strip().startswith(SUBPERF_PREFIX)
+    ]
+    subperf = None
+    if subperf_layers:
+        totals = {
+            "feed_fill_cycles": sum(layer["feed_fill"] for layer in subperf_layers),
+            "feed_push_cycles": sum(layer["feed_push"] for layer in subperf_layers),
+            "feed_fifo_stall_cycles": sum(
+                layer["feed_fifo_stall"] for layer in subperf_layers
+            ),
+            "feed_win_not_ready_cycles": sum(
+                layer["feed_win_not_ready"] for layer in subperf_layers
+            ),
+            "comp_wload_cycles": sum(layer["comp_wload"] for layer in subperf_layers),
+            "comp_active_cycles": sum(layer["comp_active"] for layer in subperf_layers),
+            "comp_fire_cycles": sum(layer["comp_fire"] for layer in subperf_layers),
+            "comp_ifm_stall_cycles": sum(
+                layer["comp_ifm_stall"] for layer in subperf_layers
+            ),
+            "comp_tail_cycles": sum(layer["comp_tail"] for layer in subperf_layers),
+        }
+        subperf = {
+            "layers": subperf_layers,
+            **totals,
+            "version": max(layer.get("version", 0) for layer in subperf_layers),
+        }
+        if stage:
+            feed_explained = (
+                totals["feed_fill_cycles"]
+                + totals["feed_push_cycles"]
+                + totals["feed_fifo_stall_cycles"]
+                + totals["feed_win_not_ready_cycles"]
+            )
+            comp_explained = (
+                totals["comp_wload_cycles"]
+                + totals["comp_active_cycles"]
+                + totals["comp_tail_cycles"]
+            )
+            subperf["feed_residual_cycles"] = (
+                stage["feeder_cycles"] - feed_explained
+            )
+            subperf["comp_residual_cycles"] = (
+                stage["compute_stage_cycles"] - comp_explained
+            )
+
     return {
         "layer_count": len(layers),
         "total_microseconds": total_us,
@@ -158,6 +207,7 @@ def summarize_perf(log_text):
         "dma": dma,
         "stage": stage,
         "vector": vector,
+        "subperf": subperf,
     }
 
 
@@ -207,6 +257,27 @@ def print_summary(summary):
             "VECTORSTAT summary: "
             f"packets={vector['packets']} pixels={vector['pixels']} "
             f"beats={vector['beats']} stalls={vector['fifo_stall_cycles']}"
+        )
+    if summary["subperf"]:
+        subperf = summary["subperf"]
+        residual = ""
+        if "feed_residual_cycles" in subperf:
+            residual = (
+                f" feed_residual={subperf['feed_residual_cycles']} "
+                f"comp_residual={subperf['comp_residual_cycles']}"
+            )
+        print(
+            "SUBPERF summary: "
+            f"version={subperf['version']} "
+            f"feed_fill={subperf['feed_fill_cycles']} "
+            f"feed_push={subperf['feed_push_cycles']} "
+            f"feed_fifo_stall={subperf['feed_fifo_stall_cycles']} "
+            f"feed_win_not_ready={subperf['feed_win_not_ready_cycles']} "
+            f"comp_wload={subperf['comp_wload_cycles']} "
+            f"comp_active={subperf['comp_active_cycles']} "
+            f"comp_fire={subperf['comp_fire_cycles']} "
+            f"comp_ifm_stall={subperf['comp_ifm_stall_cycles']} "
+            f"comp_tail={subperf['comp_tail_cycles']}{residual}"
         )
 
 

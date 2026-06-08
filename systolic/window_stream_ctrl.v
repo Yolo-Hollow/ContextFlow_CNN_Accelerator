@@ -16,11 +16,15 @@ module window_stream_ctrl #(
     output reg [AW-1:0] oy,
     output reg [AW-1:0] ox,
     output ifm_push,
+    output fifo_stall,
+    output window_not_ready,
     output reg row_done
 );
     wire [AW-1:0] last_ox = ofm_w - {{(AW-1){1'b0}}, 1'b1};
     wire can_push = active && window_ready && !ifm_fifo_full_any;
     assign ifm_push = can_push;
+    assign fifo_stall = active && window_ready && ifm_fifo_full_any;
+    assign window_not_ready = active && !window_ready;
 
     always @(posedge clk) begin
         if (rst) begin

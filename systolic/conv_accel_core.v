@@ -130,6 +130,14 @@ module conv_accel_core #(
     wire perf_stage_compute;
     wire perf_stage_drain;
     wire perf_stage_ofm_post;
+    wire perf_feed_fill_wait;
+    wire perf_feed_push;
+    wire perf_feed_fifo_stall;
+    wire perf_feed_win_not_ready;
+    wire perf_comp_wload;
+    wire perf_comp_active;
+    wire perf_comp_ifm_stall;
+    wire perf_comp_tail;
     wire [31:0] layer_cfg_rdata;
     wire [8:0] fm_h;
     wire [8:0] fm_w;
@@ -236,6 +244,14 @@ module conv_accel_core #(
         .perf_stage_compute(perf_stage_compute),
         .perf_stage_drain(perf_stage_drain),
         .perf_stage_ofm_post(perf_stage_ofm_post),
+        .perf_feed_fill_wait(perf_feed_fill_wait),
+        .perf_feed_push(perf_feed_push),
+        .perf_feed_fifo_stall(perf_feed_fifo_stall),
+        .perf_feed_win_not_ready(perf_feed_win_not_ready),
+        .perf_comp_wload(perf_comp_wload),
+        .perf_comp_active(perf_comp_active),
+        .perf_comp_ifm_stall(perf_comp_ifm_stall),
+        .perf_comp_tail(perf_comp_tail),
         .stream_bias_completed(stream_bias_completed),
         .stream_weight_completed(stream_weight_completed),
         .stream_ifm_completed(stream_ifm_completed),
@@ -288,6 +304,14 @@ module conv_accel_core #(
         .perf_stage_compute(perf_stage_compute),
         .perf_stage_drain(perf_stage_drain),
         .perf_stage_ofm_post(perf_stage_ofm_post),
+        .perf_feed_fill_wait(perf_feed_fill_wait),
+        .perf_feed_push(perf_feed_push),
+        .perf_feed_fifo_stall(perf_feed_fifo_stall),
+        .perf_feed_win_not_ready(perf_feed_win_not_ready),
+        .perf_comp_wload(perf_comp_wload),
+        .perf_comp_active(perf_comp_active),
+        .perf_comp_ifm_stall(perf_comp_ifm_stall),
+        .perf_comp_tail(perf_comp_tail),
         .fm_h(fm_h), .fm_w(fm_w), .ofm_h(ofm_h), .ofm_w(ofm_w),
         .conv_stride(conv_stride), .conv_pad(conv_pad), .kernel_1x1(kernel_1x1),
         .k_total(k_total), .cout_total(cout_total), .num_pixels(num_pixels),

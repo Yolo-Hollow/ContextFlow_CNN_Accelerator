@@ -45,6 +45,16 @@
 //   0x2b STAGE_COMPUTE:  scheduler cycles in compute phase
 //   0x2c STAGE_DRAIN:    scheduler cycles in PSUM drain phase
 //   0x2d STAGE_OFM_POST: post-scheduler OFM pipeline drain cycles
+//   0x2e FEED_FILL_WAIT: feeder cycles waiting for external IFM/vector fill
+//   0x2f FEED_PUSH:      feeder cycles that push IFM data into the core FIFOs
+//   0x30 FEED_FIFO_STALL: feeder cycles stalled by full IFM FIFOs
+//   0x31 FEED_WIN_NOT_READY: 3x3 feeder cycles waiting for window readiness
+//   0x32 COMP_WLOAD:     core weight-load cycles inside compute stage
+//   0x33 COMP_ACTIVE:    core active compute cycles inside compute stage
+//   0x34 COMP_FIRE:      core cycles that accept one output pixel
+//   0x35 COMP_IFM_STALL: core active cycles stalled by empty IFM FIFO
+//   0x36 COMP_TAIL:      core systolic tail cycles inside compute stage
+//   0x37 SUBPERF_VERSION: fixed sub-stage counter map version
 module layer_config_regs #(
     parameter IFM_FIFO_DEPTH = 1024
 ) (
@@ -75,6 +85,14 @@ module layer_config_regs #(
     input         perf_stage_compute,
     input         perf_stage_drain,
     input         perf_stage_ofm_post,
+    input         perf_feed_fill_wait,
+    input         perf_feed_push,
+    input         perf_feed_fifo_stall,
+    input         perf_feed_win_not_ready,
+    input         perf_comp_wload,
+    input         perf_comp_active,
+    input         perf_comp_ifm_stall,
+    input         perf_comp_tail,
     input  [31:0] stream_bias_completed,
     input  [31:0] stream_weight_completed,
     input  [31:0] stream_ifm_completed,
@@ -122,6 +140,14 @@ module layer_config_regs #(
     reg [31:0] perf_stage_compute_cycles;
     reg [31:0] perf_stage_drain_cycles;
     reg [31:0] perf_stage_ofm_post_cycles;
+    reg [31:0] perf_feed_fill_wait_cycles;
+    reg [31:0] perf_feed_push_cycles;
+    reg [31:0] perf_feed_fifo_stall_cycles;
+    reg [31:0] perf_feed_win_not_ready_cycles;
+    reg [31:0] perf_comp_wload_cycles;
+    reg [31:0] perf_comp_active_cycles;
+    reg [31:0] perf_comp_ifm_stall_cycles;
+    reg [31:0] perf_comp_tail_cycles;
     wire cfg_idle = !layer_busy;
     wire perf_wait_any = perf_wait_bias || perf_wait_weight ||
                          perf_wait_ifm || perf_wait_ofm;
@@ -170,6 +196,14 @@ module layer_config_regs #(
             perf_stage_compute_cycles <= 32'd0;
             perf_stage_drain_cycles <= 32'd0;
             perf_stage_ofm_post_cycles <= 32'd0;
+            perf_feed_fill_wait_cycles <= 32'd0;
+            perf_feed_push_cycles <= 32'd0;
+            perf_feed_fifo_stall_cycles <= 32'd0;
+            perf_feed_win_not_ready_cycles <= 32'd0;
+            perf_comp_wload_cycles <= 32'd0;
+            perf_comp_active_cycles <= 32'd0;
+            perf_comp_ifm_stall_cycles <= 32'd0;
+            perf_comp_tail_cycles <= 32'd0;
         end else begin
             start_pulse <= 1'b0;
             if (layer_done)
@@ -201,6 +235,22 @@ module layer_config_regs #(
                     perf_stage_drain_cycles <= perf_stage_drain_cycles + 1'b1;
                 if (perf_stage_ofm_post)
                     perf_stage_ofm_post_cycles <= perf_stage_ofm_post_cycles + 1'b1;
+                if (perf_feed_fill_wait)
+                    perf_feed_fill_wait_cycles <= perf_feed_fill_wait_cycles + 1'b1;
+                if (perf_feed_push)
+                    perf_feed_push_cycles <= perf_feed_push_cycles + 1'b1;
+                if (perf_feed_fifo_stall)
+                    perf_feed_fifo_stall_cycles <= perf_feed_fifo_stall_cycles + 1'b1;
+                if (perf_feed_win_not_ready)
+                    perf_feed_win_not_ready_cycles <= perf_feed_win_not_ready_cycles + 1'b1;
+                if (perf_comp_wload)
+                    perf_comp_wload_cycles <= perf_comp_wload_cycles + 1'b1;
+                if (perf_comp_active)
+                    perf_comp_active_cycles <= perf_comp_active_cycles + 1'b1;
+                if (perf_comp_ifm_stall)
+                    perf_comp_ifm_stall_cycles <= perf_comp_ifm_stall_cycles + 1'b1;
+                if (perf_comp_tail)
+                    perf_comp_tail_cycles <= perf_comp_tail_cycles + 1'b1;
             end
 
             if (cfg_wr_en) begin
@@ -224,6 +274,14 @@ module layer_config_regs #(
                                 perf_stage_compute_cycles <= 32'd0;
                                 perf_stage_drain_cycles <= 32'd0;
                                 perf_stage_ofm_post_cycles <= 32'd0;
+                                perf_feed_fill_wait_cycles <= 32'd0;
+                                perf_feed_push_cycles <= 32'd0;
+                                perf_feed_fifo_stall_cycles <= 32'd0;
+                                perf_feed_win_not_ready_cycles <= 32'd0;
+                                perf_comp_wload_cycles <= 32'd0;
+                                perf_comp_active_cycles <= 32'd0;
+                                perf_comp_ifm_stall_cycles <= 32'd0;
+                                perf_comp_tail_cycles <= 32'd0;
                             end
                         end
                         if (cfg_wdata[1]) begin
@@ -323,6 +381,16 @@ module layer_config_regs #(
             6'h2b: cfg_rdata = perf_stage_compute_cycles;
             6'h2c: cfg_rdata = perf_stage_drain_cycles;
             6'h2d: cfg_rdata = perf_stage_ofm_post_cycles;
+            6'h2e: cfg_rdata = perf_feed_fill_wait_cycles;
+            6'h2f: cfg_rdata = perf_feed_push_cycles;
+            6'h30: cfg_rdata = perf_feed_fifo_stall_cycles;
+            6'h31: cfg_rdata = perf_feed_win_not_ready_cycles;
+            6'h32: cfg_rdata = perf_comp_wload_cycles;
+            6'h33: cfg_rdata = perf_comp_active_cycles;
+            6'h34: cfg_rdata = perf_compute_cycles;
+            6'h35: cfg_rdata = perf_comp_ifm_stall_cycles;
+            6'h36: cfg_rdata = perf_comp_tail_cycles;
+            6'h37: cfg_rdata = 32'd1;
             default: cfg_rdata = 32'd0;
         endcase
     end

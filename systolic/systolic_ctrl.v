@@ -13,7 +13,11 @@ module systolic_ctrl #(
     output reg compute_active,
     output compute_fire,
     output reg compute_start_pulse,   // 1-cycle pulse when COMPUTE begins
-    output reg pre_write              // 1 cycle before compute_active (FIFO pre-fill)
+    output reg pre_write,             // 1 cycle before compute_active (FIFO pre-fill)
+    output perf_comp_wload,
+    output perf_comp_active,
+    output perf_comp_ifm_stall,
+    output perf_comp_tail
 );
     localparam IDLE        = 2'd0;
     localparam WEIGHT_LOAD = 2'd1;
@@ -26,6 +30,10 @@ module systolic_ctrl #(
     reg [15:0] drain_cnt;
     wire [15:0] pixels_to_run = (num_pixels == 16'd0) ? 16'd1 : num_pixels;
     assign compute_fire = (state == COMPUTE) && compute_ready;
+    assign perf_comp_wload = (state == WEIGHT_LOAD);
+    assign perf_comp_active = (state == COMPUTE);
+    assign perf_comp_ifm_stall = (state == COMPUTE) && !compute_ready;
+    assign perf_comp_tail = (state == DRAIN);
 
     always @(posedge clk) begin
         if (rst) state <= IDLE;

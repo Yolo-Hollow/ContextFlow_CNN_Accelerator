@@ -104,6 +104,14 @@ def main():
             "STAGEPERF layer=conv1 bias_cycles=8 weight_cycles=60 "
             "feeder_cycles=90 compute_stage_cycles=120 drain_cycles=150 "
             "ofm_post_cycles=18\n"
+            "SUBPERF layer=conv0 feed_fill=7 feed_push=8 "
+            "feed_fifo_stall=9 feed_win_not_ready=10 comp_wload=11 "
+            "comp_active=12 comp_fire=10 comp_ifm_stall=13 comp_tail=14 "
+            "version=1\n"
+            "SUBPERF layer=conv1 feed_fill=17 feed_push=18 "
+            "feed_fifo_stall=19 feed_win_not_ready=20 comp_wload=21 "
+            "comp_active=22 comp_fire=90 comp_ifm_stall=23 comp_tail=24 "
+            "version=1\n"
         )
         assert summary["layer_count"] == 2
         assert summary["total_microseconds"] == 300
@@ -127,6 +135,18 @@ def main():
         assert summary["stage"]["ofm_post_cycles"] == 24
         assert summary["stage"]["total_cycles"] == 596
         assert summary["stage"]["coverage_percent"] == 149.0
+        assert summary["subperf"]["feed_fill_cycles"] == 24
+        assert summary["subperf"]["feed_push_cycles"] == 26
+        assert summary["subperf"]["feed_fifo_stall_cycles"] == 28
+        assert summary["subperf"]["feed_win_not_ready_cycles"] == 30
+        assert summary["subperf"]["comp_wload_cycles"] == 32
+        assert summary["subperf"]["comp_active_cycles"] == 34
+        assert summary["subperf"]["comp_fire_cycles"] == 100
+        assert summary["subperf"]["comp_ifm_stall_cycles"] == 36
+        assert summary["subperf"]["comp_tail_cycles"] == 38
+        assert summary["subperf"]["version"] == 1
+        assert summary["subperf"]["feed_residual_cycles"] == 12
+        assert summary["subperf"]["comp_residual_cycles"] == 56
 
     print("PASS: KV260 runtime image package and visualization tests")
 

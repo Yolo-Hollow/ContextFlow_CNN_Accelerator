@@ -56,6 +56,16 @@
 #define ACCEL_STAGE_COMPUTE   0xacU
 #define ACCEL_STAGE_DRAIN     0xb0U
 #define ACCEL_STAGE_OFM_POST  0xb4U
+#define ACCEL_FEED_FILL_WAIT  0xb8U
+#define ACCEL_FEED_PUSH       0xbcU
+#define ACCEL_FEED_FIFO_STALL 0xc0U
+#define ACCEL_FEED_WIN_NOT_READY 0xc4U
+#define ACCEL_COMP_WLOAD      0xc8U
+#define ACCEL_COMP_ACTIVE     0xccU
+#define ACCEL_COMP_FIRE       0xd0U
+#define ACCEL_COMP_IFM_STALL  0xd4U
+#define ACCEL_COMP_TAIL       0xd8U
+#define ACCEL_SUBPERF_VERSION 0xdcU
 
 #define ACCEL_CONV_KERNEL_1X1 (1U << 16)
 

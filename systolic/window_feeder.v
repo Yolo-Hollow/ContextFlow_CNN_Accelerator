@@ -43,6 +43,9 @@ module window_feeder #(
     output [AW-1:0] cur_oy,
     output [AW-1:0] cur_ox,
     output          window_ready,
+    output          perf_feed_push,
+    output          perf_feed_fifo_stall,
+    output          perf_feed_win_not_ready,
     output          busy,
     output          done
 );
@@ -122,6 +125,8 @@ module window_feeder #(
 
     wire row_active;
     wire ifm_push;
+    wire row_fifo_stall;
+    wire row_window_not_ready;
     window_stream_ctrl #(.AW(AW)) u_window_ctrl (
         .clk(clk),
         .rst(rst),
@@ -134,9 +139,14 @@ module window_feeder #(
         .oy(cur_oy),
         .ox(cur_ox),
         .ifm_push(ifm_push),
+        .fifo_stall(row_fifo_stall),
+        .window_not_ready(row_window_not_ready),
         .row_done(row_done)
     );
 
     assign ifm_data = window_data;
     assign ifm_valid = ifm_push && window_ifm_valid;
+    assign perf_feed_push = ifm_valid;
+    assign perf_feed_fifo_stall = row_fifo_stall;
+    assign perf_feed_win_not_ready = row_window_not_ready;
 endmodule

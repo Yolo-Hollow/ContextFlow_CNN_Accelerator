@@ -43,6 +43,14 @@ module conv_layer_top_stream #(
     output perf_stage_compute,
     output perf_stage_drain,
     output perf_stage_ofm_post,
+    output perf_feed_fill_wait,
+    output perf_feed_push,
+    output perf_feed_fifo_stall,
+    output perf_feed_win_not_ready,
+    output perf_comp_wload,
+    output perf_comp_active,
+    output perf_comp_ifm_stall,
+    output perf_comp_tail,
 
     input  [8:0] fm_h,
     input  [8:0] fm_w,
@@ -168,6 +176,7 @@ module conv_layer_top_stream #(
     reg [3:0] done_drain_cnt;
     assign busy = sched_busy || done_pending || ofm_post_busy;
     assign perf_stage_ofm_post = done_pending || (!sched_busy && ofm_post_busy);
+    assign perf_feed_fill_wait = feeder_fill_req;
 
     layer_scheduler_stream #(.K_TILE(K_TILE), .COUT_TILE(COUT_TILE)) u_sched (
         .clk(clk), .rst(rst), .start(start), .busy(sched_busy), .done(sched_done),
@@ -321,6 +330,13 @@ module conv_layer_top_stream #(
         .kernel_1x1(kernel_1x1),
         .compute_start(sched_compute_start), .num_pixels(sched_num_pixels),
         .compute_done(compute_done), .compute_fire_out(compute_fire),
+        .perf_feed_push(perf_feed_push),
+        .perf_feed_fifo_stall(perf_feed_fifo_stall),
+        .perf_feed_win_not_ready(perf_feed_win_not_ready),
+        .perf_comp_wload(perf_comp_wload),
+        .perf_comp_active(perf_comp_active),
+        .perf_comp_ifm_stall(perf_comp_ifm_stall),
+        .perf_comp_tail(perf_comp_tail),
         .fm_h(fm_h), .fm_w(fm_w), .ofm_h(ofm_h), .ofm_w(ofm_w),
         .tile_oy_base(tile_oy_base), .tile_ofm_h(tile_ofm_h),
         .conv_stride(conv_stride), .conv_pad(conv_pad), .pass_base_k(sched_pass_base_k),

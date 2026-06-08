@@ -73,6 +73,14 @@ module tb_axi_lite_cfg_bridge;
         .perf_stage_compute(1'b0),
         .perf_stage_drain(1'b0),
         .perf_stage_ofm_post(1'b0),
+        .perf_feed_fill_wait(1'b0),
+        .perf_feed_push(1'b0),
+        .perf_feed_fifo_stall(1'b0),
+        .perf_feed_win_not_ready(1'b0),
+        .perf_comp_wload(1'b0),
+        .perf_comp_active(1'b0),
+        .perf_comp_ifm_stall(1'b0),
+        .perf_comp_tail(1'b0),
         .stream_bias_completed(32'd7),
         .stream_weight_completed(32'd11),
         .stream_ifm_completed(32'd13),
@@ -282,6 +290,12 @@ module tb_axi_lite_cfg_bridge;
         check_eq(rd, 32'd13, "stream ifm completed read");
         axi_read(8'ha0, rd);
         check_eq(rd, 32'd0, "stage bias counter read");
+        axi_read(8'hb8, rd);
+        check_eq(rd, 32'd0, "feed fill counter read");
+        axi_read(8'hd0, rd);
+        check_eq(rd, 32'd0, "comp fire counter read");
+        axi_read(8'hdc, rd);
+        check_eq(rd, 32'd1, "subperf version read");
         axi_read(8'h3c, rd);
         check_eq(rd, 32'd36, "input_zero_point read");
         check_eq({24'd0, input_zero_point}, 32'd36, "input_zero_point output");

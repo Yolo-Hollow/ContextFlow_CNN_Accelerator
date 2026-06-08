@@ -27,6 +27,13 @@ module systolic_top_feeder #(
     input  [15:0] num_pixels,
     output compute_done,
     output compute_fire_out,
+    output perf_feed_push,
+    output perf_feed_fifo_stall,
+    output perf_feed_win_not_ready,
+    output perf_comp_wload,
+    output perf_comp_active,
+    output perf_comp_ifm_stall,
+    output perf_comp_tail,
 
     input  [8:0] fm_h,
     input  [8:0] fm_w,
@@ -76,6 +83,9 @@ module systolic_top_feeder #(
     wire line_feeder_busy;
     wire line_fill_req;
     wire [8:0] line_fill_fy;
+    wire line_feed_push;
+    wire line_feed_fifo_stall;
+    wire line_feed_win_not_ready;
     reg vector_fill_req;
     reg vector_feeder_done;
 
@@ -83,6 +93,12 @@ module systolic_top_feeder #(
     assign feeder_busy = kernel_1x1 ? vector_fill_req : line_feeder_busy;
     assign feeder_fill_req = kernel_1x1 ? vector_fill_req : line_fill_req;
     assign feeder_fill_fy = kernel_1x1 ? 9'd0 : line_fill_fy;
+    assign perf_feed_push = kernel_1x1 ?
+        (vector_ifm_valid && vector_ifm_ready) : line_feed_push;
+    assign perf_feed_fifo_stall = kernel_1x1 ?
+        (vector_fill_req && vector_ifm_valid && !vector_ifm_ready) :
+        line_feed_fifo_stall;
+    assign perf_feed_win_not_ready = kernel_1x1 ? 1'b0 : line_feed_win_not_ready;
 
     always @(posedge clk) begin
         if (rst) begin
@@ -127,6 +143,9 @@ module systolic_top_feeder #(
         .cur_oy(feeder_oy),
         .cur_ox(feeder_ox),
         .window_ready(feeder_window_ready),
+        .perf_feed_push(line_feed_push),
+        .perf_feed_fifo_stall(line_feed_fifo_stall),
+        .perf_feed_win_not_ready(line_feed_win_not_ready),
         .busy(line_feeder_busy),
         .done(line_feeder_done)
     );
@@ -155,6 +174,10 @@ module systolic_top_feeder #(
         .num_pixels(num_pixels),
         .done(compute_done),
         .compute_fire_out(compute_fire_out),
+        .perf_comp_wload(perf_comp_wload),
+        .perf_comp_active(perf_comp_active),
+        .perf_comp_ifm_stall(perf_comp_ifm_stall),
+        .perf_comp_tail(perf_comp_tail),
         .ifm_fifo_wr_en(kernel_1x1 ?
             {ROWS{vector_ifm_valid && vector_ifm_ready}} :
             {ROWS{feeder_ifm_valid}}),

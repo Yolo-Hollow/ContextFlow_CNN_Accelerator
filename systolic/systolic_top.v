@@ -15,6 +15,10 @@ module systolic_top #(
     input  [15:0] num_pixels,
     output done,
     output compute_fire_out,
+    output perf_comp_wload,
+    output perf_comp_active,
+    output perf_comp_ifm_stall,
+    output perf_comp_tail,
 
     // ---- Manual IFM FIFO fill (USE_DMA_IFM=0) ----
     input  [ROWS-1:0]           ifm_fifo_wr_en,
@@ -71,7 +75,11 @@ module systolic_top #(
         .compute_active(compute_active),
         .compute_fire(compute_fire),
         .compute_start_pulse(ctrl_compute_start),
-        .pre_write(ctrl_pre_write)
+        .pre_write(ctrl_pre_write),
+        .perf_comp_wload(perf_comp_wload),
+        .perf_comp_active(perf_comp_active),
+        .perf_comp_ifm_stall(perf_comp_ifm_stall),
+        .perf_comp_tail(perf_comp_tail)
     );
 
     // ---- Weight FIFOs (32 × 16-bit) ----
