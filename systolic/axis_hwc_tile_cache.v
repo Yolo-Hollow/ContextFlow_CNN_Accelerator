@@ -48,8 +48,6 @@ module axis_hwc_tile_cache #(
 );
     localparam CACHE_DEPTH = (1 << CACHE_AW);
 
-    reg [7:0] cache [0:ROWS-1][0:CACHE_DEPTH-1];
-
     reg load_active;
     reg tile_loaded;
     reg beat_pending;
@@ -67,8 +65,12 @@ module axis_hwc_tile_cache #(
     reg [31:0] load_byte_count;
 
     reg replay_active;
+    reg replay_valid;
     reg req_armed;
     reg [15:0] replay_pixel;
+    reg replay_read_en;
+    reg replay_read_pending;
+    reg [15:0] replay_read_pixel;
 
     wire axis_fire = s_axis_tvalid && s_axis_tready;
     wire vector_fire = vector_valid && vector_ready;
@@ -80,7 +82,7 @@ module axis_hwc_tile_cache #(
     wire replay_last_pixel = (replay_pixel + 1'b1 == num_pixels);
 
     assign s_axis_tready = load_active && !tile_loaded && !beat_pending;
-    assign vector_valid = replay_active && tile_loaded;
+    assign vector_valid = replay_valid;
 
     function [7:0] center_ifm_byte;
         input [7:0] raw_u8;
@@ -110,15 +112,34 @@ module axis_hwc_tile_cache #(
 
     genvar lane;
     generate
-        for (lane = 0; lane < ROWS; lane = lane + 1) begin : replay_lanes
+        for (lane = 0; lane < ROWS; lane = lane + 1) begin : cache_banks
+            (* ram_style = "block" *) reg [7:0] cache_bank [0:CACHE_DEPTH-1];
+            reg [7:0] replay_lane_data;
             wire [13:0] lane_channel = pass_base_k + lane;
-            wire [7:0] lane_bank = lane_channel % ROWS;
             wire [13:0] lane_chunk = lane_channel / ROWS;
             wire [CACHE_AW-1:0] lane_addr =
-                (replay_pixel * chunks_per_pixel) + lane_chunk;
-            assign vector_data[lane*8 +: 8] =
-                (lane_channel < k_total && lane_addr < CACHE_DEPTH) ?
-                cache[lane_bank][lane_addr] : 8'd0;
+                (replay_read_pixel * chunks_per_pixel) + lane_chunk;
+
+            assign vector_data[lane*8 +: 8] = replay_lane_data;
+
+            always @(posedge clk) begin
+                if (rst || stream_reset) begin
+                    replay_lane_data <= 8'd0;
+                end else begin
+                    if (beat_pending && current_keep &&
+                        (load_bank == lane[7:0]) && (load_addr < CACHE_DEPTH)) begin
+                        cache_bank[load_addr] <=
+                            center_ifm_byte(beat_data[beat_byte_idx*8 +: 8],
+                                            input_zero_point);
+                    end
+
+                    if (replay_read_en) begin
+                        replay_lane_data <=
+                            (lane_channel < k_total && lane_addr < CACHE_DEPTH) ?
+                            cache_bank[lane_addr] : 8'd0;
+                    end
+                end
+            end
         end
     endgenerate
 
@@ -139,8 +160,12 @@ module axis_hwc_tile_cache #(
             load_bank <= 8'd0;
             load_byte_count <= 32'd0;
             replay_active <= 1'b0;
+            replay_valid <= 1'b0;
             req_armed <= 1'b1;
             replay_pixel <= 16'd0;
+            replay_read_en <= 1'b0;
+            replay_read_pending <= 1'b0;
+            replay_read_pixel <= 16'd0;
             packet_done <= 1'b0;
             tkeep_error <= 1'b0;
             tlast_error <= 1'b0;
@@ -151,6 +176,11 @@ module axis_hwc_tile_cache #(
             fifo_stall_cycles <= 32'd0;
         end else begin
             packet_done <= 1'b0;
+            replay_read_en <= 1'b0;
+            if (replay_read_pending) begin
+                replay_valid <= 1'b1;
+                replay_read_pending <= 1'b0;
+            end
 
             if (stream_reset) begin
                 load_active <= 1'b1;
@@ -163,8 +193,11 @@ module axis_hwc_tile_cache #(
                 load_bank <= 8'd0;
                 load_byte_count <= 32'd0;
                 replay_active <= 1'b0;
+                replay_valid <= 1'b0;
                 req_armed <= 1'b1;
                 replay_pixel <= 16'd0;
+                replay_read_pending <= 1'b0;
+                replay_read_pixel <= 16'd0;
                 completed_packets <= 32'd0;
                 completed_pixels <= 32'd0;
                 accepted_beats <= 32'd0;
@@ -177,8 +210,12 @@ module axis_hwc_tile_cache #(
             if (!replay_active && fill_req && req_armed && tile_loaded &&
                 (num_pixels != 16'd0)) begin
                 replay_active <= 1'b1;
+                replay_valid <= 1'b0;
                 req_armed <= 1'b0;
                 replay_pixel <= 16'd0;
+                replay_read_en <= 1'b1;
+                replay_read_pending <= 1'b1;
+                replay_read_pixel <= 16'd0;
             end
 
             if (axis_fire) begin
@@ -201,11 +238,7 @@ module axis_hwc_tile_cache #(
 
             if (beat_pending) begin
                 if (current_keep) begin
-                    if (load_addr < CACHE_DEPTH)
-                        cache[load_bank][load_addr] <=
-                            center_ifm_byte(beat_data[beat_byte_idx*8 +: 8],
-                                            input_zero_point);
-                    else
+                    if (load_addr >= CACHE_DEPTH)
                         overflow_error <= 1'b1;
 
                     load_byte_count <= load_byte_count + 1'b1;
@@ -246,9 +279,14 @@ module axis_hwc_tile_cache #(
                 completed_pixels <= completed_pixels + 1'b1;
                 if (replay_last_pixel) begin
                     replay_active <= 1'b0;
+                    replay_valid <= 1'b0;
                     packet_done <= 1'b1;
                 end else begin
                     replay_pixel <= replay_pixel + 1'b1;
+                    replay_valid <= 1'b0;
+                    replay_read_en <= 1'b1;
+                    replay_read_pending <= 1'b1;
+                    replay_read_pixel <= replay_pixel + 1'b1;
                 end
             end
         end

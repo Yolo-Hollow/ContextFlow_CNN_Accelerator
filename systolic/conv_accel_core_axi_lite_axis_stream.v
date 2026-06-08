@@ -9,6 +9,10 @@
 //   - weight AXI-Stream input: 8x int8 per 64-bit beat
 //   - IFM AXI-Stream input: 3x3 line packets or native 1x1 vectors
 //   - OFM AXI-Stream debug output: {addr, data} per 64-bit beat
+`ifndef SYSTOLIC_TAIL_CYCLES_CONFIG
+`define SYSTOLIC_TAIL_CYCLES_CONFIG 0
+`endif
+
 module conv_accel_core_axi_lite_axis_stream #(
     parameter ROWS = 32,
     parameter COLS = 32,
@@ -35,9 +39,10 @@ module conv_accel_core_axi_lite_axis_stream #(
     parameter OFM_ADDR_W = 24,
     parameter OFM_FIFO_DEPTH = 32,
     parameter OFM_FIFO_AW = 5,
-    parameter HWC_CACHE_AW = 13,
+    parameter HWC_CACHE_AW = 12,
     parameter AXIS_W = 64,
-    parameter AXIS_KEEP_W = AXIS_W / 8
+    parameter AXIS_KEEP_W = AXIS_W / 8,
+    parameter TAIL_CYCLES_CONFIG = `SYSTOLIC_TAIL_CYCLES_CONFIG
 ) (
     input  clk,
     input  rst,
@@ -394,7 +399,8 @@ module conv_accel_core_axi_lite_axis_stream #(
         .K_TILE(K_TILE), .COUT_TILE(COUT_TILE), .IFM_BANKS(IFM_BANKS),
         .WGT_TILE_AW(WGT_TILE_AW), .PSUM_BUF_AW(PSUM_BUF_AW), .PSUM_BUF_DEPTH(PSUM_BUF_DEPTH),
         .MULT_W(MULT_W), .SHIFT_W(SHIFT_W), .ZP_W(ZP_W),
-        .OFM_ADDR_W(OFM_ADDR_W), .OFM_FIFO_DEPTH(OFM_FIFO_DEPTH), .OFM_FIFO_AW(OFM_FIFO_AW)
+        .OFM_ADDR_W(OFM_ADDR_W), .OFM_FIFO_DEPTH(OFM_FIFO_DEPTH), .OFM_FIFO_AW(OFM_FIFO_AW),
+        .TAIL_CYCLES_CONFIG(TAIL_CYCLES_CONFIG)
     ) u_core (
         .clk(clk),
         .rst(rst),

@@ -15,6 +15,7 @@ module tb_layer_config_regs;
     reg perf_feed_fill_wait, perf_feed_push, perf_feed_fifo_stall;
     reg perf_feed_win_not_ready;
     reg perf_comp_wload, perf_comp_active, perf_comp_ifm_stall, perf_comp_tail;
+    reg perf_drain_fifo_empty_wait, perf_drain_fifo_empty_sticky;
     reg [31:0] stream_bias_completed;
     reg [31:0] stream_weight_completed;
     reg [31:0] stream_ifm_completed;
@@ -41,6 +42,9 @@ module tb_layer_config_regs;
     wire [31:0] stream_bias_packets;
     wire [31:0] stream_weight_packets;
     wire [31:0] stream_ifm_packets;
+    wire [15:0] tail_cycles_config;
+    wire [31:0] tail_cycles_selected =
+        {16'd0, (tail_cycles_config == 16'd0) ? 16'd138 : tail_cycles_config};
     wire config_error;
 
     layer_config_regs #(
@@ -70,6 +74,9 @@ module tb_layer_config_regs;
         .perf_comp_active(perf_comp_active),
         .perf_comp_ifm_stall(perf_comp_ifm_stall),
         .perf_comp_tail(perf_comp_tail),
+        .perf_tail_cycles_configured(tail_cycles_selected),
+        .perf_drain_fifo_empty_wait(perf_drain_fifo_empty_wait),
+        .perf_drain_fifo_empty_sticky(perf_drain_fifo_empty_sticky),
         .stream_bias_completed(stream_bias_completed),
         .stream_weight_completed(stream_weight_completed),
         .stream_ifm_completed(stream_ifm_completed),
@@ -92,6 +99,7 @@ module tb_layer_config_regs;
         .stream_bias_packets(stream_bias_packets),
         .stream_weight_packets(stream_weight_packets),
         .stream_ifm_packets(stream_ifm_packets),
+        .tail_cycles_config(tail_cycles_config),
         .config_error(config_error)
     );
 
@@ -160,6 +168,8 @@ module tb_layer_config_regs;
         perf_comp_active = 0;
         perf_comp_ifm_stall = 0;
         perf_comp_tail = 0;
+        perf_drain_fifo_empty_wait = 0;
+        perf_drain_fifo_empty_sticky = 0;
         stream_bias_completed = 32'd7;
         stream_weight_completed = 32'd11;
         stream_ifm_completed = 32'd13;
@@ -189,6 +199,7 @@ module tb_layer_config_regs;
         write_reg(6'h1a, 32'd7);
         write_reg(6'h1b, 32'd11);
         write_reg(6'h1c, 32'd13);
+        write_reg(6'h38, 32'd96);
 
         check_value(fm_h, 7, "fm_h");
         check_value(fm_w, 5, "fm_w");
@@ -211,6 +222,7 @@ module tb_layer_config_regs;
         check_value(stream_bias_packets, 7, "stream bias packets");
         check_value(stream_weight_packets, 11, "stream weight packets");
         check_value(stream_ifm_packets, 13, "stream ifm packets");
+        check_value(tail_cycles_config, 96, "tail cycles config output");
         cfg_addr = 6'h1d;
         #1;
         check_value(cfg_rdata, 7, "stream bias completed");
@@ -296,6 +308,8 @@ module tb_layer_config_regs;
         perf_comp_active = 1'b0;
         perf_comp_ifm_stall = 1'b1;
         perf_comp_tail = 1'b1;
+        perf_drain_fifo_empty_wait = 1'b1;
+        perf_drain_fifo_empty_sticky = 1'b1;
         repeat (2) @(posedge clk);
         @(negedge clk);
         layer_busy = 1'b0;
@@ -304,6 +318,8 @@ module tb_layer_config_regs;
         perf_feed_fifo_stall = 1'b0;
         perf_comp_ifm_stall = 1'b0;
         perf_comp_tail = 1'b0;
+        perf_drain_fifo_empty_wait = 1'b0;
+        perf_drain_fifo_empty_sticky = 1'b0;
         cfg_addr = 6'h12;
         #1;
         check_value(cfg_rdata, 5, "perf busy cycles");
@@ -357,7 +373,19 @@ module tb_layer_config_regs;
         check_value(cfg_rdata, 2, "comp tail cycles");
         cfg_addr = 6'h37;
         #1;
-        check_value(cfg_rdata, 1, "subperf version");
+        check_value(cfg_rdata, 2, "subperf version");
+        cfg_addr = 6'h38;
+        #1;
+        check_value(cfg_rdata, 96, "tail cycles configured");
+        cfg_addr = 6'h39;
+        #1;
+        check_value(cfg_rdata, 2, "tail elapsed alias");
+        cfg_addr = 6'h3a;
+        #1;
+        check_value(cfg_rdata, 2, "drain empty wait cycles");
+        cfg_addr = 6'h3b;
+        #1;
+        check_value(cfg_rdata, 1, "drain empty sticky");
 
         @(negedge clk);
         layer_done = 1'b1;
@@ -390,6 +418,7 @@ module tb_layer_config_regs;
         write_reg(6'h1a, 32'd99);
         write_reg(6'h1b, 32'd99);
         write_reg(6'h1c, 32'd99);
+        write_reg(6'h38, 32'd99);
         check_value(fm_h, 7, "busy freeze fm_h");
         check_value(fm_w, 5, "busy freeze fm_w");
         check_value(k_total, 9216, "busy freeze k_total");
@@ -405,6 +434,7 @@ module tb_layer_config_regs;
         check_value(stream_bias_packets, 7, "busy freeze bias packets");
         check_value(stream_weight_packets, 11, "busy freeze weight packets");
         check_value(stream_ifm_packets, 13, "busy freeze ifm packets");
+        check_value(tail_cycles_config, 96, "busy freeze tail config");
 
         write_reg(6'h00, 32'd1);
         repeat (2) @(negedge clk);

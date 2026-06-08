@@ -18,6 +18,7 @@ set ifm_fifo_depth 1024
 set ifm_fifo_aw 10
 set psum_fifo_depth 1024
 set psum_fifo_aw 10
+set tail_cycles 0
 set jobs 8
 set synth_only 0
 set reuse_synth 0
@@ -66,6 +67,9 @@ for {set i 0} {$i < [llength $argv]} {incr i} {
     } elseif {$arg eq "-psum_fifo_aw"} {
         incr i
         set psum_fifo_aw [lindex $argv $i]
+    } elseif {$arg eq "-tail_cycles"} {
+        incr i
+        set tail_cycles [lindex $argv $i]
     } elseif {$arg eq "-jobs"} {
         incr i
         set jobs [lindex $argv $i]
@@ -112,6 +116,7 @@ if {$reuse_synth} {
         -ifm_fifo_aw $ifm_fifo_aw \
         -psum_fifo_depth $psum_fifo_depth \
         -psum_fifo_aw $psum_fifo_aw \
+        -tail_cycles $tail_cycles \
         -generate_targets \
     ]
     source [file join $script_dir create_ps_dma_bd_xck26.tcl]
@@ -121,7 +126,7 @@ if {$reuse_synth} {
     update_compile_order -fileset sources_1
     update_compile_order -fileset sim_1
 
-    puts "=== System synthesis: top=$wrapper_top board=$board_part carrier=$board_connection jobs=$jobs ==="
+    puts "=== System synthesis: top=$wrapper_top board=$board_part carrier=$board_connection tail_cycles=$tail_cycles jobs=$jobs ==="
     reset_run synth_1
     launch_runs synth_1 -jobs $jobs
     wait_on_run synth_1

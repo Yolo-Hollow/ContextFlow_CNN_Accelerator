@@ -2,23 +2,30 @@
 // Top module: IFM FIFOs + Weight FIFOs + Array + PSUM FIFOs
 // No storage scheduler — FIFO fill/drain handled externally
 // Valid-based control: compute_start → stagger → valid through array → PSUM wr_en
+`ifndef SYSTOLIC_TAIL_CYCLES_CONFIG
+`define SYSTOLIC_TAIL_CYCLES_CONFIG 0
+`endif
+
 module systolic_top #(
     parameter ROWS = 32, parameter COLS = 32,
     parameter IFM_W = 8, parameter WEIGHT_W = 8, parameter PSUM_W = 32,
     parameter IFM_FIFO_DEPTH = 1024, parameter IFM_FIFO_AW = 10,
     parameter WGT_FIFO_DEPTH = 64,  parameter WGT_FIFO_AW = 6,
     parameter PSUM_FIFO_DEPTH = 1024, parameter PSUM_FIFO_AW = 10,
+    parameter TAIL_CYCLES_CONFIG = `SYSTOLIC_TAIL_CYCLES_CONFIG,
     parameter USE_DMA_IFM = 1   // 1: DMA line buffer, 0: manual IFM FIFO fill
 ) (
     input  clk, rst,
     input  start,
     input  [15:0] num_pixels,
+    input  [15:0] tail_cycles_config,
     output done,
     output compute_fire_out,
     output perf_comp_wload,
     output perf_comp_active,
     output perf_comp_ifm_stall,
     output perf_comp_tail,
+    output [31:0] perf_tail_cycles_configured,
 
     // ---- Manual IFM FIFO fill (USE_DMA_IFM=0) ----
     input  [ROWS-1:0]           ifm_fifo_wr_en,
@@ -68,8 +75,13 @@ module systolic_top #(
     wire compute_ready = !ifm_fifo_empty[0];
     assign compute_fire_out = compute_fire;
 
-    systolic_ctrl #(.ROWS(ROWS), .COLS(COLS)) u_ctrl (
+    systolic_ctrl #(
+        .ROWS(ROWS),
+        .COLS(COLS),
+        .TAIL_CYCLES_CONFIG(TAIL_CYCLES_CONFIG)
+    ) u_ctrl (
         .clk(clk), .rst(rst), .start(start), .num_pixels(num_pixels),
+        .tail_cycles_config(tail_cycles_config),
         .compute_ready(compute_ready), .done(done),
         .w_load(ctrl_w_load), .w_col(ctrl_w_col),
         .compute_active(compute_active),
@@ -79,7 +91,8 @@ module systolic_top #(
         .perf_comp_wload(perf_comp_wload),
         .perf_comp_active(perf_comp_active),
         .perf_comp_ifm_stall(perf_comp_ifm_stall),
-        .perf_comp_tail(perf_comp_tail)
+        .perf_comp_tail(perf_comp_tail),
+        .tail_cycles_configured(perf_tail_cycles_configured)
     );
 
     // ---- Weight FIFOs (32 × 16-bit) ----

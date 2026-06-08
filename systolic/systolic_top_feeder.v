@@ -3,6 +3,10 @@
 // Wrapper that connects window_feeder to systolic_top through the manual IFM
 // FIFO fill path. The compute core is intentionally kept unchanged while the
 // feeder path is validated.
+`ifndef SYSTOLIC_TAIL_CYCLES_CONFIG
+`define SYSTOLIC_TAIL_CYCLES_CONFIG 0
+`endif
+
 module systolic_top_feeder #(
     parameter ROWS = 32, parameter COLS = 32,
     parameter IFM_W = 8, parameter WEIGHT_W = 8, parameter PSUM_W = 32,
@@ -11,7 +15,8 @@ module systolic_top_feeder #(
     parameter PSUM_FIFO_DEPTH = 1024, parameter PSUM_FIFO_AW = 10,
     parameter FM_W_MAX = 416,
     parameter FM_H_MAX = 416,
-    parameter IFM_BANKS = 5
+    parameter IFM_BANKS = 5,
+    parameter TAIL_CYCLES_CONFIG = `SYSTOLIC_TAIL_CYCLES_CONFIG
 ) (
     input  clk,
     input  rst,
@@ -25,6 +30,7 @@ module systolic_top_feeder #(
 
     input  compute_start,
     input  [15:0] num_pixels,
+    input  [15:0] tail_cycles_config,
     output compute_done,
     output compute_fire_out,
     output perf_feed_push,
@@ -34,6 +40,7 @@ module systolic_top_feeder #(
     output perf_comp_active,
     output perf_comp_ifm_stall,
     output perf_comp_tail,
+    output [31:0] perf_tail_cycles_configured,
 
     input  [8:0] fm_h,
     input  [8:0] fm_w,
@@ -166,18 +173,21 @@ module systolic_top_feeder #(
         .IFM_FIFO_DEPTH(IFM_FIFO_DEPTH), .IFM_FIFO_AW(IFM_FIFO_AW),
         .WGT_FIFO_DEPTH(WGT_FIFO_DEPTH), .WGT_FIFO_AW(WGT_FIFO_AW),
         .PSUM_FIFO_DEPTH(PSUM_FIFO_DEPTH), .PSUM_FIFO_AW(PSUM_FIFO_AW),
+        .TAIL_CYCLES_CONFIG(TAIL_CYCLES_CONFIG),
         .USE_DMA_IFM(0)
     ) u_core (
         .clk(clk),
         .rst(rst),
         .start(compute_start),
         .num_pixels(num_pixels),
+        .tail_cycles_config(tail_cycles_config),
         .done(compute_done),
         .compute_fire_out(compute_fire_out),
         .perf_comp_wload(perf_comp_wload),
         .perf_comp_active(perf_comp_active),
         .perf_comp_ifm_stall(perf_comp_ifm_stall),
         .perf_comp_tail(perf_comp_tail),
+        .perf_tail_cycles_configured(perf_tail_cycles_configured),
         .ifm_fifo_wr_en(kernel_1x1 ?
             {ROWS{vector_ifm_valid && vector_ifm_ready}} :
             {ROWS{feeder_ifm_valid}}),

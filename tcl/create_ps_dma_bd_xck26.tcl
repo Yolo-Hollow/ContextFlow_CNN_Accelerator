@@ -18,6 +18,7 @@ set ifm_fifo_depth 1024
 set ifm_fifo_aw 10
 set psum_fifo_depth 1024
 set psum_fifo_aw 10
+set tail_cycles 0
 set jobs 8
 set board_part ""
 set board_connection ""
@@ -70,6 +71,9 @@ for {set i 0} {$i < [llength $argv]} {incr i} {
     } elseif {$arg eq "-psum_fifo_aw"} {
         incr i
         set psum_fifo_aw [lindex $argv $i]
+    } elseif {$arg eq "-tail_cycles"} {
+        incr i
+        set tail_cycles [lindex $argv $i]
     } elseif {$arg eq "-jobs"} {
         incr i
         set jobs [lindex $argv $i]
@@ -246,6 +250,7 @@ set_property -dict [list \
     CONFIG.IFM_FIFO_AW $ifm_fifo_aw \
     CONFIG.PSUM_FIFO_DEPTH $psum_fifo_depth \
     CONFIG.PSUM_FIFO_AW $psum_fifo_aw \
+    CONFIG.TAIL_CYCLES_CONFIG $tail_cycles \
 ] [get_bd_cells accel]
 
 # Three DDR-to-stream channels supply layer inputs; one stream-to-DDR channel

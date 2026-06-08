@@ -5,6 +5,7 @@ file mkdir $build_dir
 
 set top_filter {}
 set waves 0
+set tail_cycles 0
 for {set i 0} {$i < [llength $argv]} {incr i} {
     set arg [lindex $argv $i]
     if {$arg eq "-top"} {
@@ -20,6 +21,9 @@ for {set i 0} {$i < [llength $argv]} {incr i} {
         }
     } elseif {$arg eq "-waves"} {
         set waves 1
+    } elseif {$arg eq "-tail_cycles"} {
+        incr i
+        set tail_cycles [lindex $argv $i]
     } else {
         error "unknown argument: $arg"
     }
@@ -75,6 +79,14 @@ set common_files {
 set tests {
     {tb_systolic_pe tb/tb_systolic_pe.v}
     {tb_systolic_array_small tb/tb_systolic_array_small.v}
+    {tb_systolic_top_multipass tb/tb_systolic_top_multipass.v diagnostic}
+    {tb_window_top_singlepass tb/tb_window_top_singlepass.v diagnostic}
+    {tb_layer_scheduler_small tb/tb_layer_scheduler_small.v diagnostic}
+    {tb_systolic_top_feeder_singlepass tb/tb_systolic_top_feeder_singlepass.v diagnostic}
+    {tb_systolic_top_feeder_multipass_pingpong tb/tb_systolic_top_feeder_multipass_pingpong.v diagnostic}
+    {tb_systolic_top_feeder_multipass_stream tb/tb_systolic_top_feeder_multipass_stream.v diagnostic}
+    {tb_systolic_top_feeder_cout_blocks tb/tb_systolic_top_feeder_cout_blocks.v diagnostic}
+    {tb_conv_layer_top_stream tb/tb_conv_layer_top_stream.v diagnostic}
     {tb_conv_accel_core_realistic_small tb/tb_conv_accel_core_realistic_small.v}
     {tb_conv_accel_core_pooling tb/tb_conv_accel_core_pooling.v}
     {tb_layer_scheduler_cout64_fulltile tb/tb_layer_scheduler_cout64_fulltile.v}
@@ -199,6 +211,12 @@ foreach test $tests {
     set snapshot "${top}_snap"
 
     cd $run_dir
+    set tail_include [file join $run_dir tail_cycles_override.vh]
+    set fh [open $tail_include w]
+    if {$tail_cycles != 0} {
+        puts $fh "`define TB_TAIL_CYCLES_OVERRIDE $tail_cycles"
+    }
+    close $fh
     exec {*}$xvlog -sv -L work -i [file join $root tb] -log $xvlog_log {*}$srcs >@ stdout 2>@ stderr
     exec {*}$xelab -debug typical -top $top -snapshot $snapshot -log $xelab_log >@ stdout 2>@ stderr
 

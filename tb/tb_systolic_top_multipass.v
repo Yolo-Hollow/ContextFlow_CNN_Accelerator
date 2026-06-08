@@ -51,7 +51,8 @@ module tb_systolic_top_multipass;
         .PSUM_FIFO_DEPTH(PSUM_D), .PSUM_FIFO_AW(PSUM_AW),
         .USE_DMA_IFM(0)
     ) dut (
-        .clk(clk), .rst(rst), .start(start), .num_pixels(num_pixels), .done(done),
+        .clk(clk), .rst(rst), .start(start), .tail_cycles_config(16'd0),
+        .num_pixels(num_pixels), .done(done),
         .ifm_fifo_wr_en(ifm_wr_en), .ifm_fifo_wr_data(ifm_wr_data),
         .ifm_fifo_full_legacy(ifm_full),
         .dma_bank_wr_en(dma_bank_wr_en), .dma_wr_x(dma_wr_x), .dma_wr_fy(dma_wr_fy),

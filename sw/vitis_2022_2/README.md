@@ -282,6 +282,19 @@ for Conv7 raw tile0 (`13332/0`) and Conv9 raw tail (`332/0`), while the old
 prepacked Conv9 tail remains bit-exact (`332/0`). Default and `-RawHwcIfm`
 manual batch-chain builds also compile successfully.
 
+The first board implementation of this path was built as
+`D:/MPSoC/b_hwc12_22` after reducing the cache to `HWC_CACHE_AW=12` and using
+one synchronous block-RAM bank per lane. It closes timing with `WNS=0.024 ns`
+and uses `BRAM Tile=63.5`, `DSP=197`. The XSA SHA256 is
+`AADE091C3DC341ADBBF1CE62AFA9A7E65BBABB3C69389762CEE09101E6C0DDF7`; the
+bitstream SHA256 is
+`85859C3F9B6F30998179E37EAE3D771C6CFC6C168ED802A2C34F7C3E0F7C7361`.
+Board DDR demos passed with unchanged detections and measured about
+`0.6448 s`, essentially the same as the drainpipe/subperf baseline. The
+conclusion is that first-stage raw-HWC for only Conv7/Conv9 is functionally
+useful but not a major performance lever; the next optimization is
+`comp_tail` reduction rather than expanding raw-HWC to `3x3`.
+
 The `wgt64` hardware build keeps the same software ABI and prepacked weight
 stream format, but the PL weight loader now writes each 64-bit AXIS beat into
 eight byte banks in one cycle.  Build directory
@@ -420,13 +433,17 @@ SHA256 is
 The runtime prints one additional line per layer:
 
 ```text
-SUBPERF layer=... feed_fill=... feed_push=... feed_fifo_stall=... feed_win_not_ready=... comp_wload=... comp_active=... comp_fire=... comp_ifm_stall=... comp_tail=... version=1
+SUBPERF layer=... feed_fill=... feed_push=... feed_fifo_stall=... feed_win_not_ready=... comp_wload=... comp_active=... comp_fire=... comp_ifm_stall=... comp_tail=... version=2
+TAILSTAT layer=... tail_config=... tail_elapsed=... drain_empty_wait=... drain_empty_sticky=...
 ```
 
-`tools/demo/summarize_uart_perf.py` reports aggregate `SUBPERF` totals and
-residuals against `STAGEPERF`. Local xsim validation has passed for
-configuration register reads, AXI-Lite reads, native1x1, Conv0 batch,
-Conv7/Conv9 native1x1, and the r18_c8 Layer06 tile.
+`SUBPERF` version 2 keeps the same feeder/compute counters and adds the
+tailtrim safety map at byte offsets `0xe0..0xec`: configured tail cycles,
+elapsed tail cycles, PSUM-drain FIFO-empty wait cycles, and a sticky
+FIFO-empty wait flag. `tools/demo/summarize_uart_perf.py` reports aggregate
+`SUBPERF`/`TAILSTAT` totals and residuals against `STAGEPERF`. Local xsim
+validation has passed for configuration register reads, AXI-Lite reads,
+native1x1, Conv0 batch, Conv7/Conv9 native1x1, and the r18_c8 Layer06 tile.
 
 Board validation passed with full bitstream programming. The fixed batch chain
 remained bit-exact and matched the Conv9 decode golden:
@@ -459,6 +476,19 @@ SUBPERF comp_wload=881216 comp_active=7432282 comp_fire=7432282 comp_ifm_stall=0
 The important reading is that `comp_fire` matches the existing compute counter,
 feeder has no FIFO/window stall in this run, and compute-stage overhead is
 mostly tail/drain-adjacent pipeline time rather than active MAC issue.
+
+The tailtrim RTL makes the systolic tail wait configurable without changing
+AXIS formats, the A53 stream ABI, or the array/PSUM data paths. Default
+`TAIL_CYCLES_CONFIG=0` preserves the legacy formula (`138` cycles for
+`ROWS=18, COLS=8`). Directed xsim sweeps under Vivado `2022.2` passed with
+`tail_cycles=1` for Conv7 raw-HWC tile0 (`13332/0`), Conv0 crop+pool batch
+(`532/0`), Conv9 raw-HWC tail (`332/0`), and Layer06 tile4 (`26641/0`).
+Following the planned `min_passing + 4` margin, the first implementation build
+should use `-tail_cycles 5`:
+
+```powershell
+C:\Xilinx\Vivado\2022.2\bin\vivado.bat -mode batch -source tcl/build_kv260_system_xck26.tcl -tclargs -build_dir D:/MPSoC/accelerator_systolic/build_system_xck26_kv260_tailtrim_2022_2 -tail_cycles 5 -jobs 12
+```
 
 ## Native 1x1 mode
 

@@ -10,6 +10,10 @@
 // OFM is exposed both as raw byte-write signals and as a backpressure-capable
 // byte stream carrying {addr,data}. A later AXI DMA wrapper can pack this stream
 // into wider memory beats.
+`ifndef SYSTOLIC_TAIL_CYCLES_CONFIG
+`define SYSTOLIC_TAIL_CYCLES_CONFIG 0
+`endif
+
 module conv_accel_core_axi_lite_full_stream #(
     parameter ROWS = 32,
     parameter COLS = 32,
@@ -35,7 +39,8 @@ module conv_accel_core_axi_lite_full_stream #(
     parameter ZP_W = 8,
     parameter OFM_ADDR_W = 24,
     parameter OFM_FIFO_DEPTH = 32,
-    parameter OFM_FIFO_AW = 5
+    parameter OFM_FIFO_AW = 5,
+    parameter TAIL_CYCLES_CONFIG = `SYSTOLIC_TAIL_CYCLES_CONFIG
 ) (
     input  clk,
     input  rst,
@@ -133,7 +138,8 @@ module conv_accel_core_axi_lite_full_stream #(
         .K_TILE(K_TILE), .COUT_TILE(COUT_TILE), .IFM_BANKS(IFM_BANKS),
         .WGT_TILE_AW(WGT_TILE_AW), .PSUM_BUF_AW(PSUM_BUF_AW), .PSUM_BUF_DEPTH(PSUM_BUF_DEPTH),
         .MULT_W(MULT_W), .SHIFT_W(SHIFT_W), .ZP_W(ZP_W),
-        .OFM_ADDR_W(OFM_ADDR_W), .OFM_FIFO_DEPTH(OFM_FIFO_DEPTH), .OFM_FIFO_AW(OFM_FIFO_AW)
+        .OFM_ADDR_W(OFM_ADDR_W), .OFM_FIFO_DEPTH(OFM_FIFO_DEPTH), .OFM_FIFO_AW(OFM_FIFO_AW),
+        .TAIL_CYCLES_CONFIG(TAIL_CYCLES_CONFIG)
     ) u_core (
         .clk(clk), .rst(rst),
         .s_axi_awaddr(s_axi_awaddr), .s_axi_awvalid(s_axi_awvalid), .s_axi_awready(s_axi_awready),

@@ -66,6 +66,10 @@
 #define ACCEL_COMP_IFM_STALL  0xd4U
 #define ACCEL_COMP_TAIL       0xd8U
 #define ACCEL_SUBPERF_VERSION 0xdcU
+#define ACCEL_TAIL_CONFIG     0xe0U
+#define ACCEL_TAIL_ELAPSED    0xe4U
+#define ACCEL_DRAIN_EMPTY_WAIT 0xe8U
+#define ACCEL_DRAIN_EMPTY_STICKY 0xecU
 
 #define ACCEL_CONV_KERNEL_1X1 (1U << 16)
 
@@ -122,6 +126,10 @@
 
 #ifndef ACCEL_RAW_HWC_IFM
 #define ACCEL_RAW_HWC_IFM    0
+#endif
+
+#ifndef ACCEL_TILE_PERF_TRACE
+#define ACCEL_TILE_PERF_TRACE 0
 #endif
 
 #define ACCEL_STREAM_CFG_BATCH   0x1U

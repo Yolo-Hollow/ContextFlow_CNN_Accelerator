@@ -1,11 +1,18 @@
 `timescale 1ns / 1ps
 // Minimal FSM: IDLE → WEIGHT_LOAD → COMPUTE
+`ifndef SYSTOLIC_TAIL_CYCLES_CONFIG
+`define SYSTOLIC_TAIL_CYCLES_CONFIG 0
+`endif
+
 module systolic_ctrl #(
-    parameter ROWS = 32, parameter COLS = 32
+    parameter ROWS = 32,
+    parameter COLS = 32,
+    parameter TAIL_CYCLES_CONFIG = `SYSTOLIC_TAIL_CYCLES_CONFIG
 ) (
     input  clk, rst,
     input  start,
     input  [15:0] num_pixels,
+    input  [15:0] tail_cycles_config,
     input  compute_ready,
     output reg done,
     output reg w_load,
@@ -17,13 +24,19 @@ module systolic_ctrl #(
     output perf_comp_wload,
     output perf_comp_active,
     output perf_comp_ifm_stall,
-    output perf_comp_tail
+    output perf_comp_tail,
+    output [31:0] tail_cycles_configured
 );
     localparam IDLE        = 2'd0;
     localparam WEIGHT_LOAD = 2'd1;
     localparam COMPUTE     = 2'd2;
     localparam DRAIN       = 2'd3;
-    localparam TAIL_CYCLES = ROWS*5 + COLS*4 + 16;
+    localparam DEFAULT_TAIL_CYCLES = ROWS*5 + COLS*4 + 16;
+    localparam DEFAULT_TAIL_CYCLES_SELECTED =
+        (TAIL_CYCLES_CONFIG == 0) ? DEFAULT_TAIL_CYCLES : TAIL_CYCLES_CONFIG;
+    wire [15:0] tail_cycles_selected =
+        (tail_cycles_config != 16'd0) ? tail_cycles_config :
+                                        DEFAULT_TAIL_CYCLES_SELECTED[15:0];
 
     reg [1:0] state, next_state;
     reg [15:0] compute_cnt;
@@ -34,6 +47,7 @@ module systolic_ctrl #(
     assign perf_comp_active = (state == COMPUTE);
     assign perf_comp_ifm_stall = (state == COMPUTE) && !compute_ready;
     assign perf_comp_tail = (state == DRAIN);
+    assign tail_cycles_configured = {16'd0, tail_cycles_selected};
 
     always @(posedge clk) begin
         if (rst) state <= IDLE;
@@ -46,7 +60,7 @@ module systolic_ctrl #(
             IDLE:         if (start)            next_state = WEIGHT_LOAD;
             WEIGHT_LOAD:  if (w_col == COLS-1)  next_state = COMPUTE;
             COMPUTE:      if (compute_fire && compute_cnt == pixels_to_run - 1'b1) next_state = DRAIN;
-            DRAIN:        if (drain_cnt == TAIL_CYCLES - 1) next_state = IDLE;
+            DRAIN:        if (drain_cnt == tail_cycles_selected - 1'b1) next_state = IDLE;
             default:                            next_state = IDLE;
         endcase
     end
@@ -85,7 +99,7 @@ module systolic_ctrl #(
     end
     always @(posedge clk) begin
         if (rst) done <= 1'b0;
-        else     done <= (state == DRAIN) && (drain_cnt == TAIL_CYCLES - 1);
+        else     done <= (state == DRAIN) && (drain_cnt == tail_cycles_selected - 1'b1);
     end
     always @(posedge clk) begin
         if (rst) compute_start_pulse <= 1'b0;

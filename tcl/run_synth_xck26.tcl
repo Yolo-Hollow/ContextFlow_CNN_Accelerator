@@ -15,6 +15,7 @@ set ifm_fifo_depth 1024
 set ifm_fifo_aw 10
 set psum_fifo_depth 1024
 set psum_fifo_aw 10
+set tail_cycles 0
 set run_name ""
 set out_of_context 0
 
@@ -56,6 +57,9 @@ for {set i 0} {$i < [llength $argv]} {incr i} {
     } elseif {$arg eq "-psum_fifo_aw"} {
         incr i
         set psum_fifo_aw [lindex $argv $i]
+    } elseif {$arg eq "-tail_cycles"} {
+        incr i
+        set tail_cycles [lindex $argv $i]
     } elseif {$arg eq "-name"} {
         incr i
         set run_name [lindex $argv $i]
@@ -86,6 +90,8 @@ set rtl_files {
     systolic/axis_bias_weight_loader.v
     systolic/ifm_line_stream_loader.v
     systolic/axis_ifm_line_loader.v
+    systolic/axis_ifm_vector_loader.v
+    systolic/axis_hwc_tile_cache.v
     systolic/psum_pingpong_buffer.v
     systolic/psum_stream_feeder.v
     systolic/psum_drain_writer.v
@@ -130,7 +136,7 @@ if {(1 << $psum_fifo_aw) != $psum_fifo_depth} {
     error "PSUM_FIFO_DEPTH must equal 2^PSUM_FIFO_AW"
 }
 
-puts "=== synth top=$top part=$part rows=$rows cols=$cols k_tile=$k_tile cout_tile=$cout_tile ifm_banks=$ifm_banks ifm_fifo_depth=$ifm_fifo_depth ifm_fifo_aw=$ifm_fifo_aw psum_fifo_depth=$psum_fifo_depth psum_fifo_aw=$psum_fifo_aw ooc=$out_of_context ==="
+puts "=== synth top=$top part=$part rows=$rows cols=$cols k_tile=$k_tile cout_tile=$cout_tile ifm_banks=$ifm_banks ifm_fifo_depth=$ifm_fifo_depth ifm_fifo_aw=$ifm_fifo_aw psum_fifo_depth=$psum_fifo_depth psum_fifo_aw=$psum_fifo_aw tail_cycles=$tail_cycles ooc=$out_of_context ==="
 read_verilog -sv [abs_files $root $rtl_files]
 
 if {$out_of_context} {
@@ -138,13 +144,15 @@ if {$out_of_context} {
         -generic "ROWS=$rows" -generic "COLS=$cols" -generic "K_TILE=$k_tile" \
         -generic "COUT_TILE=$cout_tile" -generic "IFM_BANKS=$ifm_banks" \
         -generic "IFM_FIFO_DEPTH=$ifm_fifo_depth" -generic "IFM_FIFO_AW=$ifm_fifo_aw" \
-        -generic "PSUM_FIFO_DEPTH=$psum_fifo_depth" -generic "PSUM_FIFO_AW=$psum_fifo_aw"
+        -generic "PSUM_FIFO_DEPTH=$psum_fifo_depth" -generic "PSUM_FIFO_AW=$psum_fifo_aw" \
+        -generic "TAIL_CYCLES_CONFIG=$tail_cycles"
 } else {
     synth_design -top $top -part $part -flatten_hierarchy rebuilt -directive default \
         -generic "ROWS=$rows" -generic "COLS=$cols" -generic "K_TILE=$k_tile" \
         -generic "COUT_TILE=$cout_tile" -generic "IFM_BANKS=$ifm_banks" \
         -generic "IFM_FIFO_DEPTH=$ifm_fifo_depth" -generic "IFM_FIFO_AW=$ifm_fifo_aw" \
-        -generic "PSUM_FIFO_DEPTH=$psum_fifo_depth" -generic "PSUM_FIFO_AW=$psum_fifo_aw"
+        -generic "PSUM_FIFO_DEPTH=$psum_fifo_depth" -generic "PSUM_FIFO_AW=$psum_fifo_aw" \
+        -generic "TAIL_CYCLES_CONFIG=$tail_cycles"
 }
 
 set report_prefix [file join $build_dir $run_name]

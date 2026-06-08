@@ -4,6 +4,10 @@
 // This module still exposes simple "fill" handshakes for bias/weight/IFM data,
 // so a testbench or later DMA engine can provide data. Internally it connects:
 // scheduler -> weight loader -> feeder/core -> psum stream/drain -> ping-pong.
+`ifndef SYSTOLIC_TAIL_CYCLES_CONFIG
+`define SYSTOLIC_TAIL_CYCLES_CONFIG 0
+`endif
+
 module conv_layer_top_stream #(
     parameter ROWS = 32,
     parameter COLS = 32,
@@ -29,7 +33,8 @@ module conv_layer_top_stream #(
     parameter ZP_W = 8,
     parameter OFM_ADDR_W = 24,
     parameter OFM_FIFO_DEPTH = 32,
-    parameter OFM_FIFO_AW = 5
+    parameter OFM_FIFO_AW = 5,
+    parameter TAIL_CYCLES_CONFIG = `SYSTOLIC_TAIL_CYCLES_CONFIG
 ) (
     input  clk,
     input  rst,
@@ -51,6 +56,9 @@ module conv_layer_top_stream #(
     output perf_comp_active,
     output perf_comp_ifm_stall,
     output perf_comp_tail,
+    output [31:0] perf_tail_cycles_configured,
+    output perf_drain_fifo_empty_wait,
+    output perf_drain_fifo_empty_sticky,
 
     input  [8:0] fm_h,
     input  [8:0] fm_w,
@@ -62,6 +70,7 @@ module conv_layer_top_stream #(
     input  [13:0] k_total,
     input  [10:0] cout_total,
     input  [15:0] num_pixels,
+    input  [15:0] tail_cycles_config,
     input  [8:0] tile_oy_base,
     input  [8:0] tile_ofm_h,
     input  [OFM_ADDR_W-1:0] tile_pixel_base,
@@ -322,13 +331,15 @@ module conv_layer_top_stream #(
         .IFM_FIFO_DEPTH(IFM_FIFO_DEPTH), .IFM_FIFO_AW(IFM_FIFO_AW),
         .WGT_FIFO_DEPTH(WGT_FIFO_DEPTH), .WGT_FIFO_AW(WGT_FIFO_AW),
         .PSUM_FIFO_DEPTH(PSUM_FIFO_DEPTH), .PSUM_FIFO_AW(PSUM_FIFO_AW),
-        .FM_W_MAX(FM_W_MAX), .FM_H_MAX(FM_H_MAX), .IFM_BANKS(IFM_BANKS)
+        .FM_W_MAX(FM_W_MAX), .FM_H_MAX(FM_H_MAX), .IFM_BANKS(IFM_BANKS),
+        .TAIL_CYCLES_CONFIG(TAIL_CYCLES_CONFIG)
     ) u_top (
         .clk(clk), .rst(rst),
         .feeder_start(sched_feeder_start), .feeder_done(feeder_done), .feeder_busy(),
         .feeder_fill_req(feeder_fill_req), .feeder_fill_fy(feeder_fill_fy),
         .kernel_1x1(kernel_1x1),
         .compute_start(sched_compute_start), .num_pixels(sched_num_pixels),
+        .tail_cycles_config(tail_cycles_config),
         .compute_done(compute_done), .compute_fire_out(compute_fire),
         .perf_feed_push(perf_feed_push),
         .perf_feed_fifo_stall(perf_feed_fifo_stall),
@@ -337,6 +348,7 @@ module conv_layer_top_stream #(
         .perf_comp_active(perf_comp_active),
         .perf_comp_ifm_stall(perf_comp_ifm_stall),
         .perf_comp_tail(perf_comp_tail),
+        .perf_tail_cycles_configured(perf_tail_cycles_configured),
         .fm_h(fm_h), .fm_w(fm_w), .ofm_h(ofm_h), .ofm_w(ofm_w),
         .tile_oy_base(tile_oy_base), .tile_ofm_h(tile_ofm_h),
         .conv_stride(conv_stride), .conv_pad(conv_pad), .pass_base_k(sched_pass_base_k),
@@ -365,7 +377,9 @@ module conv_layer_top_stream #(
         .psum_fifo_empty(psum_fifo_empty),
         .packet_valid(drain_packet_valid), .packet_ready(drain_packet_ready),
         .packet_addr(drain_packet_addr),
-        .packet_data(drain_packet_data), .packet_is_final(drain_packet_is_final)
+        .packet_data(drain_packet_data), .packet_is_final(drain_packet_is_final),
+        .fifo_empty_wait(perf_drain_fifo_empty_wait),
+        .fifo_empty_wait_sticky(perf_drain_fifo_empty_sticky)
     );
 
     assign final_valid = drain_packet_valid && drain_packet_is_final;

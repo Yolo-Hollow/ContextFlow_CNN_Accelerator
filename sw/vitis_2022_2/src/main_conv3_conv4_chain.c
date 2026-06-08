@@ -233,6 +233,10 @@ typedef struct {
     uint64_t hw_comp_ifm_stall_cycles;
     uint64_t hw_comp_tail_cycles;
     uint64_t hw_subperf_version;
+    uint64_t hw_tail_config_cycles;
+    uint64_t hw_tail_elapsed_cycles;
+    uint64_t hw_drain_empty_wait_cycles;
+    uint64_t hw_drain_empty_sticky;
     uint64_t vector_packets;
     uint64_t vector_pixels;
     uint64_t vector_beats;
@@ -1323,6 +1327,14 @@ static void print_layer_perf(const chain_layer_t *layer)
         (unsigned long long)layer_perf.hw_comp_tail_cycles,
         (unsigned long long)layer_perf.hw_subperf_version);
     xil_printf(
+        "TAILSTAT layer=%s tail_config=%llu tail_elapsed=%llu "
+        "drain_empty_wait=%llu drain_empty_sticky=%llu\r\n",
+        layer->name,
+        (unsigned long long)layer_perf.hw_tail_config_cycles,
+        (unsigned long long)layer_perf.hw_tail_elapsed_cycles,
+        (unsigned long long)layer_perf.hw_drain_empty_wait_cycles,
+        (unsigned long long)layer_perf.hw_drain_empty_sticky);
+    xil_printf(
         "DMASTAT layer=%s bias_starts=%lu weight_starts=%lu ifm_starts=%lu ofm_starts=%lu\r\n",
         layer->name,
         (unsigned long)layer_perf.dma_bias_starts,
@@ -1544,33 +1556,121 @@ static int run_one_tile(const chain_layer_t *layer, const chain_tile_t *tile, ui
         return -1;
     }
 
-    layer_perf.hw_busy_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_PERF_BUSY);
-    layer_perf.hw_wait_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_PERF_WAIT_ANY);
-    layer_perf.hw_wait_bias_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_PERF_WAIT_BIAS);
-    layer_perf.hw_wait_weight_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_PERF_WAIT_WEIGHT);
-    layer_perf.hw_wait_ifm_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_PERF_WAIT_IFM);
-    layer_perf.hw_wait_ofm_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_PERF_WAIT_OFM);
-    layer_perf.hw_compute_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_PERF_COMPUTE);
-    layer_perf.hw_stage_bias_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_STAGE_BIAS);
-    layer_perf.hw_stage_weight_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_STAGE_WEIGHT);
-    layer_perf.hw_stage_feeder_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_STAGE_FEEDER);
-    layer_perf.hw_stage_compute_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_STAGE_COMPUTE);
-    layer_perf.hw_stage_drain_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_STAGE_DRAIN);
-    layer_perf.hw_stage_ofm_post_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_STAGE_OFM_POST);
-    layer_perf.hw_feed_fill_wait_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_FEED_FILL_WAIT);
-    layer_perf.hw_feed_push_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_FEED_PUSH);
-    layer_perf.hw_feed_fifo_stall_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_FEED_FIFO_STALL);
-    layer_perf.hw_feed_win_not_ready_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_FEED_WIN_NOT_READY);
-    layer_perf.hw_comp_wload_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_COMP_WLOAD);
-    layer_perf.hw_comp_active_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_COMP_ACTIVE);
-    layer_perf.hw_comp_fire_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_COMP_FIRE);
-    layer_perf.hw_comp_ifm_stall_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_COMP_IFM_STALL);
-    layer_perf.hw_comp_tail_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_COMP_TAIL);
-    layer_perf.hw_subperf_version = rd32(ACCEL_BASE_ADDR, ACCEL_SUBPERF_VERSION);
-    layer_perf.vector_packets += rd32(ACCEL_BASE_ADDR, ACCEL_VECTOR_PACKETS);
-    layer_perf.vector_pixels += rd32(ACCEL_BASE_ADDR, ACCEL_VECTOR_PIXELS);
-    layer_perf.vector_beats += rd32(ACCEL_BASE_ADDR, ACCEL_VECTOR_BEATS);
-    layer_perf.vector_fifo_stall_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_VECTOR_STALLS);
+    uint32_t tile_busy = rd32(ACCEL_BASE_ADDR, ACCEL_PERF_BUSY);
+    uint32_t tile_wait = rd32(ACCEL_BASE_ADDR, ACCEL_PERF_WAIT_ANY);
+    uint32_t tile_wait_bias = rd32(ACCEL_BASE_ADDR, ACCEL_PERF_WAIT_BIAS);
+    uint32_t tile_wait_weight = rd32(ACCEL_BASE_ADDR, ACCEL_PERF_WAIT_WEIGHT);
+    uint32_t tile_wait_ifm = rd32(ACCEL_BASE_ADDR, ACCEL_PERF_WAIT_IFM);
+    uint32_t tile_wait_ofm = rd32(ACCEL_BASE_ADDR, ACCEL_PERF_WAIT_OFM);
+    uint32_t tile_compute = rd32(ACCEL_BASE_ADDR, ACCEL_PERF_COMPUTE);
+    uint32_t tile_stage_bias = rd32(ACCEL_BASE_ADDR, ACCEL_STAGE_BIAS);
+    uint32_t tile_stage_weight = rd32(ACCEL_BASE_ADDR, ACCEL_STAGE_WEIGHT);
+    uint32_t tile_stage_feeder = rd32(ACCEL_BASE_ADDR, ACCEL_STAGE_FEEDER);
+    uint32_t tile_stage_compute = rd32(ACCEL_BASE_ADDR, ACCEL_STAGE_COMPUTE);
+    uint32_t tile_stage_drain = rd32(ACCEL_BASE_ADDR, ACCEL_STAGE_DRAIN);
+    uint32_t tile_stage_ofm_post = rd32(ACCEL_BASE_ADDR, ACCEL_STAGE_OFM_POST);
+    uint32_t tile_feed_fill = rd32(ACCEL_BASE_ADDR, ACCEL_FEED_FILL_WAIT);
+    uint32_t tile_feed_push = rd32(ACCEL_BASE_ADDR, ACCEL_FEED_PUSH);
+    uint32_t tile_feed_fifo_stall = rd32(ACCEL_BASE_ADDR, ACCEL_FEED_FIFO_STALL);
+    uint32_t tile_feed_win_not_ready = rd32(ACCEL_BASE_ADDR, ACCEL_FEED_WIN_NOT_READY);
+    uint32_t tile_comp_wload = rd32(ACCEL_BASE_ADDR, ACCEL_COMP_WLOAD);
+    uint32_t tile_comp_active = rd32(ACCEL_BASE_ADDR, ACCEL_COMP_ACTIVE);
+    uint32_t tile_comp_fire = rd32(ACCEL_BASE_ADDR, ACCEL_COMP_FIRE);
+    uint32_t tile_comp_ifm_stall = rd32(ACCEL_BASE_ADDR, ACCEL_COMP_IFM_STALL);
+    uint32_t tile_comp_tail = rd32(ACCEL_BASE_ADDR, ACCEL_COMP_TAIL);
+    uint32_t tile_subperf_version = rd32(ACCEL_BASE_ADDR, ACCEL_SUBPERF_VERSION);
+    uint32_t tile_tail_config = rd32(ACCEL_BASE_ADDR, ACCEL_TAIL_CONFIG);
+    uint32_t tile_tail_elapsed = rd32(ACCEL_BASE_ADDR, ACCEL_TAIL_ELAPSED);
+    uint32_t tile_drain_empty_wait = rd32(ACCEL_BASE_ADDR, ACCEL_DRAIN_EMPTY_WAIT);
+    uint32_t tile_drain_empty_sticky = rd32(ACCEL_BASE_ADDR, ACCEL_DRAIN_EMPTY_STICKY);
+    uint32_t tile_vector_packets = rd32(ACCEL_BASE_ADDR, ACCEL_VECTOR_PACKETS);
+    uint32_t tile_vector_pixels = rd32(ACCEL_BASE_ADDR, ACCEL_VECTOR_PIXELS);
+    uint32_t tile_vector_beats = rd32(ACCEL_BASE_ADDR, ACCEL_VECTOR_BEATS);
+    uint32_t tile_vector_stalls = rd32(ACCEL_BASE_ADDR, ACCEL_VECTOR_STALLS);
+
+#if ACCEL_TILE_PERF_TRACE
+    xil_printf(
+        "TILEPERF layer=%s tile=%lu oy=%lu h=%lu pixels=%lu "
+        "packets_b=%lu packets_w=%lu packets_i=%lu busy=%lu wait=%lu "
+        "wait_b=%lu wait_w=%lu wait_i=%lu wait_o=%lu compute=%lu "
+        "stage_b=%lu stage_w=%lu stage_f=%lu stage_c=%lu stage_d=%lu stage_o=%lu "
+        "feed_fill=%lu feed_push=%lu feed_fifo_stall=%lu feed_win_not_ready=%lu "
+        "comp_wload=%lu comp_active=%lu comp_fire=%lu comp_ifm_stall=%lu comp_tail=%lu "
+        "tail_cfg=%lu tail_elapsed=%lu drain_empty_wait=%lu drain_empty_sticky=%lu "
+        "vector_packets=%lu vector_pixels=%lu vector_beats=%lu vector_stalls=%lu "
+        "subperf_version=%lu\r\n",
+        layer->name,
+        (unsigned long)tile_index,
+        (unsigned long)tile->tile_oy_base,
+        (unsigned long)tile->tile_ofm_h,
+        (unsigned long)tile->tile_pixels,
+        1UL,
+        1UL,
+        1UL,
+        (unsigned long)tile_busy,
+        (unsigned long)tile_wait,
+        (unsigned long)tile_wait_bias,
+        (unsigned long)tile_wait_weight,
+        (unsigned long)tile_wait_ifm,
+        (unsigned long)tile_wait_ofm,
+        (unsigned long)tile_compute,
+        (unsigned long)tile_stage_bias,
+        (unsigned long)tile_stage_weight,
+        (unsigned long)tile_stage_feeder,
+        (unsigned long)tile_stage_compute,
+        (unsigned long)tile_stage_drain,
+        (unsigned long)tile_stage_ofm_post,
+        (unsigned long)tile_feed_fill,
+        (unsigned long)tile_feed_push,
+        (unsigned long)tile_feed_fifo_stall,
+        (unsigned long)tile_feed_win_not_ready,
+        (unsigned long)tile_comp_wload,
+        (unsigned long)tile_comp_active,
+        (unsigned long)tile_comp_fire,
+        (unsigned long)tile_comp_ifm_stall,
+        (unsigned long)tile_comp_tail,
+        (unsigned long)tile_tail_config,
+        (unsigned long)tile_tail_elapsed,
+        (unsigned long)tile_drain_empty_wait,
+        (unsigned long)tile_drain_empty_sticky,
+        (unsigned long)tile_vector_packets,
+        (unsigned long)tile_vector_pixels,
+        (unsigned long)tile_vector_beats,
+        (unsigned long)tile_vector_stalls,
+        (unsigned long)tile_subperf_version);
+#endif
+
+    layer_perf.hw_busy_cycles += tile_busy;
+    layer_perf.hw_wait_cycles += tile_wait;
+    layer_perf.hw_wait_bias_cycles += tile_wait_bias;
+    layer_perf.hw_wait_weight_cycles += tile_wait_weight;
+    layer_perf.hw_wait_ifm_cycles += tile_wait_ifm;
+    layer_perf.hw_wait_ofm_cycles += tile_wait_ofm;
+    layer_perf.hw_compute_cycles += tile_compute;
+    layer_perf.hw_stage_bias_cycles += tile_stage_bias;
+    layer_perf.hw_stage_weight_cycles += tile_stage_weight;
+    layer_perf.hw_stage_feeder_cycles += tile_stage_feeder;
+    layer_perf.hw_stage_compute_cycles += tile_stage_compute;
+    layer_perf.hw_stage_drain_cycles += tile_stage_drain;
+    layer_perf.hw_stage_ofm_post_cycles += tile_stage_ofm_post;
+    layer_perf.hw_feed_fill_wait_cycles += tile_feed_fill;
+    layer_perf.hw_feed_push_cycles += tile_feed_push;
+    layer_perf.hw_feed_fifo_stall_cycles += tile_feed_fifo_stall;
+    layer_perf.hw_feed_win_not_ready_cycles += tile_feed_win_not_ready;
+    layer_perf.hw_comp_wload_cycles += tile_comp_wload;
+    layer_perf.hw_comp_active_cycles += tile_comp_active;
+    layer_perf.hw_comp_fire_cycles += tile_comp_fire;
+    layer_perf.hw_comp_ifm_stall_cycles += tile_comp_ifm_stall;
+    layer_perf.hw_comp_tail_cycles += tile_comp_tail;
+    layer_perf.hw_subperf_version = tile_subperf_version;
+    layer_perf.hw_tail_config_cycles = tile_tail_config;
+    layer_perf.hw_tail_elapsed_cycles += tile_tail_elapsed;
+    layer_perf.hw_drain_empty_wait_cycles += tile_drain_empty_wait;
+    layer_perf.hw_drain_empty_sticky |= tile_drain_empty_sticky;
+    layer_perf.vector_packets += tile_vector_packets;
+    layer_perf.vector_pixels += tile_vector_pixels;
+    layer_perf.vector_beats += tile_vector_beats;
+    layer_perf.vector_fifo_stall_cycles += tile_vector_stalls;
 
     wr32(ACCEL_BASE_ADDR, ACCEL_CTRL, 2U);
     trace_printf("%s tile[%lu] services bias=%lu weight=%lu ifm=%lu\r\n",
@@ -1776,33 +1876,121 @@ static int run_one_tile_batch(
         return -1;
     }
 
-    layer_perf.hw_busy_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_PERF_BUSY);
-    layer_perf.hw_wait_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_PERF_WAIT_ANY);
-    layer_perf.hw_wait_bias_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_PERF_WAIT_BIAS);
-    layer_perf.hw_wait_weight_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_PERF_WAIT_WEIGHT);
-    layer_perf.hw_wait_ifm_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_PERF_WAIT_IFM);
-    layer_perf.hw_wait_ofm_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_PERF_WAIT_OFM);
-    layer_perf.hw_compute_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_PERF_COMPUTE);
-    layer_perf.hw_stage_bias_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_STAGE_BIAS);
-    layer_perf.hw_stage_weight_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_STAGE_WEIGHT);
-    layer_perf.hw_stage_feeder_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_STAGE_FEEDER);
-    layer_perf.hw_stage_compute_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_STAGE_COMPUTE);
-    layer_perf.hw_stage_drain_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_STAGE_DRAIN);
-    layer_perf.hw_stage_ofm_post_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_STAGE_OFM_POST);
-    layer_perf.hw_feed_fill_wait_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_FEED_FILL_WAIT);
-    layer_perf.hw_feed_push_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_FEED_PUSH);
-    layer_perf.hw_feed_fifo_stall_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_FEED_FIFO_STALL);
-    layer_perf.hw_feed_win_not_ready_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_FEED_WIN_NOT_READY);
-    layer_perf.hw_comp_wload_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_COMP_WLOAD);
-    layer_perf.hw_comp_active_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_COMP_ACTIVE);
-    layer_perf.hw_comp_fire_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_COMP_FIRE);
-    layer_perf.hw_comp_ifm_stall_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_COMP_IFM_STALL);
-    layer_perf.hw_comp_tail_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_COMP_TAIL);
-    layer_perf.hw_subperf_version = rd32(ACCEL_BASE_ADDR, ACCEL_SUBPERF_VERSION);
-    layer_perf.vector_packets += rd32(ACCEL_BASE_ADDR, ACCEL_VECTOR_PACKETS);
-    layer_perf.vector_pixels += rd32(ACCEL_BASE_ADDR, ACCEL_VECTOR_PIXELS);
-    layer_perf.vector_beats += rd32(ACCEL_BASE_ADDR, ACCEL_VECTOR_BEATS);
-    layer_perf.vector_fifo_stall_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_VECTOR_STALLS);
+    uint32_t tile_busy = rd32(ACCEL_BASE_ADDR, ACCEL_PERF_BUSY);
+    uint32_t tile_wait = rd32(ACCEL_BASE_ADDR, ACCEL_PERF_WAIT_ANY);
+    uint32_t tile_wait_bias = rd32(ACCEL_BASE_ADDR, ACCEL_PERF_WAIT_BIAS);
+    uint32_t tile_wait_weight = rd32(ACCEL_BASE_ADDR, ACCEL_PERF_WAIT_WEIGHT);
+    uint32_t tile_wait_ifm = rd32(ACCEL_BASE_ADDR, ACCEL_PERF_WAIT_IFM);
+    uint32_t tile_wait_ofm = rd32(ACCEL_BASE_ADDR, ACCEL_PERF_WAIT_OFM);
+    uint32_t tile_compute = rd32(ACCEL_BASE_ADDR, ACCEL_PERF_COMPUTE);
+    uint32_t tile_stage_bias = rd32(ACCEL_BASE_ADDR, ACCEL_STAGE_BIAS);
+    uint32_t tile_stage_weight = rd32(ACCEL_BASE_ADDR, ACCEL_STAGE_WEIGHT);
+    uint32_t tile_stage_feeder = rd32(ACCEL_BASE_ADDR, ACCEL_STAGE_FEEDER);
+    uint32_t tile_stage_compute = rd32(ACCEL_BASE_ADDR, ACCEL_STAGE_COMPUTE);
+    uint32_t tile_stage_drain = rd32(ACCEL_BASE_ADDR, ACCEL_STAGE_DRAIN);
+    uint32_t tile_stage_ofm_post = rd32(ACCEL_BASE_ADDR, ACCEL_STAGE_OFM_POST);
+    uint32_t tile_feed_fill = rd32(ACCEL_BASE_ADDR, ACCEL_FEED_FILL_WAIT);
+    uint32_t tile_feed_push = rd32(ACCEL_BASE_ADDR, ACCEL_FEED_PUSH);
+    uint32_t tile_feed_fifo_stall = rd32(ACCEL_BASE_ADDR, ACCEL_FEED_FIFO_STALL);
+    uint32_t tile_feed_win_not_ready = rd32(ACCEL_BASE_ADDR, ACCEL_FEED_WIN_NOT_READY);
+    uint32_t tile_comp_wload = rd32(ACCEL_BASE_ADDR, ACCEL_COMP_WLOAD);
+    uint32_t tile_comp_active = rd32(ACCEL_BASE_ADDR, ACCEL_COMP_ACTIVE);
+    uint32_t tile_comp_fire = rd32(ACCEL_BASE_ADDR, ACCEL_COMP_FIRE);
+    uint32_t tile_comp_ifm_stall = rd32(ACCEL_BASE_ADDR, ACCEL_COMP_IFM_STALL);
+    uint32_t tile_comp_tail = rd32(ACCEL_BASE_ADDR, ACCEL_COMP_TAIL);
+    uint32_t tile_subperf_version = rd32(ACCEL_BASE_ADDR, ACCEL_SUBPERF_VERSION);
+    uint32_t tile_tail_config = rd32(ACCEL_BASE_ADDR, ACCEL_TAIL_CONFIG);
+    uint32_t tile_tail_elapsed = rd32(ACCEL_BASE_ADDR, ACCEL_TAIL_ELAPSED);
+    uint32_t tile_drain_empty_wait = rd32(ACCEL_BASE_ADDR, ACCEL_DRAIN_EMPTY_WAIT);
+    uint32_t tile_drain_empty_sticky = rd32(ACCEL_BASE_ADDR, ACCEL_DRAIN_EMPTY_STICKY);
+    uint32_t tile_vector_packets = rd32(ACCEL_BASE_ADDR, ACCEL_VECTOR_PACKETS);
+    uint32_t tile_vector_pixels = rd32(ACCEL_BASE_ADDR, ACCEL_VECTOR_PIXELS);
+    uint32_t tile_vector_beats = rd32(ACCEL_BASE_ADDR, ACCEL_VECTOR_BEATS);
+    uint32_t tile_vector_stalls = rd32(ACCEL_BASE_ADDR, ACCEL_VECTOR_STALLS);
+
+#if ACCEL_TILE_PERF_TRACE
+    xil_printf(
+        "TILEPERF layer=%s tile=%lu oy=%lu h=%lu pixels=%lu "
+        "packets_b=%lu packets_w=%lu packets_i=%lu busy=%lu wait=%lu "
+        "wait_b=%lu wait_w=%lu wait_i=%lu wait_o=%lu compute=%lu "
+        "stage_b=%lu stage_w=%lu stage_f=%lu stage_c=%lu stage_d=%lu stage_o=%lu "
+        "feed_fill=%lu feed_push=%lu feed_fifo_stall=%lu feed_win_not_ready=%lu "
+        "comp_wload=%lu comp_active=%lu comp_fire=%lu comp_ifm_stall=%lu comp_tail=%lu "
+        "tail_cfg=%lu tail_elapsed=%lu drain_empty_wait=%lu drain_empty_sticky=%lu "
+        "vector_packets=%lu vector_pixels=%lu vector_beats=%lu vector_stalls=%lu "
+        "subperf_version=%lu\r\n",
+        layer->name,
+        (unsigned long)tile_index,
+        (unsigned long)tile->tile_oy_base,
+        (unsigned long)tile->tile_ofm_h,
+        (unsigned long)tile->tile_pixels,
+        (unsigned long)actual_bias,
+        (unsigned long)actual_weight,
+        (unsigned long)actual_ifm,
+        (unsigned long)tile_busy,
+        (unsigned long)tile_wait,
+        (unsigned long)tile_wait_bias,
+        (unsigned long)tile_wait_weight,
+        (unsigned long)tile_wait_ifm,
+        (unsigned long)tile_wait_ofm,
+        (unsigned long)tile_compute,
+        (unsigned long)tile_stage_bias,
+        (unsigned long)tile_stage_weight,
+        (unsigned long)tile_stage_feeder,
+        (unsigned long)tile_stage_compute,
+        (unsigned long)tile_stage_drain,
+        (unsigned long)tile_stage_ofm_post,
+        (unsigned long)tile_feed_fill,
+        (unsigned long)tile_feed_push,
+        (unsigned long)tile_feed_fifo_stall,
+        (unsigned long)tile_feed_win_not_ready,
+        (unsigned long)tile_comp_wload,
+        (unsigned long)tile_comp_active,
+        (unsigned long)tile_comp_fire,
+        (unsigned long)tile_comp_ifm_stall,
+        (unsigned long)tile_comp_tail,
+        (unsigned long)tile_tail_config,
+        (unsigned long)tile_tail_elapsed,
+        (unsigned long)tile_drain_empty_wait,
+        (unsigned long)tile_drain_empty_sticky,
+        (unsigned long)tile_vector_packets,
+        (unsigned long)tile_vector_pixels,
+        (unsigned long)tile_vector_beats,
+        (unsigned long)tile_vector_stalls,
+        (unsigned long)tile_subperf_version);
+#endif
+
+    layer_perf.hw_busy_cycles += tile_busy;
+    layer_perf.hw_wait_cycles += tile_wait;
+    layer_perf.hw_wait_bias_cycles += tile_wait_bias;
+    layer_perf.hw_wait_weight_cycles += tile_wait_weight;
+    layer_perf.hw_wait_ifm_cycles += tile_wait_ifm;
+    layer_perf.hw_wait_ofm_cycles += tile_wait_ofm;
+    layer_perf.hw_compute_cycles += tile_compute;
+    layer_perf.hw_stage_bias_cycles += tile_stage_bias;
+    layer_perf.hw_stage_weight_cycles += tile_stage_weight;
+    layer_perf.hw_stage_feeder_cycles += tile_stage_feeder;
+    layer_perf.hw_stage_compute_cycles += tile_stage_compute;
+    layer_perf.hw_stage_drain_cycles += tile_stage_drain;
+    layer_perf.hw_stage_ofm_post_cycles += tile_stage_ofm_post;
+    layer_perf.hw_feed_fill_wait_cycles += tile_feed_fill;
+    layer_perf.hw_feed_push_cycles += tile_feed_push;
+    layer_perf.hw_feed_fifo_stall_cycles += tile_feed_fifo_stall;
+    layer_perf.hw_feed_win_not_ready_cycles += tile_feed_win_not_ready;
+    layer_perf.hw_comp_wload_cycles += tile_comp_wload;
+    layer_perf.hw_comp_active_cycles += tile_comp_active;
+    layer_perf.hw_comp_fire_cycles += tile_comp_fire;
+    layer_perf.hw_comp_ifm_stall_cycles += tile_comp_ifm_stall;
+    layer_perf.hw_comp_tail_cycles += tile_comp_tail;
+    layer_perf.hw_subperf_version = tile_subperf_version;
+    layer_perf.hw_tail_config_cycles = tile_tail_config;
+    layer_perf.hw_tail_elapsed_cycles += tile_tail_elapsed;
+    layer_perf.hw_drain_empty_wait_cycles += tile_drain_empty_wait;
+    layer_perf.hw_drain_empty_sticky |= tile_drain_empty_sticky;
+    layer_perf.vector_packets += tile_vector_packets;
+    layer_perf.vector_pixels += tile_vector_pixels;
+    layer_perf.vector_beats += tile_vector_beats;
+    layer_perf.vector_fifo_stall_cycles += tile_vector_stalls;
 
     wr32(ACCEL_BASE_ADDR, ACCEL_CTRL, 2U);
     *total_bias += actual_bias;

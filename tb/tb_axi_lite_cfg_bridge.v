@@ -31,6 +31,7 @@ module tb_axi_lite_cfg_bridge;
     wire start_pulse;
     wire [8:0] fm_h, fm_w, ofm_h, ofm_w;
     wire [1:0] conv_stride, conv_pad, activation_mode;
+    wire kernel_1x1;
     wire [13:0] k_total;
     wire [10:0] cout_total;
     wire [15:0] num_pixels;
@@ -45,6 +46,7 @@ module tb_axi_lite_cfg_bridge;
     wire [31:0] stream_bias_packets;
     wire [31:0] stream_weight_packets;
     wire [31:0] stream_ifm_packets;
+    wire [15:0] tail_cycles_config;
 
     axi_lite_cfg_bridge dut_bridge (
         .clk(clk), .rst(rst),
@@ -82,6 +84,9 @@ module tb_axi_lite_cfg_bridge;
         .perf_comp_active(1'b0),
         .perf_comp_ifm_stall(1'b0),
         .perf_comp_tail(1'b0),
+        .perf_tail_cycles_configured(32'd138),
+        .perf_drain_fifo_empty_wait(1'b0),
+        .perf_drain_fifo_empty_sticky(1'b0),
         .stream_bias_completed(32'd7),
         .stream_weight_completed(32'd11),
         .stream_ifm_completed(32'd13),
@@ -92,6 +97,7 @@ module tb_axi_lite_cfg_bridge;
         .start_pulse(start_pulse),
         .fm_h(fm_h), .fm_w(fm_w), .ofm_h(ofm_h), .ofm_w(ofm_w),
         .conv_stride(conv_stride), .conv_pad(conv_pad),
+        .kernel_1x1(kernel_1x1),
         .activation_mode(activation_mode),
         .k_total(k_total), .cout_total(cout_total), .num_pixels(num_pixels),
         .tile_oy_base(tile_oy_base), .tile_ofm_h(tile_ofm_h),
@@ -103,7 +109,9 @@ module tb_axi_lite_cfg_bridge;
         .stream_raw_hwc_mode(stream_raw_hwc_mode),
         .stream_bias_packets(stream_bias_packets),
         .stream_weight_packets(stream_weight_packets),
-        .stream_ifm_packets(stream_ifm_packets)
+        .stream_ifm_packets(stream_ifm_packets),
+        .tail_cycles_config(tail_cycles_config),
+        .config_error()
     );
 
     always #5 clk = ~clk;
@@ -299,7 +307,9 @@ module tb_axi_lite_cfg_bridge;
         axi_read(8'hd0, rd);
         check_eq(rd, 32'd0, "comp fire counter read");
         axi_read(8'hdc, rd);
-        check_eq(rd, 32'd1, "subperf version read");
+        check_eq(rd, 32'd2, "subperf version read");
+        axi_read(8'he0, rd);
+        check_eq(rd, 32'd138, "tail config read");
         axi_read(8'h3c, rd);
         check_eq(rd, 32'd36, "input_zero_point read");
         check_eq({24'd0, input_zero_point}, 32'd36, "input_zero_point output");

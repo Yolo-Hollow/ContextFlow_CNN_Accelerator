@@ -90,6 +90,10 @@
 `ifndef TB_CONV_ACCEL_CORE_PROGRESS_INTERVAL
 `define TB_CONV_ACCEL_CORE_PROGRESS_INTERVAL 1000000
 `endif
+`include "tail_cycles_override.vh"
+`ifndef TB_TAIL_CYCLES_OVERRIDE
+`define TB_TAIL_CYCLES_OVERRIDE 0
+`endif
 `ifndef TB_CONV_ACCEL_CORE_TILE_OY_BASE
 `define TB_CONV_ACCEL_CORE_TILE_OY_BASE 0
 `endif
@@ -439,6 +443,7 @@ module `TB_CONV_ACCEL_CORE_MODULE;
     integer final_raw_lane, final_raw_index;
     integer run_idx, run_pixels, run_oy_base, run_ofm_h, run_pixel_base;
     integer ps_tile_start_count, ps_done_seen_count, ps_done_clear_count;
+    integer tail_cycles_override;
     integer layer_done_pulse_count;
     integer ps_bias_service_count, ps_weight_service_count, ps_line_fill_count;
 `ifdef TB_CONV_ACCEL_CORE_CHECK_VECTOR_IFM
@@ -1626,6 +1631,10 @@ module `TB_CONV_ACCEL_CORE_MODULE;
         ps_tile_start_count = 0;
         ps_done_seen_count = 0;
         ps_done_clear_count = 0;
+        tail_cycles_override = `TB_TAIL_CYCLES_OVERRIDE;
+        if (tail_cycles_override != 0) begin
+            $display("[INFO] tail_cycles override=%0d", tail_cycles_override);
+        end
         layer_done_pulse_count = 0;
         ps_bias_service_count = 0;
         ps_weight_service_count = 0;
@@ -1795,6 +1804,8 @@ module `TB_CONV_ACCEL_CORE_MODULE;
         cfg_write(6'h0f, {24'd0, INPUT_ZERO_POINT});
         cfg_write(6'h10, {28'd0, POOL_STRIDE, 1'b0, (POOL_ENABLE != 0)});
         cfg_write(6'h11, EXPECTED_OFM_WRITES);
+        if (tail_cycles_override != 0)
+            cfg_write(6'h38, tail_cycles_override[15:0]);
 `ifdef TB_CONV_ACCEL_CORE_EARLY_PRINT
         $display("[EARLY] t=%0t layer config done; run tiles start TILE_COUNT=%0d EXPECTED_OFM_WRITES=%0d",
             $time, TILE_COUNT, EXPECTED_OFM_WRITES);

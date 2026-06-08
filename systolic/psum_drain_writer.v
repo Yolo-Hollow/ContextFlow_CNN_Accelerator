@@ -26,7 +26,9 @@ module psum_drain_writer #(
     input  packet_ready,
     output reg [AW-1:0] packet_addr,
     output reg [COLS*PSUM_W*2-1:0] packet_data,
-    output reg packet_is_final
+    output reg packet_is_final,
+    output fifo_empty_wait,
+    output reg fifo_empty_wait_sticky
 );
     localparam [31:0] COL_MASK = (32'h1 << COLS) - 1;
 
@@ -45,10 +47,13 @@ module psum_drain_writer #(
     wire [1:0] stored_after_pop = stored_count - {1'b0, packet_pop};
     wire [1:0] stored_after_return = stored_after_pop + {1'b0, read_pending};
     wire can_accept_future_return = (stored_after_return < 2'd2);
+    wire want_read = busy && (rd_count < pixels_to_drain) &&
+                     can_accept_future_return;
     wire issue_read = busy && (rd_count < pixels_to_drain) &&
                       fifos_ready && can_accept_future_return;
 
     assign psum_fifo_rd_en = issue_read ? COL_MASK : 32'd0;
+    assign fifo_empty_wait = want_read && !fifos_ready;
 
     always @(posedge clk) begin
         if (rst) begin
@@ -65,8 +70,11 @@ module psum_drain_writer #(
             hold_valid <= 1'b0;
             hold_addr <= {AW{1'b0}};
             hold_data <= {COLS*PSUM_W*2{1'b0}};
+            fifo_empty_wait_sticky <= 1'b0;
         end else begin
             done <= 1'b0;
+            if (fifo_empty_wait)
+                fifo_empty_wait_sticky <= 1'b1;
 
             if (!busy) begin
                 packet_valid <= 1'b0;
@@ -78,6 +86,7 @@ module psum_drain_writer #(
                 if (start) begin
                     busy <= 1'b1;
                     packet_is_final <= is_final_pass;
+                    fifo_empty_wait_sticky <= 1'b0;
                 end
             end else begin
                 if (packet_pop && (out_count == pixels_to_drain - 16'd1)) begin

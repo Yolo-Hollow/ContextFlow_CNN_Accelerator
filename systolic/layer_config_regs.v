@@ -56,6 +56,10 @@
 //   0x35 COMP_IFM_STALL: core active cycles stalled by empty IFM FIFO
 //   0x36 COMP_TAIL:      core systolic tail cycles inside compute stage
 //   0x37 SUBPERF_VERSION: fixed sub-stage counter map version
+//   0x38 TAIL_CONFIG:    configured systolic tail cycles per compute pass
+//   0x39 TAIL_ELAPSED:   alias of COMP_TAIL for tail-sweep scripts
+//   0x3a DRAIN_EMPTY_WAIT: PSUM drain cycles waiting for FIFO data
+//   0x3b DRAIN_EMPTY_STICKY: sticky flag for any PSUM drain FIFO wait
 module layer_config_regs #(
     parameter IFM_FIFO_DEPTH = 1024
 ) (
@@ -94,6 +98,9 @@ module layer_config_regs #(
     input         perf_comp_active,
     input         perf_comp_ifm_stall,
     input         perf_comp_tail,
+    input  [31:0] perf_tail_cycles_configured,
+    input         perf_drain_fifo_empty_wait,
+    input         perf_drain_fifo_empty_sticky,
     input  [31:0] stream_bias_completed,
     input  [31:0] stream_weight_completed,
     input  [31:0] stream_ifm_completed,
@@ -126,6 +133,7 @@ module layer_config_regs #(
     output reg [31:0] stream_bias_packets,
     output reg [31:0] stream_weight_packets,
     output reg [31:0] stream_ifm_packets,
+    output reg [15:0] tail_cycles_config,
     output reg        config_error
 );
     reg done_sticky;
@@ -150,6 +158,8 @@ module layer_config_regs #(
     reg [31:0] perf_comp_active_cycles;
     reg [31:0] perf_comp_ifm_stall_cycles;
     reg [31:0] perf_comp_tail_cycles;
+    reg [31:0] perf_drain_fifo_empty_wait_cycles;
+    reg        perf_drain_fifo_empty_sticky_latched;
     wire cfg_idle = !layer_busy;
     wire perf_wait_any = perf_wait_bias || perf_wait_weight ||
                          perf_wait_ifm || perf_wait_ofm;
@@ -185,6 +195,7 @@ module layer_config_regs #(
             stream_bias_packets <= 32'd0;
             stream_weight_packets <= 32'd0;
             stream_ifm_packets <= 32'd0;
+            tail_cycles_config <= 16'd0;
             config_error <= 1'b0;
             perf_busy_cycles <= 32'd0;
             perf_wait_any_cycles <= 32'd0;
@@ -207,6 +218,8 @@ module layer_config_regs #(
             perf_comp_active_cycles <= 32'd0;
             perf_comp_ifm_stall_cycles <= 32'd0;
             perf_comp_tail_cycles <= 32'd0;
+            perf_drain_fifo_empty_wait_cycles <= 32'd0;
+            perf_drain_fifo_empty_sticky_latched <= 1'b0;
         end else begin
             start_pulse <= 1'b0;
             if (layer_done)
@@ -254,6 +267,10 @@ module layer_config_regs #(
                     perf_comp_ifm_stall_cycles <= perf_comp_ifm_stall_cycles + 1'b1;
                 if (perf_comp_tail)
                     perf_comp_tail_cycles <= perf_comp_tail_cycles + 1'b1;
+                if (perf_drain_fifo_empty_wait)
+                    perf_drain_fifo_empty_wait_cycles <= perf_drain_fifo_empty_wait_cycles + 1'b1;
+                if (perf_drain_fifo_empty_sticky)
+                    perf_drain_fifo_empty_sticky_latched <= 1'b1;
             end
 
             if (cfg_wr_en) begin
@@ -285,11 +302,14 @@ module layer_config_regs #(
                                 perf_comp_active_cycles <= 32'd0;
                                 perf_comp_ifm_stall_cycles <= 32'd0;
                                 perf_comp_tail_cycles <= 32'd0;
+                                perf_drain_fifo_empty_wait_cycles <= 32'd0;
+                                perf_drain_fifo_empty_sticky_latched <= 1'b0;
                             end
                         end
                         if (cfg_wdata[1]) begin
                             done_sticky <= 1'b0;
                             config_error <= 1'b0;
+                            perf_drain_fifo_empty_sticky_latched <= 1'b0;
                         end
                     end
                     6'h01: begin
@@ -339,6 +359,7 @@ module layer_config_regs #(
                     6'h1a: if (cfg_idle) stream_bias_packets <= cfg_wdata;
                     6'h1b: if (cfg_idle) stream_weight_packets <= cfg_wdata;
                     6'h1c: if (cfg_idle) stream_ifm_packets <= cfg_wdata;
+                    6'h38: if (cfg_idle) tail_cycles_config <= cfg_wdata[15:0];
                     default: begin end
                 endcase
             end
@@ -398,7 +419,11 @@ module layer_config_regs #(
             6'h34: cfg_rdata = perf_compute_cycles;
             6'h35: cfg_rdata = perf_comp_ifm_stall_cycles;
             6'h36: cfg_rdata = perf_comp_tail_cycles;
-            6'h37: cfg_rdata = 32'd1;
+            6'h37: cfg_rdata = 32'd2;
+            6'h38: cfg_rdata = perf_tail_cycles_configured;
+            6'h39: cfg_rdata = perf_comp_tail_cycles;
+            6'h3a: cfg_rdata = perf_drain_fifo_empty_wait_cycles;
+            6'h3b: cfg_rdata = {31'd0, perf_drain_fifo_empty_sticky_latched};
             default: cfg_rdata = 32'd0;
         endcase
     end

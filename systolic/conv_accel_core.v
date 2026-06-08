@@ -12,6 +12,10 @@
 //
 // The legacy direct quant/LUT programming ports remain available for unit
 // tests and non-AXI wrappers. AXI-Lite system tops program through 0x20..0x23.
+`ifndef SYSTOLIC_TAIL_CYCLES_CONFIG
+`define SYSTOLIC_TAIL_CYCLES_CONFIG 0
+`endif
+
 module conv_accel_core #(
     parameter ROWS = 32,
     parameter COLS = 32,
@@ -37,7 +41,8 @@ module conv_accel_core #(
     parameter ZP_W = 8,
     parameter OFM_ADDR_W = 24,
     parameter OFM_FIFO_DEPTH = 32,
-    parameter OFM_FIFO_AW = 5
+    parameter OFM_FIFO_AW = 5,
+    parameter TAIL_CYCLES_CONFIG = `SYSTOLIC_TAIL_CYCLES_CONFIG
 ) (
     input  clk,
     input  rst,
@@ -140,6 +145,9 @@ module conv_accel_core #(
     wire perf_comp_active;
     wire perf_comp_ifm_stall;
     wire perf_comp_tail;
+    wire [31:0] perf_tail_cycles_configured;
+    wire perf_drain_fifo_empty_wait;
+    wire perf_drain_fifo_empty_sticky;
     wire [31:0] layer_cfg_rdata;
     wire [8:0] fm_h;
     wire [8:0] fm_w;
@@ -164,6 +172,7 @@ module conv_accel_core #(
     wire [31:0] stream_bias_packets;
     wire [31:0] stream_weight_packets;
     wire [31:0] stream_ifm_packets;
+    wire [15:0] tail_cycles_config;
     wire config_error;
     wire [OFM_ADDR_W-1:0] tile_pixel_base_ext = tile_pixel_base[OFM_ADDR_W-1:0];
     wire [COLS*2*MULT_W-1:0] quant_mult_flat;
@@ -257,6 +266,9 @@ module conv_accel_core #(
         .perf_comp_active(perf_comp_active),
         .perf_comp_ifm_stall(perf_comp_ifm_stall),
         .perf_comp_tail(perf_comp_tail),
+        .perf_tail_cycles_configured(perf_tail_cycles_configured),
+        .perf_drain_fifo_empty_wait(perf_drain_fifo_empty_wait),
+        .perf_drain_fifo_empty_sticky(perf_drain_fifo_empty_sticky),
         .stream_bias_completed(stream_bias_completed),
         .stream_weight_completed(stream_weight_completed),
         .stream_ifm_completed(stream_ifm_completed),
@@ -279,6 +291,7 @@ module conv_accel_core #(
         .stream_bias_packets(stream_bias_packets),
         .stream_weight_packets(stream_weight_packets),
         .stream_ifm_packets(stream_ifm_packets),
+        .tail_cycles_config(tail_cycles_config),
         .config_error(config_error)
     );
 
@@ -300,7 +313,8 @@ module conv_accel_core #(
         .K_TILE(K_TILE), .COUT_TILE(COUT_TILE), .IFM_BANKS(IFM_BANKS),
         .WGT_TILE_AW(WGT_TILE_AW), .PSUM_BUF_AW(PSUM_BUF_AW), .PSUM_BUF_DEPTH(PSUM_BUF_DEPTH),
         .MULT_W(MULT_W), .SHIFT_W(SHIFT_W), .ZP_W(ZP_W),
-        .OFM_ADDR_W(OFM_ADDR_W), .OFM_FIFO_DEPTH(OFM_FIFO_DEPTH), .OFM_FIFO_AW(OFM_FIFO_AW)
+        .OFM_ADDR_W(OFM_ADDR_W), .OFM_FIFO_DEPTH(OFM_FIFO_DEPTH), .OFM_FIFO_AW(OFM_FIFO_AW),
+        .TAIL_CYCLES_CONFIG(TAIL_CYCLES_CONFIG)
     ) u_layer (
         .clk(clk), .rst(rst), .start(start_pulse), .busy(layer_busy), .done(layer_done),
         .perf_compute_fire(layer_compute_fire),
@@ -318,9 +332,13 @@ module conv_accel_core #(
         .perf_comp_active(perf_comp_active),
         .perf_comp_ifm_stall(perf_comp_ifm_stall),
         .perf_comp_tail(perf_comp_tail),
+        .perf_tail_cycles_configured(perf_tail_cycles_configured),
+        .perf_drain_fifo_empty_wait(perf_drain_fifo_empty_wait),
+        .perf_drain_fifo_empty_sticky(perf_drain_fifo_empty_sticky),
         .fm_h(fm_h), .fm_w(fm_w), .ofm_h(ofm_h), .ofm_w(ofm_w),
         .conv_stride(conv_stride), .conv_pad(conv_pad), .kernel_1x1(kernel_1x1),
         .k_total(k_total), .cout_total(cout_total), .num_pixels(num_pixels),
+        .tail_cycles_config(tail_cycles_config),
         .tile_oy_base(tile_oy_base), .tile_ofm_h(tile_ofm_h),
         .tile_pixel_base(tile_pixel_base_ext),
         .pool_enable(pool_enable), .pool_stride(pool_stride),

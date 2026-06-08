@@ -1,7 +1,8 @@
 param(
     [ValidateSet("r18_c8", "conv0_crop_pool", "conv0_crop_pool_tiles", "layer06_tile4", "layer06_tiles", "layer06_pool_tiles", "conv4_pool_tiles", "conv3_conv4_chain", "conv4_conv5_chain", "conv0_conv4_chain", "conv0_conv5_chain", "conv0_conv6_chain", "conv0_conv7_chain", "conv0_conv8_chain", "conv0_conv9_chain", "conv0_conv9_batch_chain", "conv0_conv9_ddr_demo")]
     [string]$Mode = "r18_c8",
-    [switch]$RawHwcIfm
+    [switch]$RawHwcIfm,
+    [switch]$TilePerfTrace
 )
 
 $ErrorActionPreference = "Stop"
@@ -48,6 +49,9 @@ $DecodeObj = Join-Path $ManualBuildDir "yolo_decode_$Mode.o"
 $Elf = Join-Path $ManualBuildDir "conv_accel_${Mode}_smoke.elf"
 $LinkerScript = Join-Path $AppSrcDir "lscript.ld"
 $Defines = @()
+if ($TilePerfTrace) {
+    $Defines += "-DACCEL_TILE_PERF_TRACE=1"
+}
 $Source = Join-Path $AppSrcDir "main.c"
 if ($Mode -eq "conv0_crop_pool" -or $Mode -eq "conv0_crop_pool_tiles") {
     $Defines += "-DACCEL_SMOKE_REAL_CONV0_CROP_POOL=1"

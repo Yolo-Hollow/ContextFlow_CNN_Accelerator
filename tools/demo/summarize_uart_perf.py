@@ -9,6 +9,7 @@ DMASTAT_PREFIX = "DMASTAT "
 VECTORSTAT_PREFIX = "VECTORSTAT "
 STAGEPERF_PREFIX = "STAGEPERF "
 SUBPERF_PREFIX = "SUBPERF "
+TAILSTAT_PREFIX = "TAILSTAT "
 
 
 def parse_metric_line(line, prefix):
@@ -197,6 +198,29 @@ def summarize_perf(log_text):
                 stage["compute_stage_cycles"] - comp_explained
             )
 
+    tail_layers = [
+        parse_metric_line(line.strip(), TAILSTAT_PREFIX)
+        for line in log_text.splitlines()
+        if line.strip().startswith(TAILSTAT_PREFIX)
+    ]
+    tailstat = None
+    if tail_layers:
+        tailstat = {
+            "layers": tail_layers,
+            "tail_config_cycles": max(
+                layer["tail_config"] for layer in tail_layers
+            ),
+            "tail_elapsed_cycles": sum(
+                layer["tail_elapsed"] for layer in tail_layers
+            ),
+            "drain_empty_wait_cycles": sum(
+                layer["drain_empty_wait"] for layer in tail_layers
+            ),
+            "drain_empty_sticky": max(
+                layer["drain_empty_sticky"] for layer in tail_layers
+            ),
+        }
+
     return {
         "layer_count": len(layers),
         "total_microseconds": total_us,
@@ -208,6 +232,7 @@ def summarize_perf(log_text):
         "stage": stage,
         "vector": vector,
         "subperf": subperf,
+        "tailstat": tailstat,
     }
 
 
@@ -278,6 +303,15 @@ def print_summary(summary):
             f"comp_fire={subperf['comp_fire_cycles']} "
             f"comp_ifm_stall={subperf['comp_ifm_stall_cycles']} "
             f"comp_tail={subperf['comp_tail_cycles']}{residual}"
+        )
+    if summary["tailstat"]:
+        tailstat = summary["tailstat"]
+        print(
+            "TAILSTAT summary: "
+            f"tail_config={tailstat['tail_config_cycles']} "
+            f"tail_elapsed={tailstat['tail_elapsed_cycles']} "
+            f"drain_empty_wait={tailstat['drain_empty_wait_cycles']} "
+            f"drain_empty_sticky={tailstat['drain_empty_sticky']}"
         )
 
 
