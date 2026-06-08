@@ -1,12 +1,22 @@
 `timescale 1ns / 1ps
 
-// Experimental raw-HWC IFM tile cache for native 1x1 layers.
+// Experimental raw-HWC IFM tile cache for native 1x1 and directed 3x3 tiles.
 //
 // The IFM AXIS stream carries one uint8 HWC spatial tile:
 //   pixel-major, then channel-major: pixel0 ch0..CIN-1, pixel1 ...
-// The cache stores centered signed int8 bytes in 18 lane banks:
+// 1x1 mode stores centered signed int8 bytes in 18 lane banks:
 //   bank = channel % ROWS
 //   addr = pixel * ceil(CIN / ROWS) + channel / ROWS
+//
+// 3x3 mode stores nine replicated kernel-position views so every output lane
+// still has one private read port:
+//   global_k = channel * 9 + kernel_pos
+//   bank = global_k % ROWS
+//   addr = pixel * ceil(K_TOTAL / ROWS) + global_k / ROWS
+//
+// In 3x3 mode the raw tile contains the clamped input rows needed by the
+// output tile, in full-width HWC order. Padding beyond the cached rows/columns
+// replays as internal signed zero.
 //
 // This v1 loader intentionally unpacks one AXIS byte per cycle after each
 // accepted 64-bit beat. It proves the protocol and replay path first; a later
@@ -22,6 +32,14 @@ module axis_hwc_tile_cache #(
     input  stream_reset,
     input  [31:0] expected_packets,
     input  [15:0] num_pixels,
+    input  [8:0] fm_h,
+    input  [8:0] fm_w,
+    input  [8:0] ofm_w,
+    input  [8:0] tile_oy_base,
+    input  [8:0] tile_ofm_h,
+    input  [1:0] conv_stride,
+    input  [1:0] conv_pad,
+    input  kernel_1x1,
     input  [13:0] k_total,
     input  [13:0] pass_base_k,
     input  [7:0] input_zero_point,
@@ -74,9 +92,28 @@ module axis_hwc_tile_cache #(
 
     wire axis_fire = s_axis_tvalid && s_axis_tready;
     wire vector_fire = vector_valid && vector_ready;
-    wire [13:0] chunks_per_pixel = (k_total + ROWS - 1) / ROWS;
-    wire [31:0] expected_bytes = num_pixels * k_total;
-    wire [CACHE_AW-1:0] load_addr = (load_pixel * chunks_per_pixel) + load_chunk;
+    wire [13:0] raw_channels = kernel_1x1 ? k_total : ((k_total + 14'd8) / 14'd9);
+    wire [13:0] cache_k_total = kernel_1x1 ? raw_channels : k_total;
+    wire [13:0] chunks_per_pixel = (cache_k_total + ROWS - 1) / ROWS;
+    wire signed [11:0] cache_first_y_s =
+        $signed({3'd0, tile_oy_base}) * $signed({10'd0, conv_stride}) -
+        $signed({10'd0, conv_pad});
+    wire signed [11:0] cache_last_y_s =
+        $signed({3'd0, tile_oy_base + tile_ofm_h - 1'b1}) *
+        $signed({10'd0, conv_stride}) - $signed({10'd0, conv_pad}) + 12'sd2;
+    wire [8:0] cache_y_base =
+        kernel_1x1 ? tile_oy_base :
+        ((cache_first_y_s < 0) ? 9'd0 : cache_first_y_s[8:0]);
+    wire [8:0] cache_y_last =
+        kernel_1x1 ? (tile_oy_base + tile_ofm_h - 1'b1) :
+        ((cache_last_y_s >= $signed({3'd0, fm_h})) ? (fm_h - 1'b1) :
+         cache_last_y_s[8:0]);
+    wire [15:0] cache_pixels =
+        kernel_1x1 ? num_pixels :
+        (((cache_y_last >= cache_y_base) && (fm_w != 9'd0)) ?
+         ((cache_y_last - cache_y_base + 1'b1) * fm_w) : 16'd0);
+    wire [31:0] expected_bytes = cache_pixels * raw_channels;
+    wire [CACHE_AW-1:0] load_addr_1x1 = (load_pixel * chunks_per_pixel) + load_chunk;
     wire current_keep = beat_keep[beat_byte_idx];
     wire last_beat_byte = (beat_byte_idx + 1'b1 == KEEP_W);
     wire replay_last_pixel = (replay_pixel + 1'b1 == num_pixels);
@@ -113,12 +150,47 @@ module axis_hwc_tile_cache #(
     genvar lane;
     generate
         for (lane = 0; lane < ROWS; lane = lane + 1) begin : cache_banks
+            localparam [4:0] LANE_ID = lane[4:0];
             (* ram_style = "block" *) reg [7:0] cache_bank [0:CACHE_DEPTH-1];
             reg [7:0] replay_lane_data;
-            wire [13:0] lane_channel = pass_base_k + lane;
-            wire [13:0] lane_chunk = lane_channel / ROWS;
+            wire [13:0] lane_global_k = pass_base_k + lane;
+            wire [13:0] lane_channel = kernel_1x1 ? lane_global_k : (lane_global_k / 14'd9);
+            wire [3:0] lane_kernel_pos = kernel_1x1 ? 4'd0 : (lane_global_k % 14'd9);
+            wire [1:0] lane_ky = kernel_1x1 ? 2'd0 : (lane_kernel_pos / 3);
+            wire [1:0] lane_kx = kernel_1x1 ? 2'd0 : (lane_kernel_pos % 3);
+            wire [13:0] lane_chunk =
+                kernel_1x1 ? (lane_channel / ROWS) : (lane_global_k / ROWS);
+            wire [4:0] load_bank_base = (load_channel * 14'd9) % ROWS;
+            wire [4:0] load_lane_delta =
+                (LANE_ID >= load_bank_base) ?
+                (LANE_ID - load_bank_base) :
+                (LANE_ID + ROWS - load_bank_base);
+            wire load_lane_hit_3x3 = !kernel_1x1 && (load_lane_delta < 5'd9) &&
+                                     (load_channel < raw_channels);
+            wire [13:0] load_lane_global_k =
+                (load_channel * 14'd9) + load_lane_delta[3:0];
+            wire [CACHE_AW-1:0] load_addr_3x3 =
+                (load_pixel * chunks_per_pixel) + (load_lane_global_k / ROWS);
+            wire [8:0] replay_rel_y = (ofm_w == 9'd0) ? 9'd0 : (replay_read_pixel / ofm_w);
+            wire [8:0] replay_x = (ofm_w == 9'd0) ? 9'd0 : (replay_read_pixel % ofm_w);
+            wire signed [11:0] lane_fy_s =
+                kernel_1x1 ? $signed({3'd0, tile_oy_base + replay_rel_y}) :
+                ($signed({3'd0, tile_oy_base + replay_rel_y}) *
+                 $signed({10'd0, conv_stride}) +
+                 $signed({10'd0, lane_ky}) - $signed({10'd0, conv_pad}));
+            wire signed [11:0] lane_fx_s =
+                kernel_1x1 ? $signed({3'd0, replay_x}) :
+                ($signed({3'd0, replay_x}) * $signed({10'd0, conv_stride}) +
+                 $signed({10'd0, lane_kx}) - $signed({10'd0, conv_pad}));
+            wire lane_in_bounds =
+                (lane_global_k < k_total) &&
+                (lane_channel < raw_channels) &&
+                (lane_fy_s >= 0) && (lane_fy_s < $signed({3'd0, fm_h})) &&
+                (lane_fx_s >= 0) && (lane_fx_s < $signed({3'd0, fm_w}));
+            wire [15:0] lane_cache_pixel =
+                ((lane_fy_s[8:0] - cache_y_base) * fm_w) + lane_fx_s[8:0];
             wire [CACHE_AW-1:0] lane_addr =
-                (replay_read_pixel * chunks_per_pixel) + lane_chunk;
+                (lane_cache_pixel * chunks_per_pixel) + lane_chunk;
 
             assign vector_data[lane*8 +: 8] = replay_lane_data;
 
@@ -126,16 +198,24 @@ module axis_hwc_tile_cache #(
                 if (rst || stream_reset) begin
                     replay_lane_data <= 8'd0;
                 end else begin
-                    if (beat_pending && current_keep &&
-                        (load_bank == lane[7:0]) && (load_addr < CACHE_DEPTH)) begin
-                        cache_bank[load_addr] <=
-                            center_ifm_byte(beat_data[beat_byte_idx*8 +: 8],
-                                            input_zero_point);
+                    if (beat_pending && current_keep) begin
+                        if (kernel_1x1 &&
+                            (load_bank == lane[7:0]) &&
+                            (load_addr_1x1 < CACHE_DEPTH)) begin
+                            cache_bank[load_addr_1x1] <=
+                                center_ifm_byte(beat_data[beat_byte_idx*8 +: 8],
+                                                input_zero_point);
+                        end else if (load_lane_hit_3x3 &&
+                                     (load_addr_3x3 < CACHE_DEPTH)) begin
+                            cache_bank[load_addr_3x3] <=
+                                center_ifm_byte(beat_data[beat_byte_idx*8 +: 8],
+                                                input_zero_point);
+                        end
                     end
 
                     if (replay_read_en) begin
                         replay_lane_data <=
-                            (lane_channel < k_total && lane_addr < CACHE_DEPTH) ?
+                            (lane_in_bounds && lane_addr < CACHE_DEPTH) ?
                             cache_bank[lane_addr] : 8'd0;
                     end
                 end
@@ -238,11 +318,14 @@ module axis_hwc_tile_cache #(
 
             if (beat_pending) begin
                 if (current_keep) begin
-                    if (load_addr >= CACHE_DEPTH)
+                    if ((kernel_1x1 && load_addr_1x1 >= CACHE_DEPTH) ||
+                        (!kernel_1x1 &&
+                         ((load_pixel * chunks_per_pixel) +
+                          (((load_channel * 14'd9) + 14'd8) / ROWS)) >= CACHE_DEPTH))
                         overflow_error <= 1'b1;
 
                     load_byte_count <= load_byte_count + 1'b1;
-                    if (load_channel + 1'b1 == k_total) begin
+                    if (load_channel + 1'b1 == raw_channels) begin
                         load_channel <= 14'd0;
                         load_bank <= 8'd0;
                         load_chunk <= 14'd0;

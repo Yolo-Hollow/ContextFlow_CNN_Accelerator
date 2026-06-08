@@ -78,6 +78,7 @@ module tb_conv_layer_top_stream;
         .clk(clk), .rst(rst), .start(start), .busy(busy), .done(done),
         .fm_h(9'd5), .fm_w(9'd5), .ofm_h(9'd3), .ofm_w(9'd3),
         .conv_stride(2'd1), .conv_pad(2'd0), .kernel_1x1(1'b0),
+        .stream_raw_hwc_mode(1'b0),
         .tail_cycles_config(16'd0),
         .k_total(K_TOTAL[13:0]), .cout_total(COUT_TOTAL[10:0]), .num_pixels(16'd9),
         .tile_oy_base(9'd0), .tile_ofm_h(9'd0), .tile_pixel_base(16'd0),

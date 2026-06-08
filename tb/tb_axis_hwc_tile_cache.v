@@ -10,6 +10,14 @@ module tb_axis_hwc_tile_cache;
     reg stream_reset;
     reg [31:0] expected_packets;
     reg [15:0] num_pixels;
+    reg [8:0] fm_h;
+    reg [8:0] fm_w;
+    reg [8:0] ofm_w;
+    reg [8:0] tile_oy_base;
+    reg [8:0] tile_ofm_h;
+    reg [1:0] conv_stride;
+    reg [1:0] conv_pad;
+    reg kernel_1x1;
     reg [13:0] k_total;
     reg [13:0] pass_base_k;
     reg [7:0] input_zero_point;
@@ -32,6 +40,7 @@ module tb_axis_hwc_tile_cache;
     integer pass, fail;
     integer pixel, lane, ch;
     integer byte_index;
+    integer oy, ox, gk, ker, ky, kx, fy, fx;
 
     axis_hwc_tile_cache #(
         .ROWS(ROWS),
@@ -44,6 +53,14 @@ module tb_axis_hwc_tile_cache;
         .stream_reset(stream_reset),
         .expected_packets(expected_packets),
         .num_pixels(num_pixels),
+        .fm_h(fm_h),
+        .fm_w(fm_w),
+        .ofm_w(ofm_w),
+        .tile_oy_base(tile_oy_base),
+        .tile_ofm_h(tile_ofm_h),
+        .conv_stride(conv_stride),
+        .conv_pad(conv_pad),
+        .kernel_1x1(kernel_1x1),
         .k_total(k_total),
         .pass_base_k(pass_base_k),
         .input_zero_point(input_zero_point),
@@ -117,6 +134,45 @@ module tb_axis_hwc_tile_cache;
         end
     endtask
 
+    function [7:0] raw3_centered;
+        input integer y;
+        input integer x;
+        input integer c;
+        begin
+            raw3_centered = ((y * 16 + x * 4 + c) & 8'hff);
+        end
+    endfunction
+
+    task send_tile3x3;
+        integer y;
+        integer x;
+        integer c;
+        integer i;
+        integer b;
+        reg [63:0] word;
+        reg [7:0] keep;
+        begin
+            i = 0;
+            word = 64'd0;
+            keep = 8'd0;
+            for (y = 0; y < 3; y = y + 1) begin
+                for (x = 0; x < 4; x = x + 1) begin
+                    for (c = 0; c < 4; c = c + 1) begin
+                        word[(i % 8)*8 +: 8] =
+                            input_zero_point + raw3_centered(y, x, c);
+                        keep[i % 8] = 1'b1;
+                        i = i + 1;
+                        if ((i % 8) == 0 || i == 48) begin
+                            send_beat(word, keep, i == 48);
+                            word = 64'd0;
+                            keep = 8'd0;
+                        end
+                    end
+                end
+            end
+        end
+    endtask
+
     task check_vector;
         input integer exp_pixel;
         input integer base_ch;
@@ -151,12 +207,57 @@ module tb_axis_hwc_tile_cache;
         end
     endtask
 
+    task check_vector3x3;
+        input integer exp_pixel;
+        input integer base_k;
+        reg [ROWS*8-1:0] sample_data;
+        reg [7:0] exp;
+        begin
+            wait(vector_valid);
+            @(negedge clk);
+            sample_data = vector_data;
+            vector_ready = 1'b1;
+            @(posedge clk);
+            oy = exp_pixel / 2;
+            ox = exp_pixel % 2;
+            for (lane = 0; lane < ROWS; lane = lane + 1) begin
+                gk = base_k + lane;
+                ch = gk / 9;
+                ker = gk % 9;
+                ky = ker / 3;
+                kx = ker % 3;
+                fy = oy + ky - 1;
+                fx = ox + kx - 1;
+                if (gk >= k_total || fy < 0 || fy >= 4 || fx < 0 || fx >= 4)
+                    exp = 8'd0;
+                else
+                    exp = raw3_centered(fy, fx, ch);
+                if (sample_data[lane*8 +: 8] !== exp) begin
+                    $display("[FAIL] 3x3 pixel=%0d lane=%0d gk=%0d ch=%0d ky=%0d kx=%0d fy=%0d fx=%0d got=%0d exp=%0d",
+                        exp_pixel, lane, gk, ch, ky, kx, fy, fx,
+                        $signed(sample_data[lane*8 +: 8]), $signed(exp));
+                    fail = fail + 1;
+                end else pass = pass + 1;
+            end
+            @(negedge clk);
+            vector_ready = 1'b0;
+        end
+    endtask
+
     initial begin
         clk = 0;
         rst = 1;
         stream_reset = 0;
         expected_packets = 32'd1;
         num_pixels = 16'd3;
+        fm_h = 9'd1;
+        fm_w = 9'd3;
+        ofm_w = 9'd3;
+        tile_oy_base = 9'd0;
+        tile_ofm_h = 9'd1;
+        conv_stride = 2'd1;
+        conv_pad = 2'd0;
+        kernel_1x1 = 1'b1;
         k_total = 14'd20;
         pass_base_k = 14'd0;
         input_zero_point = 8'd10;
@@ -216,6 +317,60 @@ module tb_axis_hwc_tile_cache;
             $display("[FAIL] completed_pixels got=%0d exp=6", completed_pixels);
             fail = fail + 1;
         end else pass = pass + 1;
+
+        @(negedge clk);
+        stream_reset = 1'b1;
+        @(negedge clk);
+        stream_reset = 1'b0;
+        num_pixels = 16'd4;
+        fm_h = 9'd4;
+        fm_w = 9'd4;
+        ofm_w = 9'd2;
+        tile_oy_base = 9'd0;
+        tile_ofm_h = 9'd2;
+        conv_stride = 2'd1;
+        conv_pad = 2'd1;
+        kernel_1x1 = 1'b0;
+        k_total = 14'd36;
+        pass_base_k = 14'd0;
+        input_zero_point = 8'd20;
+
+        send_tile3x3();
+        repeat (10) @(negedge clk);
+
+        if (completed_packets !== 32'd1) begin
+            $display("[FAIL] 3x3 completed_packets got=%0d exp=1", completed_packets);
+            fail = fail + 1;
+        end else pass = pass + 1;
+        if (accepted_beats !== 32'd6) begin
+            $display("[FAIL] 3x3 accepted_beats got=%0d exp=6", accepted_beats);
+            fail = fail + 1;
+        end else pass = pass + 1;
+        if (tkeep_error || tlast_error || overflow_error) begin
+            $display("[FAIL] 3x3 errors tkeep=%b tlast=%b overflow=%b",
+                tkeep_error, tlast_error, overflow_error);
+            fail = fail + 1;
+        end else pass = pass + 1;
+
+        fill_req = 1'b1;
+        check_vector3x3(0, 0);
+        check_vector3x3(1, 0);
+        check_vector3x3(2, 0);
+        check_vector3x3(3, 0);
+        wait(packet_done);
+        @(negedge clk);
+        fill_req = 1'b0;
+
+        repeat (3) @(negedge clk);
+        pass_base_k = 14'd18;
+        fill_req = 1'b1;
+        check_vector3x3(0, 18);
+        check_vector3x3(1, 18);
+        check_vector3x3(2, 18);
+        check_vector3x3(3, 18);
+        wait(packet_done);
+        @(negedge clk);
+        fill_req = 1'b0;
 
         $display("=== tb_axis_hwc_tile_cache: %0d pass, %0d fail ===", pass, fail);
         if (fail != 0) $fatal(1);

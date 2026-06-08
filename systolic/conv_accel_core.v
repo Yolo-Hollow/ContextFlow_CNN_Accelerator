@@ -61,7 +61,13 @@ module conv_accel_core #(
     output [13:0] configured_k_total,
     output [15:0] configured_num_pixels,
     output [7:0]  configured_input_zero_point,
+    output [8:0]  configured_fm_h,
+    output [8:0]  configured_fm_w,
     output [8:0]  configured_ofm_w,
+    output [8:0]  configured_tile_oy_base,
+    output [8:0]  configured_tile_ofm_h,
+    output [1:0]  configured_conv_stride,
+    output [1:0]  configured_conv_pad,
     output        configured_kernel_1x1,
     output        configured_pool_enable,
     output [1:0]  configured_pool_stride,
@@ -198,7 +204,13 @@ module conv_accel_core #(
     assign configured_k_total = k_total;
     assign configured_num_pixels = num_pixels;
     assign configured_input_zero_point = input_zero_point;
+    assign configured_fm_h = fm_h;
+    assign configured_fm_w = fm_w;
     assign configured_ofm_w = ofm_w;
+    assign configured_tile_oy_base = tile_oy_base;
+    assign configured_tile_ofm_h = tile_ofm_h;
+    assign configured_conv_stride = conv_stride;
+    assign configured_conv_pad = conv_pad;
     assign configured_kernel_1x1 = kernel_1x1;
     assign configured_pool_enable = pool_enable;
     assign configured_pool_stride = pool_stride;
@@ -337,6 +349,7 @@ module conv_accel_core #(
         .perf_drain_fifo_empty_sticky(perf_drain_fifo_empty_sticky),
         .fm_h(fm_h), .fm_w(fm_w), .ofm_h(ofm_h), .ofm_w(ofm_w),
         .conv_stride(conv_stride), .conv_pad(conv_pad), .kernel_1x1(kernel_1x1),
+        .stream_raw_hwc_mode(stream_raw_hwc_mode),
         .k_total(k_total), .cout_total(cout_total), .num_pixels(num_pixels),
         .tail_cycles_config(tail_cycles_config),
         .tile_oy_base(tile_oy_base), .tile_ofm_h(tile_ofm_h),

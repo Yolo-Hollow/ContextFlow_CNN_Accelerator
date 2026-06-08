@@ -137,7 +137,13 @@ module conv_accel_core_axi_lite_axis_stream #(
     wire [10:0] configured_cout_total;
     wire [15:0] configured_num_pixels;
     wire [7:0] configured_input_zero_point;
+    wire [8:0] configured_fm_h;
+    wire [8:0] configured_fm_w;
     wire [8:0] configured_ofm_w;
+    wire [8:0] configured_tile_oy_base;
+    wire [8:0] configured_tile_ofm_h;
+    wire [1:0] configured_conv_stride;
+    wire [1:0] configured_conv_pad;
     wire [13:0] configured_k_total;
     wire configured_pool_enable;
     wire [1:0] configured_pool_stride;
@@ -162,10 +168,8 @@ module conv_accel_core_axi_lite_axis_stream #(
     wire [31:0] vector_accepted_beats;
     wire [31:0] vector_fifo_stall_cycles;
     wire [31:0] ifm_completed_packets =
-        configured_kernel_1x1 ?
-            (configured_stream_raw_hwc_mode ? raw_hwc_completed_packets :
-                                              vector_completed_packets) :
-            line_completed_packets;
+        configured_stream_raw_hwc_mode ? raw_hwc_completed_packets :
+        (configured_kernel_1x1 ? vector_completed_packets : line_completed_packets);
     wire [ROWS*IFM_W-1:0] vector_loader_ifm_data;
     wire vector_loader_ifm_valid;
     wire vector_ifm_ready;
@@ -211,17 +215,15 @@ module conv_accel_core_axi_lite_axis_stream #(
     wire raw_hwc_tlast_error;
     wire raw_hwc_overflow_error;
     assign ifm_axis_error = configured_config_error ||
-                            (configured_kernel_1x1 ?
-                                (configured_stream_raw_hwc_mode ?
-                                    (raw_hwc_tkeep_error || raw_hwc_tlast_error ||
-                                     raw_hwc_overflow_error) :
-                                    (vector_tkeep_error || vector_tlast_error)) :
-                                (ifm_tkeep_error || ifm_tlast_error));
+                            (configured_stream_raw_hwc_mode ?
+                                (raw_hwc_tkeep_error || raw_hwc_tlast_error ||
+                                 raw_hwc_overflow_error) :
+                                (configured_kernel_1x1 ?
+                                    (vector_tkeep_error || vector_tlast_error) :
+                                    (ifm_tkeep_error || ifm_tlast_error)));
     assign ifm_s_axis_tready =
-        configured_kernel_1x1 ?
-            (configured_stream_raw_hwc_mode ? raw_hwc_ifm_tready :
-                                              vector_loader_ifm_tready) :
-            line_ifm_tready;
+        configured_stream_raw_hwc_mode ? raw_hwc_ifm_tready :
+        (configured_kernel_1x1 ? vector_loader_ifm_tready : line_ifm_tready);
     always @(posedge clk) begin
         if (rst) begin
             ofm_byte_count <= 32'd0;
@@ -307,7 +309,8 @@ module conv_accel_core_axi_lite_axis_stream #(
         .batch_mode(configured_stream_batch_mode),
         .expected_packets(configured_stream_ifm_packets),
         .fm_w(ifm_line_words),
-        .fill_req(feeder_fill_req && !configured_kernel_1x1),
+        .fill_req(feeder_fill_req && !configured_kernel_1x1 &&
+                  !configured_stream_raw_hwc_mode),
         .fill_fy(feeder_fill_fy),
         .input_zero_point(configured_input_zero_point),
         .s_axis_tready(line_ifm_tready),
@@ -367,11 +370,18 @@ module conv_accel_core_axi_lite_axis_stream #(
         .stream_reset(configured_stream_reset && configured_stream_raw_hwc_mode),
         .expected_packets(configured_stream_ifm_packets),
         .num_pixels(configured_num_pixels),
+        .fm_h(configured_fm_h),
+        .fm_w(configured_fm_w),
+        .ofm_w(configured_ofm_w),
+        .tile_oy_base(configured_tile_oy_base),
+        .tile_ofm_h(configured_tile_ofm_h),
+        .conv_stride(configured_conv_stride),
+        .conv_pad(configured_conv_pad),
+        .kernel_1x1(configured_kernel_1x1),
         .k_total(configured_k_total),
         .pass_base_k(current_pass_base_k),
         .input_zero_point(configured_input_zero_point),
-        .fill_req(feeder_fill_req && configured_kernel_1x1 &&
-                  configured_stream_raw_hwc_mode),
+        .fill_req(feeder_fill_req && configured_stream_raw_hwc_mode),
         .s_axis_tready(raw_hwc_ifm_tready),
         .s_axis_tvalid(ifm_s_axis_tvalid),
         .s_axis_tdata(ifm_s_axis_tdata),
@@ -429,7 +439,13 @@ module conv_accel_core_axi_lite_axis_stream #(
         .configured_k_total(configured_k_total),
         .configured_num_pixels(configured_num_pixels),
         .configured_input_zero_point(configured_input_zero_point),
+        .configured_fm_h(configured_fm_h),
+        .configured_fm_w(configured_fm_w),
         .configured_ofm_w(configured_ofm_w),
+        .configured_tile_oy_base(configured_tile_oy_base),
+        .configured_tile_ofm_h(configured_tile_ofm_h),
+        .configured_conv_stride(configured_conv_stride),
+        .configured_conv_pad(configured_conv_pad),
         .configured_kernel_1x1(configured_kernel_1x1),
         .configured_pool_enable(configured_pool_enable),
         .configured_pool_stride(configured_pool_stride),

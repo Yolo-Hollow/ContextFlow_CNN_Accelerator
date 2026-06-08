@@ -27,6 +27,7 @@ module systolic_top_feeder #(
     output feeder_fill_req,
     output [8:0] feeder_fill_fy,
     input  kernel_1x1,
+    input  raw_hwc_mode,
 
     input  compute_start,
     input  [15:0] num_pixels,
@@ -95,17 +96,18 @@ module systolic_top_feeder #(
     wire line_feed_win_not_ready;
     reg vector_fill_req;
     reg vector_feeder_done;
+    wire vector_mode = kernel_1x1 || raw_hwc_mode;
 
-    assign feeder_done = kernel_1x1 ? vector_feeder_done : line_feeder_done;
-    assign feeder_busy = kernel_1x1 ? vector_fill_req : line_feeder_busy;
-    assign feeder_fill_req = kernel_1x1 ? vector_fill_req : line_fill_req;
-    assign feeder_fill_fy = kernel_1x1 ? 9'd0 : line_fill_fy;
-    assign perf_feed_push = kernel_1x1 ?
+    assign feeder_done = vector_mode ? vector_feeder_done : line_feeder_done;
+    assign feeder_busy = vector_mode ? vector_fill_req : line_feeder_busy;
+    assign feeder_fill_req = vector_mode ? vector_fill_req : line_fill_req;
+    assign feeder_fill_fy = vector_mode ? 9'd0 : line_fill_fy;
+    assign perf_feed_push = vector_mode ?
         (vector_ifm_valid && vector_ifm_ready) : line_feed_push;
-    assign perf_feed_fifo_stall = kernel_1x1 ?
+    assign perf_feed_fifo_stall = vector_mode ?
         (vector_fill_req && vector_ifm_valid && !vector_ifm_ready) :
         line_feed_fifo_stall;
-    assign perf_feed_win_not_ready = kernel_1x1 ? 1'b0 : line_feed_win_not_ready;
+    assign perf_feed_win_not_ready = vector_mode ? 1'b0 : line_feed_win_not_ready;
 
     always @(posedge clk) begin
         if (rst) begin
@@ -113,13 +115,13 @@ module systolic_top_feeder #(
             vector_feeder_done <= 1'b0;
         end else begin
             vector_feeder_done <= 1'b0;
-            if (kernel_1x1 && feeder_start)
+            if (vector_mode && feeder_start)
                 vector_fill_req <= 1'b1;
-            if (kernel_1x1 && vector_fill_req && vector_packet_done) begin
+            if (vector_mode && vector_fill_req && vector_packet_done) begin
                 vector_fill_req <= 1'b0;
                 vector_feeder_done <= 1'b1;
             end
-            if (!kernel_1x1)
+            if (!vector_mode)
                 vector_fill_req <= 1'b0;
         end
     end
@@ -127,7 +129,7 @@ module systolic_top_feeder #(
     window_feeder #(.FM_W(FM_W_MAX), .FM_H(FM_H_MAX), .AW(9), .ROWS(ROWS), .BANKS(IFM_BANKS)) u_feeder (
         .clk(clk),
         .rst(rst),
-        .start(feeder_start && !kernel_1x1),
+        .start(feeder_start && !vector_mode),
         .fm_h(fm_h),
         .fm_w(fm_w),
         .ofm_h(ofm_h),
@@ -159,7 +161,7 @@ module systolic_top_feeder #(
 
     wire [ROWS-1:0] ifm_fifo_full_legacy;
     assign ifm_fifo_full = ifm_fifo_full_legacy;
-    assign vector_ifm_ready = kernel_1x1 && !(|ifm_fifo_full_legacy);
+    assign vector_ifm_ready = vector_mode && !(|ifm_fifo_full_legacy);
     wire [7:0] unused_dma_wr_data [0:4];
     assign unused_dma_wr_data[0] = 8'd0;
     assign unused_dma_wr_data[1] = 8'd0;
@@ -188,10 +190,10 @@ module systolic_top_feeder #(
         .perf_comp_ifm_stall(perf_comp_ifm_stall),
         .perf_comp_tail(perf_comp_tail),
         .perf_tail_cycles_configured(perf_tail_cycles_configured),
-        .ifm_fifo_wr_en(kernel_1x1 ?
+        .ifm_fifo_wr_en(vector_mode ?
             {ROWS{vector_ifm_valid && vector_ifm_ready}} :
             {ROWS{feeder_ifm_valid}}),
-        .ifm_fifo_wr_data(kernel_1x1 ? vector_ifm_data : feeder_ifm_data),
+        .ifm_fifo_wr_data(vector_mode ? vector_ifm_data : feeder_ifm_data),
         .ifm_fifo_full_legacy(ifm_fifo_full_legacy),
         .dma_bank_wr_en(5'd0),
         .dma_wr_x(9'd0),

@@ -619,6 +619,58 @@ mismatch after aligning its quant config to `mult=32767, shift=0, zp=0`.
 Layer06 external golden tests remain targeted/nightly because the full-layer
 case is heavier than the daily smoke set.
 
+### `tb_axis_hwc_tile_cache`
+
+Purpose:
+
+- Verify the experimental raw-HWC IFM tile cache in both native `1x1` and
+  directed `3x3` replay modes.
+- The `1x1` mode uses the compact layout `bank = channel % ROWS`.
+- The `3x3` mode uses a replicated global-K layout so each replay cycle can
+  emit one 18-lane vector without a 9-way read crossbar.
+
+Checks:
+
+- Raw HWC load byte order, `input_zero_point` centering, TLAST/TKEEP handling,
+  tail channels, padding/out-of-range replay as internal zero, and
+  `vector_ready` backpressure.
+- For `3x3`, verifies both pass-base `0` and pass-base `18` so kernel-position
+  and channel mapping cross a bank chunk boundary.
+
+Current result:
+
+- `259 pass, 0 fail`
+
+### `tb_conv_accel_core_axi_lite_axis_stream_conv6_3x3_raw_hwc_ext_tile0_cout16`
+
+Purpose:
+
+- Directed architecture probe for raw-HWC cache on a real `3x3` Conv6 tile.
+- Uses `ROWS=18`, `COLS=8`, `COUT_TILE=16`, `CIN=512`, `OFM=13x13`,
+  `tile_oy_base=0`, `tile_ofm_h=4`, and only the first COUT tile.
+- Keeps the old prepacked IFM path disabled only for this wrapper by setting
+  `STREAM_CFG[1] = raw_hwc_mode`.
+
+Checks:
+
+- Raw HWC tile load count, raw AXIS beat count, cache replay packet count,
+  compute/psum counts, OFM byte count, TLAST/debug counters, and byte-exact
+  comparison against the external RTL-semantic golden.
+- The generated external subset is under
+  `D:/MPSoC/python_prj/rtl_golden/facemask_chain_conv0_conv6_rtl/06_head_conv6_3x3/xsim_mem_cout16`.
+
+Current result:
+
+- `854 pass, 0 fail`; Conv6 tile0 loads `4160` 64-bit raw-HWC beats and
+  replays `13312` pixel/pass packets with `raw_stalls=0`.
+
+Compatibility checks run with the same RTL:
+
+- `tb_conv_accel_core_axi_lite_axis_stream_conv7_native1x1_raw_hwc_ext_tile0`:
+  `13334 pass, 0 fail`
+- `tb_conv_accel_core_axi_lite_axis_stream_r18_c8_b2_layer06_ext_tile4`:
+  `26641 pass, 0 fail`
+
 ## 回归命令
 
 单个 xsim 顶层：

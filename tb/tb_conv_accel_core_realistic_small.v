@@ -42,6 +42,9 @@
 `ifndef TB_CONV_ACCEL_CORE_OFM_FIFO_AW
 `define TB_CONV_ACCEL_CORE_OFM_FIFO_AW 6
 `endif
+`ifndef TB_CONV_ACCEL_CORE_HWC_CACHE_AW
+`define TB_CONV_ACCEL_CORE_HWC_CACHE_AW 12
+`endif
 `ifndef TB_CONV_ACCEL_CORE_QUANT_MULT
 `define TB_CONV_ACCEL_CORE_QUANT_MULT 16'd1
 `endif
@@ -77,6 +80,9 @@
 `endif
 `ifndef TB_CONV_ACCEL_CORE_COUT_TOTAL
 `define TB_CONV_ACCEL_CORE_COUT_TOTAL 18
+`endif
+`ifndef TB_CONV_ACCEL_CORE_GOLDEN_COUT_STRIDE
+`define TB_CONV_ACCEL_CORE_GOLDEN_COUT_STRIDE `TB_CONV_ACCEL_CORE_COUT_TOTAL
 `endif
 `ifndef TB_CONV_ACCEL_CORE_PAD
 `define TB_CONV_ACCEL_CORE_PAD 1
@@ -219,6 +225,7 @@ module `TB_CONV_ACCEL_CORE_MODULE;
     localparam K_PASSES = (K_TOTAL + ROWS - 1) / ROWS;
     localparam COUT_TILE = COLS * 2;
     localparam COUT_TOTAL = `TB_CONV_ACCEL_CORE_COUT_TOTAL;
+    localparam GOLDEN_COUT_STRIDE = `TB_CONV_ACCEL_CORE_GOLDEN_COUT_STRIDE;
     localparam COUT_BLOCKS = (COUT_TOTAL + COUT_TILE - 1) / COUT_TILE;
     localparam [7:0] IFM_TKEEP_MASK =
         KERNEL_1X1 ? 8'hff : (8'hff >> (8 - IFM_BANKS));
@@ -356,6 +363,9 @@ module `TB_CONV_ACCEL_CORE_MODULE;
         .OFM_ADDR_W(OFM_ADDR_W),
         .OFM_FIFO_DEPTH(`TB_CONV_ACCEL_CORE_OFM_FIFO_DEPTH),
         .OFM_FIFO_AW(`TB_CONV_ACCEL_CORE_OFM_FIFO_AW)
+`ifdef TB_CONV_ACCEL_CORE_USE_AXIS_STREAM
+        , .HWC_CACHE_AW(`TB_CONV_ACCEL_CORE_HWC_CACHE_AW)
+`endif
     ) dut (
         .clk(clk), .rst(rst),
 `ifdef TB_CONV_ACCEL_CORE_USE_AXI_LITE
@@ -459,6 +469,11 @@ module `TB_CONV_ACCEL_CORE_MODULE;
     integer batch_ifm_tile_packets;
     integer batch_first_fy;
     integer batch_last_fy;
+`endif
+`ifdef TB_CONV_ACCEL_CORE_RAW_HWC_IFM
+    integer expected_raw_hwc_bytes;
+    integer expected_raw_hwc_beats;
+    integer expected_raw_hwc_replay_packets;
 `endif
 `ifdef TB_CONV_ACCEL_CORE_PROGRESS_PRINT
     integer progress_last_ofm_wr_count;
@@ -610,6 +625,31 @@ module `TB_CONV_ACCEL_CORE_MODULE;
             for (c = 0; c < CIN; c = c + 1)
                 if (pass_needs_ch(k_base, c) && (c % IFM_BANKS == bank))
                     channel_for_bank = c;
+        end
+    endfunction
+
+    function integer raw_hwc_first_y_tb;
+        input integer oy_base;
+        begin
+            if (KERNEL_1X1)
+                raw_hwc_first_y_tb = oy_base;
+            else if ((oy_base * CONV_STRIDE) <= CONV_PAD)
+                raw_hwc_first_y_tb = 0;
+            else
+                raw_hwc_first_y_tb = oy_base * CONV_STRIDE - CONV_PAD;
+        end
+    endfunction
+
+    function integer raw_hwc_last_y_tb;
+        input integer oy_base;
+        input integer tile_h;
+        integer last_calc;
+        begin
+            if (KERNEL_1X1)
+                last_calc = oy_base + tile_h - 1;
+            else
+                last_calc = (oy_base + tile_h - 1) * CONV_STRIDE - CONV_PAD + 2;
+            raw_hwc_last_y_tb = (last_calc >= FM_H) ? (FM_H - 1) : last_calc;
         end
     endfunction
 
@@ -824,21 +864,33 @@ module `TB_CONV_ACCEL_CORE_MODULE;
         integer raw_ch;
         integer raw_byte_idx;
         integer raw_total_bytes;
+        integer raw_first_y;
+        integer raw_last_y;
         reg [63:0] axis_word;
         reg [7:0] axis_keep;
         begin
             k_base = current_pass_base_k;
-`ifdef TB_CONV_ACCEL_CORE_KERNEL_1X1
-`ifdef TB_CONV_ACCEL_CORE_USE_AXIS_STREAM
 `ifdef TB_CONV_ACCEL_CORE_RAW_HWC_IFM
+`ifdef TB_CONV_ACCEL_CORE_USE_AXIS_STREAM
             if (ps_line_fill_count == batch_ifm_tile_end_count) begin
-                raw_total_bytes = run_ofm_h * FM_W * CIN;
+`ifdef TB_CONV_ACCEL_CORE_KERNEL_1X1
+                raw_first_y = run_oy_base;
+                raw_last_y = run_oy_base + run_ofm_h - 1;
+`else
+                raw_first_y = run_oy_base * CONV_STRIDE - CONV_PAD;
+                raw_last_y =
+                    (run_oy_base + run_ofm_h - 1) * CONV_STRIDE -
+                    CONV_PAD + 2;
+                if (raw_first_y < 0)
+                    raw_first_y = 0;
+                if (raw_last_y >= FM_H)
+                    raw_last_y = FM_H - 1;
+`endif
+                raw_total_bytes = (raw_last_y - raw_first_y + 1) * FM_W * CIN;
                 raw_byte_idx = 0;
                 axis_word = 64'd0;
                 axis_keep = 8'd0;
-                for (raw_y = run_oy_base;
-                     raw_y < run_oy_base + run_ofm_h;
-                     raw_y = raw_y + 1) begin
+                for (raw_y = raw_first_y; raw_y <= raw_last_y; raw_y = raw_y + 1) begin
                     for (x = 0; x < FM_W; x = x + 1) begin
                         for (raw_ch = 0; raw_ch < CIN; raw_ch = raw_ch + 1) begin
                             axis_word[(raw_byte_idx % 8)*8 +: 8] =
@@ -869,6 +921,11 @@ module `TB_CONV_ACCEL_CORE_MODULE;
             end
             wait(!feeder_fill_req);
 `else
+            $fatal(1, "raw HWC IFM test requires AXI stream");
+`endif
+`else
+`ifdef TB_CONV_ACCEL_CORE_KERNEL_1X1
+`ifdef TB_CONV_ACCEL_CORE_USE_AXIS_STREAM
             repeat (2) @(negedge clk);
             k_base = ((ps_line_fill_count - 1) % K_PASSES) * ROWS;
             for (vector_y = run_oy_base;
@@ -903,7 +960,6 @@ module `TB_CONV_ACCEL_CORE_MODULE;
             ifm_axis_tdata = 64'd0;
             ifm_axis_tkeep = 8'd0;
             ifm_axis_tlast = 1'b0;
-`endif
 `else
             $fatal(1, "native 1x1 test requires AXI stream");
 `endif
@@ -972,6 +1028,7 @@ module `TB_CONV_ACCEL_CORE_MODULE;
             @(negedge clk);
             dma_line_advance = 1'b0;
             dma_bank_wr_en = {IFM_BANKS{1'b0}};
+`endif
 `endif
 `endif
         end
@@ -1159,12 +1216,11 @@ module `TB_CONV_ACCEL_CORE_MODULE;
             cfg_write(6'h08, {7'd0, run_ofm_h[8:0], 7'd0, run_oy_base[8:0]});
             cfg_write(6'h09, run_pixel_base[23:0]);
 `ifdef TB_CONV_ACCEL_CORE_BATCH_STREAM
-`ifdef TB_CONV_ACCEL_CORE_KERNEL_1X1
 `ifdef TB_CONV_ACCEL_CORE_RAW_HWC_IFM
             batch_ifm_tile_packets = 1;
 `else
+`ifdef TB_CONV_ACCEL_CORE_KERNEL_1X1
             batch_ifm_tile_packets = K_PASSES * COUT_BLOCKS;
-`endif
 `else
             batch_first_fy = run_oy_base - CONV_PAD;
             if (batch_first_fy < 0)
@@ -1174,6 +1230,7 @@ module `TB_CONV_ACCEL_CORE_MODULE;
                 batch_last_fy = FM_H - 1;
             batch_ifm_tile_packets =
                 (batch_last_fy - batch_first_fy + 1) * K_PASSES * COUT_BLOCKS;
+`endif
 `endif
             batch_ifm_tile_end_count = ps_line_fill_count + batch_ifm_tile_packets;
 `ifdef TB_CONV_ACCEL_CORE_RAW_HWC_IFM
@@ -1825,10 +1882,38 @@ module `TB_CONV_ACCEL_CORE_MODULE;
                     first_extra_ofm_wr_index, first_extra_ofm_wr_addr, first_extra_ofm_wr_data);
             fail = fail + 1;
         end else pass = pass + 1;
+`ifdef TB_CONV_ACCEL_CORE_RAW_HWC_IFM
+        expected_raw_hwc_bytes = 0;
+        for (run_idx = 0; run_idx < TILE_COUNT; run_idx = run_idx + 1) begin
+            get_tile_cfg(run_idx, run_oy_base, run_ofm_h, run_pixel_base);
+            expected_raw_hwc_bytes = expected_raw_hwc_bytes +
+                (raw_hwc_last_y_tb(run_oy_base, run_ofm_h) -
+                 raw_hwc_first_y_tb(run_oy_base) + 1) * FM_W * CIN;
+        end
+        expected_raw_hwc_beats = (expected_raw_hwc_bytes + 7) / 8;
+        expected_raw_hwc_replay_packets = RUN_PIXELS * K_PASSES * COUT_BLOCKS;
+        if (dut.u_axis_hwc_tile_cache.completed_packets != TILE_COUNT) begin
+            $display("[FAIL] raw HWC packets got=%0d exp=%0d",
+                dut.u_axis_hwc_tile_cache.completed_packets, TILE_COUNT);
+            fail = fail + 1;
+        end else pass = pass + 1;
+        if (dut.u_axis_hwc_tile_cache.accepted_beats != expected_raw_hwc_beats) begin
+            $display("[FAIL] raw HWC beats got=%0d exp=%0d bytes=%0d",
+                dut.u_axis_hwc_tile_cache.accepted_beats, expected_raw_hwc_beats,
+                expected_raw_hwc_bytes);
+            fail = fail + 1;
+        end else pass = pass + 1;
+        if (dut.u_axis_hwc_tile_cache.completed_pixels != expected_raw_hwc_replay_packets) begin
+            $display("[FAIL] raw HWC replay packets got=%0d exp=%0d",
+                dut.u_axis_hwc_tile_cache.completed_pixels, expected_raw_hwc_replay_packets);
+            fail = fail + 1;
+        end else pass = pass + 1;
+`else
         if (ifm_write_count != RUN_PIXELS * K_PASSES * COUT_BLOCKS) begin
             $display("[FAIL] ifm writes got=%0d exp=%0d", ifm_write_count, RUN_PIXELS * K_PASSES * COUT_BLOCKS);
             fail = fail + 1;
         end else pass = pass + 1;
+`endif
         if (compute_fire_count != RUN_PIXELS * K_PASSES * COUT_BLOCKS) begin
             $display("[FAIL] compute fires got=%0d exp=%0d", compute_fire_count, RUN_PIXELS * K_PASSES * COUT_BLOCKS);
             fail = fail + 1;
@@ -1943,7 +2028,7 @@ module `TB_CONV_ACCEL_CORE_MODULE;
             for (idx = 0; idx < run_pixels; idx = idx + 1) begin
                 for (co = 0; co < COUT_TOTAL; co = co + 1) begin
 `ifdef TB_CONV_ACCEL_CORE_USE_EXTERNAL_GOLDEN
-                    expected_ofm_byte = ext_golden[(run_pixel_base + idx)*COUT_TOTAL + co];
+                    expected_ofm_byte = ext_golden[(run_pixel_base + idx)*GOLDEN_COUT_STRIDE + co];
                     if (ofm_mem[(run_pixel_base + idx)*COUT_TOTAL + co] !== expected_ofm_byte) begin
                         if (fail < 20)
                             $display("[FAIL] tile%0d pixel%0d global%0d cout%0d addr%0d got=%0d exp=%0d raw_got=%0d raw_valid=%0d",
