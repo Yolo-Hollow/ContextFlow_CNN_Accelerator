@@ -10,6 +10,8 @@ module tb_layer_config_regs;
     reg layer_busy, layer_done;
     reg perf_wait_bias, perf_wait_weight, perf_wait_ifm, perf_wait_ofm;
     reg perf_compute_fire;
+    reg perf_stage_bias, perf_stage_weight, perf_stage_feeder;
+    reg perf_stage_compute, perf_stage_drain, perf_stage_ofm_post;
     reg [31:0] stream_bias_completed;
     reg [31:0] stream_weight_completed;
     reg [31:0] stream_ifm_completed;
@@ -50,6 +52,12 @@ module tb_layer_config_regs;
         .perf_wait_bias(perf_wait_bias), .perf_wait_weight(perf_wait_weight),
         .perf_wait_ifm(perf_wait_ifm), .perf_wait_ofm(perf_wait_ofm),
         .perf_compute_fire(perf_compute_fire),
+        .perf_stage_bias(perf_stage_bias),
+        .perf_stage_weight(perf_stage_weight),
+        .perf_stage_feeder(perf_stage_feeder),
+        .perf_stage_compute(perf_stage_compute),
+        .perf_stage_drain(perf_stage_drain),
+        .perf_stage_ofm_post(perf_stage_ofm_post),
         .stream_bias_completed(stream_bias_completed),
         .stream_weight_completed(stream_weight_completed),
         .stream_ifm_completed(stream_ifm_completed),
@@ -125,6 +133,12 @@ module tb_layer_config_regs;
         perf_wait_ifm = 0;
         perf_wait_ofm = 0;
         perf_compute_fire = 0;
+        perf_stage_bias = 0;
+        perf_stage_weight = 0;
+        perf_stage_feeder = 0;
+        perf_stage_compute = 0;
+        perf_stage_drain = 0;
+        perf_stage_ofm_post = 0;
         stream_bias_completed = 32'd7;
         stream_weight_completed = 32'd11;
         stream_ifm_completed = 32'd13;
@@ -237,13 +251,21 @@ module tb_layer_config_regs;
         layer_busy = 1'b1;
         perf_wait_ifm = 1'b1;
         perf_compute_fire = 1'b1;
+        perf_stage_feeder = 1'b1;
+        perf_stage_compute = 1'b1;
+        perf_stage_ofm_post = 1'b1;
         repeat (3) @(posedge clk);
         @(negedge clk);
         perf_wait_ifm = 1'b0;
         perf_compute_fire = 1'b0;
+        perf_stage_feeder = 1'b0;
+        perf_stage_compute = 1'b0;
+        perf_stage_drain = 1'b1;
         repeat (2) @(posedge clk);
         @(negedge clk);
         layer_busy = 1'b0;
+        perf_stage_drain = 1'b0;
+        perf_stage_ofm_post = 1'b0;
         cfg_addr = 6'h12;
         #1;
         check_value(cfg_rdata, 5, "perf busy cycles");
@@ -256,6 +278,18 @@ module tb_layer_config_regs;
         cfg_addr = 6'h18;
         #1;
         check_value(cfg_rdata, 3, "perf compute cycles");
+        cfg_addr = 6'h2a;
+        #1;
+        check_value(cfg_rdata, 3, "stage feeder cycles");
+        cfg_addr = 6'h2b;
+        #1;
+        check_value(cfg_rdata, 3, "stage compute cycles");
+        cfg_addr = 6'h2c;
+        #1;
+        check_value(cfg_rdata, 2, "stage drain cycles");
+        cfg_addr = 6'h2d;
+        #1;
+        check_value(cfg_rdata, 5, "stage ofm post cycles");
 
         @(negedge clk);
         layer_done = 1'b1;
@@ -314,6 +348,9 @@ module tb_layer_config_regs;
         check_value(fm_h, 8, "idle accepts fm_h");
         check_value(fm_w, 9, "idle accepts fm_w");
         check_value(start_pulse_count, 2, "idle accepts start");
+        cfg_addr = 6'h2d;
+        #1;
+        check_value(cfg_rdata, 0, "start clears stage counters");
 
         write_reg(6'h00, 32'd2);
         write_reg(6'h03, {15'd0, 1'b1, 6'd0, 2'd0, 6'd0, 2'd1});

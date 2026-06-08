@@ -37,6 +37,12 @@ module conv_layer_top_stream #(
     output busy,
     output reg done,
     output perf_compute_fire,
+    output perf_stage_bias,
+    output perf_stage_weight,
+    output perf_stage_feeder,
+    output perf_stage_compute,
+    output perf_stage_drain,
+    output perf_stage_ofm_post,
 
     input  [8:0] fm_h,
     input  [8:0] fm_w,
@@ -160,6 +166,7 @@ module conv_layer_top_stream #(
     reg done_pending;
     reg [3:0] done_drain_cnt;
     assign busy = sched_busy || done_pending || ofm_post_busy;
+    assign perf_stage_ofm_post = done_pending || (!sched_busy && ofm_post_busy);
 
     layer_scheduler_stream #(.K_TILE(K_TILE), .COUT_TILE(COUT_TILE)) u_sched (
         .clk(clk), .rst(rst), .start(start), .busy(sched_busy), .done(sched_done),
@@ -174,7 +181,12 @@ module conv_layer_top_stream #(
         .weight_load_start(sched_weight_start), .weight_load_done(sched_weight_done),
         .feeder_start(sched_feeder_start), .feeder_done(feeder_done),
         .compute_start(sched_compute_start), .compute_done(compute_done),
-        .psum_drain_start(sched_drain_start), .psum_drain_done(drain_done)
+        .psum_drain_start(sched_drain_start), .psum_drain_done(drain_done),
+        .perf_stage_bias(perf_stage_bias),
+        .perf_stage_weight(perf_stage_weight),
+        .perf_stage_feeder(perf_stage_feeder),
+        .perf_stage_compute(perf_stage_compute),
+        .perf_stage_drain(perf_stage_drain)
     );
 
     always @(posedge clk) begin

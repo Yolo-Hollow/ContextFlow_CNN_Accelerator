@@ -29,7 +29,8 @@ module tb_conv_layer_top_stream;
     wire busy, done;
     wire bias_load_req, weight_load_req;
     reg bias_load_done, weight_tile_ready;
-    wire [10:0] current_cout_base, current_pass_base_k;
+    wire [10:0] current_cout_base;
+    wire [13:0] current_pass_base_k;
     reg [5:0] bias_wr_addr;
     reg [PSUM_W-1:0] bias_wr_data;
     reg bias_wr_en;
@@ -76,8 +77,8 @@ module tb_conv_layer_top_stream;
     ) dut (
         .clk(clk), .rst(rst), .start(start), .busy(busy), .done(done),
         .fm_h(9'd5), .fm_w(9'd5), .ofm_h(9'd3), .ofm_w(9'd3),
-        .conv_stride(2'd1), .conv_pad(2'd0),
-        .k_total(K_TOTAL[10:0]), .cout_total(COUT_TOTAL[10:0]), .num_pixels(16'd9),
+        .conv_stride(2'd1), .conv_pad(2'd0), .kernel_1x1(1'b0),
+        .k_total(K_TOTAL[13:0]), .cout_total(COUT_TOTAL[10:0]), .num_pixels(16'd9),
         .tile_oy_base(9'd0), .tile_ofm_h(9'd0), .tile_pixel_base(16'd0),
         .pool_enable(1'b0), .pool_stride(2'd0),
         .bias_load_req(bias_load_req), .bias_load_done(bias_load_done),

@@ -7,6 +7,7 @@ PERF_PREFIX = "PERF "
 HWPERF_PREFIX = "HWPERF "
 DMASTAT_PREFIX = "DMASTAT "
 VECTORSTAT_PREFIX = "VECTORSTAT "
+STAGEPERF_PREFIX = "STAGEPERF "
 
 
 def parse_metric_line(line, prefix):
@@ -100,6 +101,36 @@ def summarize_perf(log_text):
             "ofm_starts": sum(layer["ofm_starts"] for layer in dma_layers),
         }
 
+    stage_layers = [
+        parse_metric_line(line.strip(), STAGEPERF_PREFIX)
+        for line in log_text.splitlines()
+        if line.strip().startswith(STAGEPERF_PREFIX)
+    ]
+    stage = None
+    if stage_layers:
+        totals = {
+            "bias_cycles": sum(layer["bias_cycles"] for layer in stage_layers),
+            "weight_cycles": sum(layer["weight_cycles"] for layer in stage_layers),
+            "feeder_cycles": sum(layer["feeder_cycles"] for layer in stage_layers),
+            "compute_stage_cycles": sum(
+                layer["compute_stage_cycles"] for layer in stage_layers
+            ),
+            "drain_cycles": sum(layer["drain_cycles"] for layer in stage_layers),
+            "ofm_post_cycles": sum(layer["ofm_post_cycles"] for layer in stage_layers),
+        }
+        total_cycles = sum(totals.values())
+        stage = {
+            "layers": stage_layers,
+            **totals,
+            "total_cycles": total_cycles,
+        }
+        if hardware:
+            stage["coverage_percent"] = (
+                total_cycles * 100.0 / hardware["busy_cycles"]
+                if hardware["busy_cycles"]
+                else 0.0
+            )
+
     vector_layers = [
         parse_metric_line(line.strip(), VECTORSTAT_PREFIX)
         for line in log_text.splitlines()
@@ -125,6 +156,7 @@ def summarize_perf(log_text):
         "categories": categories,
         "hardware": hardware,
         "dma": dma,
+        "stage": stage,
         "vector": vector,
     }
 
@@ -154,6 +186,20 @@ def print_summary(summary):
             "DMASTAT summary: "
             f"bias={dma['bias_starts']} weight={dma['weight_starts']} "
             f"ifm={dma['ifm_starts']} ofm={dma['ofm_starts']}"
+        )
+    if summary["stage"]:
+        stage = summary["stage"]
+        coverage = stage.get("coverage_percent")
+        coverage_text = (
+            f" coverage={coverage:.2f}%" if coverage is not None else ""
+        )
+        print(
+            "STAGEPERF summary: "
+            f"total={stage['total_cycles']} cycles{coverage_text} "
+            f"bias={stage['bias_cycles']} weight={stage['weight_cycles']} "
+            f"feeder={stage['feeder_cycles']} "
+            f"compute_stage={stage['compute_stage_cycles']} "
+            f"drain={stage['drain_cycles']} ofm_post={stage['ofm_post_cycles']}"
         )
     if summary["vector"]:
         vector = summary["vector"]

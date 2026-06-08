@@ -98,6 +98,12 @@ def main():
             "fifo_stall_cycles=0\n"
             "VECTORSTAT layer=conv1 packets=2 pixels=8 beats=24 "
             "fifo_stall_cycles=3\n"
+            "STAGEPERF layer=conv0 bias_cycles=4 weight_cycles=20 "
+            "feeder_cycles=30 compute_stage_cycles=40 drain_cycles=50 "
+            "ofm_post_cycles=6\n"
+            "STAGEPERF layer=conv1 bias_cycles=8 weight_cycles=60 "
+            "feeder_cycles=90 compute_stage_cycles=120 drain_cycles=150 "
+            "ofm_post_cycles=18\n"
         )
         assert summary["layer_count"] == 2
         assert summary["total_microseconds"] == 300
@@ -113,6 +119,14 @@ def main():
         assert summary["vector"]["pixels"] == 8
         assert summary["vector"]["beats"] == 24
         assert summary["vector"]["fifo_stall_cycles"] == 3
+        assert summary["stage"]["bias_cycles"] == 12
+        assert summary["stage"]["weight_cycles"] == 80
+        assert summary["stage"]["feeder_cycles"] == 120
+        assert summary["stage"]["compute_stage_cycles"] == 160
+        assert summary["stage"]["drain_cycles"] == 200
+        assert summary["stage"]["ofm_post_cycles"] == 24
+        assert summary["stage"]["total_cycles"] == 596
+        assert summary["stage"]["coverage_percent"] == 149.0
 
     print("PASS: KV260 runtime image package and visualization tests")
 

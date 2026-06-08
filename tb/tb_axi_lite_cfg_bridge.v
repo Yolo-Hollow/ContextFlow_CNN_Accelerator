@@ -67,9 +67,19 @@ module tb_axi_lite_cfg_bridge;
         .perf_wait_bias(1'b0), .perf_wait_weight(1'b0),
         .perf_wait_ifm(1'b0), .perf_wait_ofm(1'b0),
         .perf_compute_fire(1'b0),
+        .perf_stage_bias(1'b0),
+        .perf_stage_weight(1'b0),
+        .perf_stage_feeder(1'b0),
+        .perf_stage_compute(1'b0),
+        .perf_stage_drain(1'b0),
+        .perf_stage_ofm_post(1'b0),
         .stream_bias_completed(32'd7),
         .stream_weight_completed(32'd11),
         .stream_ifm_completed(32'd13),
+        .vector_completed_packets(32'd0),
+        .vector_completed_pixels(32'd0),
+        .vector_accepted_beats(32'd0),
+        .vector_fifo_stall_cycles(32'd0),
         .start_pulse(start_pulse),
         .fm_h(fm_h), .fm_w(fm_w), .ofm_h(ofm_h), .ofm_w(ofm_w),
         .conv_stride(conv_stride), .conv_pad(conv_pad),
@@ -270,6 +280,8 @@ module tb_axi_lite_cfg_bridge;
         check_eq(rd, 32'd11, "stream weight completed read");
         axi_read(8'h7c, rd);
         check_eq(rd, 32'd13, "stream ifm completed read");
+        axi_read(8'ha0, rd);
+        check_eq(rd, 32'd0, "stage bias counter read");
         axi_read(8'h3c, rd);
         check_eq(rd, 32'd36, "input_zero_point read");
         check_eq({24'd0, input_zero_point}, 32'd36, "input_zero_point output");

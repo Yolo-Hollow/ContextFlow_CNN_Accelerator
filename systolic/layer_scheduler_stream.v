@@ -43,7 +43,13 @@ module layer_scheduler_stream #(
     output reg compute_start,
     input      compute_done,
     output reg psum_drain_start,
-    input      psum_drain_done
+    input      psum_drain_done,
+
+    output     perf_stage_bias,
+    output     perf_stage_weight,
+    output     perf_stage_feeder,
+    output     perf_stage_compute,
+    output     perf_stage_drain
 );
     localparam ST_IDLE        = 4'd0;
     localparam ST_BIAS_START  = 4'd1;
@@ -66,6 +72,17 @@ module layer_scheduler_stream #(
     wire last_k = (next_k >= {1'b0, k_total});
     wire last_cout = (cout_base + COUT_STEP >= cout_total);
     wire [10:0] cout_remaining = cout_total - cout_base;
+
+    assign perf_stage_bias =
+        busy && (state == ST_BIAS_START || state == ST_BIAS_WAIT);
+    assign perf_stage_weight =
+        busy && (state == ST_WGT_START || state == ST_WGT_WAIT);
+    assign perf_stage_feeder =
+        busy && (state == ST_FEED_START || state == ST_FEED_WAIT);
+    assign perf_stage_compute =
+        busy && (state == ST_COMP_START || state == ST_COMP_WAIT);
+    assign perf_stage_drain =
+        busy && (state == ST_DRAIN_START || state == ST_DRAIN_WAIT);
 
     always @(*) begin
         cout_valid = (cout_remaining < COUT_STEP) ? cout_remaining : COUT_STEP;

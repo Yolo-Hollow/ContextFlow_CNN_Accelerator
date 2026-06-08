@@ -39,6 +39,12 @@
 //   0x25 VECTOR_PIXELS:  completed native 1x1 pixel vectors
 //   0x26 VECTOR_BEATS:   accepted native 1x1 AXIS beats
 //   0x27 VECTOR_STALLS:  native 1x1 cycles stalled by full IFM FIFOs
+//   0x28 STAGE_BIAS:     scheduler cycles in bias-load phase
+//   0x29 STAGE_WEIGHT:   scheduler cycles in weight-load phase
+//   0x2a STAGE_FEEDER:   scheduler cycles in IFM feeder phase
+//   0x2b STAGE_COMPUTE:  scheduler cycles in compute phase
+//   0x2c STAGE_DRAIN:    scheduler cycles in PSUM drain phase
+//   0x2d STAGE_OFM_POST: post-scheduler OFM pipeline drain cycles
 module layer_config_regs #(
     parameter IFM_FIFO_DEPTH = 1024
 ) (
@@ -63,6 +69,12 @@ module layer_config_regs #(
     input         perf_wait_ifm,
     input         perf_wait_ofm,
     input         perf_compute_fire,
+    input         perf_stage_bias,
+    input         perf_stage_weight,
+    input         perf_stage_feeder,
+    input         perf_stage_compute,
+    input         perf_stage_drain,
+    input         perf_stage_ofm_post,
     input  [31:0] stream_bias_completed,
     input  [31:0] stream_weight_completed,
     input  [31:0] stream_ifm_completed,
@@ -104,6 +116,12 @@ module layer_config_regs #(
     reg [31:0] perf_wait_ifm_cycles;
     reg [31:0] perf_wait_ofm_cycles;
     reg [31:0] perf_compute_cycles;
+    reg [31:0] perf_stage_bias_cycles;
+    reg [31:0] perf_stage_weight_cycles;
+    reg [31:0] perf_stage_feeder_cycles;
+    reg [31:0] perf_stage_compute_cycles;
+    reg [31:0] perf_stage_drain_cycles;
+    reg [31:0] perf_stage_ofm_post_cycles;
     wire cfg_idle = !layer_busy;
     wire perf_wait_any = perf_wait_bias || perf_wait_weight ||
                          perf_wait_ifm || perf_wait_ofm;
@@ -146,6 +164,12 @@ module layer_config_regs #(
             perf_wait_ifm_cycles <= 32'd0;
             perf_wait_ofm_cycles <= 32'd0;
             perf_compute_cycles <= 32'd0;
+            perf_stage_bias_cycles <= 32'd0;
+            perf_stage_weight_cycles <= 32'd0;
+            perf_stage_feeder_cycles <= 32'd0;
+            perf_stage_compute_cycles <= 32'd0;
+            perf_stage_drain_cycles <= 32'd0;
+            perf_stage_ofm_post_cycles <= 32'd0;
         end else begin
             start_pulse <= 1'b0;
             if (layer_done)
@@ -165,6 +189,18 @@ module layer_config_regs #(
                     perf_wait_ofm_cycles <= perf_wait_ofm_cycles + 1'b1;
                 if (perf_compute_fire)
                     perf_compute_cycles <= perf_compute_cycles + 1'b1;
+                if (perf_stage_bias)
+                    perf_stage_bias_cycles <= perf_stage_bias_cycles + 1'b1;
+                if (perf_stage_weight)
+                    perf_stage_weight_cycles <= perf_stage_weight_cycles + 1'b1;
+                if (perf_stage_feeder)
+                    perf_stage_feeder_cycles <= perf_stage_feeder_cycles + 1'b1;
+                if (perf_stage_compute)
+                    perf_stage_compute_cycles <= perf_stage_compute_cycles + 1'b1;
+                if (perf_stage_drain)
+                    perf_stage_drain_cycles <= perf_stage_drain_cycles + 1'b1;
+                if (perf_stage_ofm_post)
+                    perf_stage_ofm_post_cycles <= perf_stage_ofm_post_cycles + 1'b1;
             end
 
             if (cfg_wr_en) begin
@@ -182,6 +218,12 @@ module layer_config_regs #(
                                 perf_wait_ifm_cycles <= 32'd0;
                                 perf_wait_ofm_cycles <= 32'd0;
                                 perf_compute_cycles <= 32'd0;
+                                perf_stage_bias_cycles <= 32'd0;
+                                perf_stage_weight_cycles <= 32'd0;
+                                perf_stage_feeder_cycles <= 32'd0;
+                                perf_stage_compute_cycles <= 32'd0;
+                                perf_stage_drain_cycles <= 32'd0;
+                                perf_stage_ofm_post_cycles <= 32'd0;
                             end
                         end
                         if (cfg_wdata[1]) begin
@@ -275,6 +317,12 @@ module layer_config_regs #(
             6'h25: cfg_rdata = vector_completed_pixels;
             6'h26: cfg_rdata = vector_accepted_beats;
             6'h27: cfg_rdata = vector_fifo_stall_cycles;
+            6'h28: cfg_rdata = perf_stage_bias_cycles;
+            6'h29: cfg_rdata = perf_stage_weight_cycles;
+            6'h2a: cfg_rdata = perf_stage_feeder_cycles;
+            6'h2b: cfg_rdata = perf_stage_compute_cycles;
+            6'h2c: cfg_rdata = perf_stage_drain_cycles;
+            6'h2d: cfg_rdata = perf_stage_ofm_post_cycles;
             default: cfg_rdata = 32'd0;
         endcase
     end

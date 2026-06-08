@@ -216,6 +216,12 @@ typedef struct {
     uint64_t hw_wait_ifm_cycles;
     uint64_t hw_wait_ofm_cycles;
     uint64_t hw_compute_cycles;
+    uint64_t hw_stage_bias_cycles;
+    uint64_t hw_stage_weight_cycles;
+    uint64_t hw_stage_feeder_cycles;
+    uint64_t hw_stage_compute_cycles;
+    uint64_t hw_stage_drain_cycles;
+    uint64_t hw_stage_ofm_post_cycles;
     uint64_t vector_packets;
     uint64_t vector_pixels;
     uint64_t vector_beats;
@@ -1257,6 +1263,17 @@ static void print_layer_perf(const chain_layer_t *layer)
         (unsigned long long)layer_perf.hw_wait_ofm_cycles,
         (unsigned long long)compute_permille);
     xil_printf(
+        "STAGEPERF layer=%s bias_cycles=%llu weight_cycles=%llu "
+        "feeder_cycles=%llu compute_stage_cycles=%llu drain_cycles=%llu "
+        "ofm_post_cycles=%llu\r\n",
+        layer->name,
+        (unsigned long long)layer_perf.hw_stage_bias_cycles,
+        (unsigned long long)layer_perf.hw_stage_weight_cycles,
+        (unsigned long long)layer_perf.hw_stage_feeder_cycles,
+        (unsigned long long)layer_perf.hw_stage_compute_cycles,
+        (unsigned long long)layer_perf.hw_stage_drain_cycles,
+        (unsigned long long)layer_perf.hw_stage_ofm_post_cycles);
+    xil_printf(
         "DMASTAT layer=%s bias_starts=%lu weight_starts=%lu ifm_starts=%lu ofm_starts=%lu\r\n",
         layer->name,
         (unsigned long)layer_perf.dma_bias_starts,
@@ -1485,6 +1502,12 @@ static int run_one_tile(const chain_layer_t *layer, const chain_tile_t *tile, ui
     layer_perf.hw_wait_ifm_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_PERF_WAIT_IFM);
     layer_perf.hw_wait_ofm_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_PERF_WAIT_OFM);
     layer_perf.hw_compute_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_PERF_COMPUTE);
+    layer_perf.hw_stage_bias_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_STAGE_BIAS);
+    layer_perf.hw_stage_weight_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_STAGE_WEIGHT);
+    layer_perf.hw_stage_feeder_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_STAGE_FEEDER);
+    layer_perf.hw_stage_compute_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_STAGE_COMPUTE);
+    layer_perf.hw_stage_drain_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_STAGE_DRAIN);
+    layer_perf.hw_stage_ofm_post_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_STAGE_OFM_POST);
     layer_perf.vector_packets += rd32(ACCEL_BASE_ADDR, ACCEL_VECTOR_PACKETS);
     layer_perf.vector_pixels += rd32(ACCEL_BASE_ADDR, ACCEL_VECTOR_PIXELS);
     layer_perf.vector_beats += rd32(ACCEL_BASE_ADDR, ACCEL_VECTOR_BEATS);
@@ -1701,6 +1724,12 @@ static int run_one_tile_batch(
     layer_perf.hw_wait_ifm_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_PERF_WAIT_IFM);
     layer_perf.hw_wait_ofm_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_PERF_WAIT_OFM);
     layer_perf.hw_compute_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_PERF_COMPUTE);
+    layer_perf.hw_stage_bias_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_STAGE_BIAS);
+    layer_perf.hw_stage_weight_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_STAGE_WEIGHT);
+    layer_perf.hw_stage_feeder_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_STAGE_FEEDER);
+    layer_perf.hw_stage_compute_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_STAGE_COMPUTE);
+    layer_perf.hw_stage_drain_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_STAGE_DRAIN);
+    layer_perf.hw_stage_ofm_post_cycles += rd32(ACCEL_BASE_ADDR, ACCEL_STAGE_OFM_POST);
     layer_perf.vector_packets += rd32(ACCEL_BASE_ADDR, ACCEL_VECTOR_PACKETS);
     layer_perf.vector_pixels += rd32(ACCEL_BASE_ADDR, ACCEL_VECTOR_PIXELS);
     layer_perf.vector_beats += rd32(ACCEL_BASE_ADDR, ACCEL_VECTOR_BEATS);

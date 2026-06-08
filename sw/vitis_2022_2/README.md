@@ -282,6 +282,44 @@ outputs are unchanged.  The aggregate PL weight wait drops from about
 `359.1 ms` to `41.9 ms`, with Conv6 weight wait dropping from `213.647 ms` to
 `24.904 ms`.
 
+The `stageperf` hardware build adds read-only stage counters without changing
+the accelerator data path or software stream ABI:
+
+```text
+0xa0 STAGE_BIAS
+0xa4 STAGE_WEIGHT
+0xa8 STAGE_FEEDER
+0xac STAGE_COMPUTE
+0xb0 STAGE_DRAIN
+0xb4 STAGE_OFM_POST
+```
+
+The runtime prints one `STAGEPERF` line per layer and
+`tools/demo/summarize_uart_perf.py` reports aggregate stage coverage. The
+current `stageperf` build was generated from the active shell Vivado
+(`2025.2`) into `build_system_xck26_kv260_stageperf`. It closes timing with
+`WNS=0.142 ns`, `TNS=0`, `WHS=0.011 ns`, `THS=0`, and `0` routing errors.
+Resources are `CLB LUTs=52301 (44.66%)`, `CLB Registers=45655 (19.49%)`,
+`BRAM Tile=45.5 (31.60%)`, and `DSP=177 (14.18%)`. The XSA SHA256 is
+`9A15848B42B1BD14B8F15357C529A8137E506BA81A3EAF65A3D1C3851747B24D`; the
+bitstream SHA256 is
+`8D58887338B815AF99733150AFDA0FAB3B63DE9845DF72946B28F59AB03E8C0C`.
+
+Board validation passed:
+
+```text
+build_system_xck26_kv260_stageperf/board_smoke_logs/20260607_234056_conv0_conv9_batch_chain_COM8.log
+build_system_xck26_kv260_stageperf/board_smoke_logs/20260607_233758_conv0_conv9_ddr_demo_COM8.log
+build_system_xck26_kv260_stageperf/board_smoke_logs/20260607_233930_conv0_conv9_ddr_demo_COM8.log
+```
+
+The two DDR demos measured `0.861363 s` and `0.861369 s`. Stage counters cover
+essentially all PL busy cycles: `82076244 / 82076548` cycles on the fixed image.
+The aggregate split is `bias=29904`, `weight=5617752`, `feeder=22054628`,
+`compute_stage=23844930`, `drain=30102432`, and `ofm_post=426598` cycles. This
+shows that the largest remaining PL stages are PSUM drain, compute-stage
+overhead, and IFM feeder, not the weight-loader path.
+
 ## Native 1x1 mode
 
 `CONV[16]` selects the native 1x1 path. It requires batch mode, stride 1,

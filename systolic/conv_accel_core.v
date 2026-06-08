@@ -124,6 +124,12 @@ module conv_accel_core #(
     wire layer_busy;
     wire layer_done;
     wire layer_compute_fire;
+    wire perf_stage_bias;
+    wire perf_stage_weight;
+    wire perf_stage_feeder;
+    wire perf_stage_compute;
+    wire perf_stage_drain;
+    wire perf_stage_ofm_post;
     wire [31:0] layer_cfg_rdata;
     wire [8:0] fm_h;
     wire [8:0] fm_w;
@@ -224,6 +230,12 @@ module conv_accel_core #(
         .perf_wait_ifm(feeder_fill_req),
         .perf_wait_ofm(ofm_packet_full),
         .perf_compute_fire(layer_compute_fire),
+        .perf_stage_bias(perf_stage_bias),
+        .perf_stage_weight(perf_stage_weight),
+        .perf_stage_feeder(perf_stage_feeder),
+        .perf_stage_compute(perf_stage_compute),
+        .perf_stage_drain(perf_stage_drain),
+        .perf_stage_ofm_post(perf_stage_ofm_post),
         .stream_bias_completed(stream_bias_completed),
         .stream_weight_completed(stream_weight_completed),
         .stream_ifm_completed(stream_ifm_completed),
@@ -270,6 +282,12 @@ module conv_accel_core #(
     ) u_layer (
         .clk(clk), .rst(rst), .start(start_pulse), .busy(layer_busy), .done(layer_done),
         .perf_compute_fire(layer_compute_fire),
+        .perf_stage_bias(perf_stage_bias),
+        .perf_stage_weight(perf_stage_weight),
+        .perf_stage_feeder(perf_stage_feeder),
+        .perf_stage_compute(perf_stage_compute),
+        .perf_stage_drain(perf_stage_drain),
+        .perf_stage_ofm_post(perf_stage_ofm_post),
         .fm_h(fm_h), .fm_w(fm_w), .ofm_h(ofm_h), .ofm_w(ofm_w),
         .conv_stride(conv_stride), .conv_pad(conv_pad), .kernel_1x1(kernel_1x1),
         .k_total(k_total), .cout_total(cout_total), .num_pixels(num_pixels),
