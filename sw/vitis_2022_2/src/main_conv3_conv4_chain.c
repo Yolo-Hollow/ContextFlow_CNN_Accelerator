@@ -42,6 +42,7 @@
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 #include "xil_cache.h"
 #include "xil_io.h"
 #include "xil_types.h"
@@ -921,7 +922,12 @@ static int wait_ifm_request_advance(uint32_t serviced_status)
 static uint32_t expected_ifm_services_for_tile(const chain_layer_t *layer, const chain_tile_t *tile)
 {
     if (layer->kernel_1x1) {
+#if ACCEL_RAW_HWC_IFM
+        (void)tile;
+        return 1U;
+#else
         return layer->k_passes * layer->cout_blocks;
+#endif
     }
 
     int first_fy = (int)tile->tile_oy_base - 1;
@@ -1029,6 +1035,23 @@ static int pack_batch_ifm_stream(
     uint32_t total_bytes;
 
     if (layer->kernel_1x1) {
+#if ACCEL_RAW_HWC_IFM
+        packets = 1U;
+        total_bytes = tile->tile_pixels * layer->cin;
+        if (total_bytes > BATCH_IFM_CAPACITY) {
+            xil_printf("%s raw HWC IFM overflow bytes=%lu cap=%lu\r\n",
+                       layer->name, (unsigned long)total_bytes,
+                       (unsigned long)BATCH_IFM_CAPACITY);
+            return -1;
+        }
+        const uint8_t *src =
+            layer->ifm_u8 + tile->tile_oy_base * layer->fm_w * layer->cin;
+        memcpy((void *)(UINTPTR)address, src, total_bytes);
+        stream->words = (uint64_t *)(UINTPTR)address;
+        stream->bytes = total_bytes;
+        stream->packets = packets;
+        return 0;
+#else
         packets = expected_ifm_services_for_tile(layer, tile);
         total_bytes = packets * tile->tile_pixels * 3U * sizeof(uint64_t);
         if (total_bytes > BATCH_IFM_CAPACITY) {
@@ -1072,6 +1095,7 @@ static int pack_batch_ifm_stream(
         stream->bytes = total_bytes;
         stream->packets = packets;
         return 0;
+#endif
     }
 
     if (first_fy < 0) {
@@ -1817,7 +1841,14 @@ static int configure_layer(const chain_layer_t *layer)
     wr32(ACCEL_BASE_ADDR, ACCEL_ACT_CFG, 2U);
     wr32(ACCEL_BASE_ADDR, ACCEL_IFM_ZP, layer->input_zero_point);
     wr32(ACCEL_BASE_ADDR, ACCEL_POOL_CFG, (layer->pool_stride << 2) | layer->pool_enable);
-    wr32(ACCEL_BASE_ADDR, ACCEL_STREAM_CFG, ACCEL_BATCH_STREAM ? 1U : 0U);
+    wr32(
+        ACCEL_BASE_ADDR,
+        ACCEL_STREAM_CFG,
+        ACCEL_BATCH_STREAM ?
+            (ACCEL_STREAM_CFG_BATCH |
+             ((ACCEL_RAW_HWC_IFM && layer->kernel_1x1) ?
+              ACCEL_STREAM_CFG_RAW_HWC : 0U)) :
+            0U);
     if (program_quant_tile(layer) != 0) {
         return -1;
     }

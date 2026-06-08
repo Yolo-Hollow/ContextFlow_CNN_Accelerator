@@ -95,6 +95,12 @@ def pack_optimized_native_1x1_ifm_stream(
     return one_cout_block * cout_blocks
 
 
+def pack_raw_hwc_ifm_tile(ifm, fm_w, cin, tile_oy, tile_h):
+    start = tile_oy * fm_w * cin
+    byte_count = tile_h * fm_w * cin
+    return ifm[start : start + byte_count]
+
+
 def check_shape(fm_w, fm_h, cin, cout, k_passes, cout_blocks, tile_oy, tile_h):
     k_total = cin * 9
     bias = [index * 17 - 91 for index in range(cout)]
@@ -184,11 +190,25 @@ def check_native_1x1_shape(
     assert first_pixel_tail[18:24] == bytes([input_zero_point] * 6)
 
 
+def check_raw_hwc_1x1_shape(fm_w, fm_h, cin, tile_oy, tile_h):
+    ifm = bytes((index * 29 + 3) & 0xFF for index in range(fm_w * fm_h * cin))
+    raw_tile = pack_raw_hwc_ifm_tile(ifm, fm_w, cin, tile_oy, tile_h)
+    expected = b"".join(
+        ifm[(y * fm_w + x) * cin : (y * fm_w + x + 1) * cin]
+        for y in range(tile_oy, tile_oy + tile_h)
+        for x in range(fm_w)
+    )
+    assert raw_tile == expected
+    assert len(raw_tile) == tile_h * fm_w * cin
+
+
 def main():
     check_shape(416, 416, 3, 16, 2, 1, 0, 2)
     check_shape(13, 13, 1024, 256, 512, 16, 0, 4)
     check_native_1x1_shape(13, 13, 1024, 256, 16, 0, 4, 21)
     check_native_1x1_shape(13, 13, 512, 24, 2, 12, 1, 11)
+    check_raw_hwc_1x1_shape(13, 13, 1024, 0, 4)
+    check_raw_hwc_1x1_shape(13, 13, 512, 12, 1)
     print("PASS: batch stream packing matches legacy and native 1x1 order")
 
 

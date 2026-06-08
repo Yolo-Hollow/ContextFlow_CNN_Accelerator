@@ -37,6 +37,7 @@ module tb_layer_config_regs;
     wire [1:0] pool_stride;
     wire [31:0] expected_bytes;
     wire stream_batch_mode;
+    wire stream_raw_hwc_mode;
     wire [31:0] stream_bias_packets;
     wire [31:0] stream_weight_packets;
     wire [31:0] stream_ifm_packets;
@@ -87,6 +88,7 @@ module tb_layer_config_regs;
         .pool_enable(pool_enable), .pool_stride(pool_stride),
         .expected_bytes(expected_bytes),
         .stream_batch_mode(stream_batch_mode),
+        .stream_raw_hwc_mode(stream_raw_hwc_mode),
         .stream_bias_packets(stream_bias_packets),
         .stream_weight_packets(stream_weight_packets),
         .stream_ifm_packets(stream_ifm_packets),
@@ -183,7 +185,7 @@ module tb_layer_config_regs;
         write_reg(6'h09, 32'd6);
         write_reg(6'h0f, 32'd36);
         write_reg(6'h10, {28'd0, 2'd2, 1'b0, 1'b1});
-        write_reg(6'h19, 32'd1);
+        write_reg(6'h19, 32'd3);
         write_reg(6'h1a, 32'd7);
         write_reg(6'h1b, 32'd11);
         write_reg(6'h1c, 32'd13);
@@ -205,6 +207,7 @@ module tb_layer_config_regs;
         check_value(pool_enable, 1, "pool_enable");
         check_value(pool_stride, 2, "pool_stride");
         check_value(stream_batch_mode, 1, "stream batch mode");
+        check_value(stream_raw_hwc_mode, 1, "stream raw hwc mode");
         check_value(stream_bias_packets, 7, "stream bias packets");
         check_value(stream_weight_packets, 11, "stream weight packets");
         check_value(stream_ifm_packets, 13, "stream ifm packets");
@@ -398,6 +401,7 @@ module tb_layer_config_regs;
         check_value(pool_enable, 1, "busy freeze pool enable");
         check_value(pool_stride, 2, "busy freeze pool stride");
         check_value(stream_batch_mode, 1, "busy freeze stream mode");
+        check_value(stream_raw_hwc_mode, 1, "busy freeze raw hwc mode");
         check_value(stream_bias_packets, 7, "busy freeze bias packets");
         check_value(stream_weight_packets, 11, "busy freeze weight packets");
         check_value(stream_ifm_packets, 13, "busy freeze ifm packets");

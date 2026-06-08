@@ -815,11 +815,55 @@ module `TB_CONV_ACCEL_CORE_MODULE;
         integer vector_beat;
         integer vector_byte;
         integer vector_ch;
+        integer raw_y;
+        integer raw_ch;
+        integer raw_byte_idx;
+        integer raw_total_bytes;
         reg [63:0] axis_word;
+        reg [7:0] axis_keep;
         begin
             k_base = current_pass_base_k;
 `ifdef TB_CONV_ACCEL_CORE_KERNEL_1X1
 `ifdef TB_CONV_ACCEL_CORE_USE_AXIS_STREAM
+`ifdef TB_CONV_ACCEL_CORE_RAW_HWC_IFM
+            if (ps_line_fill_count == batch_ifm_tile_end_count) begin
+                raw_total_bytes = run_ofm_h * FM_W * CIN;
+                raw_byte_idx = 0;
+                axis_word = 64'd0;
+                axis_keep = 8'd0;
+                for (raw_y = run_oy_base;
+                     raw_y < run_oy_base + run_ofm_h;
+                     raw_y = raw_y + 1) begin
+                    for (x = 0; x < FM_W; x = x + 1) begin
+                        for (raw_ch = 0; raw_ch < CIN; raw_ch = raw_ch + 1) begin
+                            axis_word[(raw_byte_idx % 8)*8 +: 8] =
+                                stream_ifm_byte_tb(raw_ch, raw_y, x);
+                            axis_keep[raw_byte_idx % 8] = 1'b1;
+                            raw_byte_idx = raw_byte_idx + 1;
+                            if ((raw_byte_idx % 8) == 0 ||
+                                raw_byte_idx == raw_total_bytes) begin
+                                @(negedge clk);
+                                ifm_axis_tdata = axis_word;
+                                ifm_axis_tkeep = axis_keep;
+                                ifm_axis_tlast =
+                                    (raw_byte_idx == raw_total_bytes);
+                                ifm_axis_tvalid = 1'b1;
+                                wait(ifm_axis_tready);
+                                @(posedge clk);
+                                axis_word = 64'd0;
+                                axis_keep = 8'd0;
+                            end
+                        end
+                    end
+                end
+                @(negedge clk);
+                ifm_axis_tvalid = 1'b0;
+                ifm_axis_tdata = 64'd0;
+                ifm_axis_tkeep = 8'd0;
+                ifm_axis_tlast = 1'b0;
+            end
+            wait(!feeder_fill_req);
+`else
             repeat (2) @(negedge clk);
             k_base = ((ps_line_fill_count - 1) % K_PASSES) * ROWS;
             for (vector_y = run_oy_base;
@@ -854,6 +898,7 @@ module `TB_CONV_ACCEL_CORE_MODULE;
             ifm_axis_tdata = 64'd0;
             ifm_axis_tkeep = 8'd0;
             ifm_axis_tlast = 1'b0;
+`endif
 `else
             $fatal(1, "native 1x1 test requires AXI stream");
 `endif
@@ -1110,7 +1155,11 @@ module `TB_CONV_ACCEL_CORE_MODULE;
             cfg_write(6'h09, run_pixel_base[23:0]);
 `ifdef TB_CONV_ACCEL_CORE_BATCH_STREAM
 `ifdef TB_CONV_ACCEL_CORE_KERNEL_1X1
+`ifdef TB_CONV_ACCEL_CORE_RAW_HWC_IFM
+            batch_ifm_tile_packets = 1;
+`else
             batch_ifm_tile_packets = K_PASSES * COUT_BLOCKS;
+`endif
 `else
             batch_first_fy = run_oy_base - CONV_PAD;
             if (batch_first_fy < 0)
@@ -1122,7 +1171,11 @@ module `TB_CONV_ACCEL_CORE_MODULE;
                 (batch_last_fy - batch_first_fy + 1) * K_PASSES * COUT_BLOCKS;
 `endif
             batch_ifm_tile_end_count = ps_line_fill_count + batch_ifm_tile_packets;
+`ifdef TB_CONV_ACCEL_CORE_RAW_HWC_IFM
+            cfg_write(6'h19, 32'd3);
+`else
             cfg_write(6'h19, 32'd1);
+`endif
             cfg_write(6'h1a, COUT_BLOCKS);
             cfg_write(6'h1b, COUT_BLOCKS * K_PASSES);
             cfg_write(6'h1c, batch_ifm_tile_packets);
@@ -1471,7 +1524,7 @@ module `TB_CONV_ACCEL_CORE_MODULE;
 `ifdef TB_CONV_ACCEL_CORE_PROGRESS_PRINT
     task print_progress;
         begin
-            $display("[PROGRESS] t=%0t ofm_wr=%0d/%0d delta=%0d axis_tlast=%0d cout=%0d k=%0d sched_state=%0d busy=%0d done_pending=%0d fill_req=%0d feeder_done=%0d compute_done=%0d drain_done=%0d compute_fire=%0d delta_fire=%0d psum_wr=%0d final_valid=%0d final_full=%0d rq_valid=%0d rq_full=%0d rq_level=%0d act_valid=%0d act_fifo_valid=%0d act_full=%0d act_level=%0d wb_busy=%0d wb_full=%0d wb_level=%0d ofm_packet_full=%0d ofm_valid=%0d ofm_stream_valid=%0d ofm_stream_ready=%0d ofm_stream_full=%0d ofm_stream_level=%0d",
+            $display("[PROGRESS] t=%0t ofm_wr=%0d/%0d delta=%0d axis_tlast=%0d cout=%0d k=%0d sched_state=%0d busy=%0d done_pending=%0d fill_req=%0d feeder_done=%0d compute_done=%0d drain_done=%0d compute_fire=%0d delta_fire=%0d psum_wr=%0d vector_valid=%0d vector_ready=%0d vector_done=%0d raw_loaded=%0d raw_replay=%0d raw_pixel=%0d raw_completed_packets=%0d raw_completed_pixels=%0d raw_beats=%0d raw_stalls=%0d final_valid=%0d final_full=%0d rq_valid=%0d rq_full=%0d rq_level=%0d act_valid=%0d act_fifo_valid=%0d act_full=%0d act_level=%0d wb_busy=%0d wb_full=%0d wb_level=%0d ofm_packet_full=%0d ofm_valid=%0d ofm_stream_valid=%0d ofm_stream_ready=%0d ofm_stream_full=%0d ofm_stream_level=%0d",
                 $time,
                 ofm_mem_wr_count, EXPECTED_OFM_WRITES,
                 ofm_mem_wr_count - progress_last_ofm_wr_count,
@@ -1486,6 +1539,20 @@ module `TB_CONV_ACCEL_CORE_MODULE;
                 `TB_DUT_LAYER.drain_done, compute_fire_count,
                 compute_fire_count - progress_last_compute_fire_count,
                 psum_wr_count,
+                `TB_DUT_LAYER.u_top.vector_ifm_valid,
+                `TB_DUT_LAYER.u_top.vector_ifm_ready,
+                `TB_DUT_LAYER.u_top.vector_packet_done,
+`ifdef TB_CONV_ACCEL_CORE_RAW_HWC_IFM
+                dut.u_axis_hwc_tile_cache.tile_loaded,
+                dut.u_axis_hwc_tile_cache.replay_active,
+                dut.u_axis_hwc_tile_cache.replay_pixel,
+                dut.u_axis_hwc_tile_cache.completed_packets,
+                dut.u_axis_hwc_tile_cache.completed_pixels,
+                dut.u_axis_hwc_tile_cache.accepted_beats,
+                dut.u_axis_hwc_tile_cache.fifo_stall_cycles,
+`else
+                1'b0, 1'b0, 0, 0, 0, 0, 0,
+`endif
                 `TB_DUT_LAYER.final_fifo_valid, `TB_DUT_LAYER.final_fifo_full,
                 `TB_DUT_LAYER.rq_fifo_valid, `TB_DUT_LAYER.rq_fifo_full,
                 `TB_DUT_LAYER.u_rq_packet_fifo.level,
@@ -1504,6 +1571,28 @@ module `TB_CONV_ACCEL_CORE_MODULE;
                 1'b0, 1'b1, 1'b0, 0
 `endif
             );
+`ifdef TB_CONV_ACCEL_CORE_PROGRESS_COREDBG
+            $display("[COREDBG] t=%0t ctrl_state=%0d w_col=%0d compute_cnt=%0d drain_cnt=%0d compute_ready=%0d compute_active=%0d ctrl_w_load=%0d ctrl_pre_write=%0d ctrl_done=%0d ifm_empty=%h ifm_full=%h ifm_rd_en=%h ifm_rd_valid=%h psum_wr_en=%h psum_empty=%h valid_v_bot=%h wgt_empty=%h",
+                $time,
+                `TB_DUT_LAYER.u_top.u_core.u_ctrl.state,
+                `TB_DUT_LAYER.u_top.u_core.u_ctrl.w_col,
+                `TB_DUT_LAYER.u_top.u_core.u_ctrl.compute_cnt,
+                `TB_DUT_LAYER.u_top.u_core.u_ctrl.drain_cnt,
+                `TB_DUT_LAYER.u_top.u_core.compute_ready,
+                `TB_DUT_LAYER.u_top.u_core.compute_active,
+                `TB_DUT_LAYER.u_top.u_core.ctrl_w_load,
+                `TB_DUT_LAYER.u_top.u_core.ctrl_pre_write,
+                `TB_DUT_LAYER.u_top.u_core.done,
+                `TB_DUT_LAYER.u_top.u_core.ifm_fifo_empty_active,
+                `TB_DUT_LAYER.u_top.u_core.ifm_full_active,
+                `TB_DUT_LAYER.u_top.u_core.ifm_fifo_rd_en_active,
+                `TB_DUT_LAYER.u_top.u_core.ifm_fifo_rd_valid,
+                `TB_DUT_LAYER.u_top.u_core.psum_fifo_wr_en,
+                `TB_DUT_LAYER.u_top.u_core.psum_fifo_empty,
+                `TB_DUT_LAYER.u_top.u_core.valid_v_bot,
+                `TB_DUT_LAYER.u_top.u_core.wgt_fifo_empty
+            );
+`endif
             progress_last_ofm_wr_count = ofm_mem_wr_count;
             progress_last_compute_fire_count = compute_fire_count;
         end

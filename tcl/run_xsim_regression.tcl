@@ -46,6 +46,7 @@ set common_files {
     systolic/ifm_line_stream_loader.v
     systolic/axis_ifm_line_loader.v
     systolic/axis_ifm_vector_loader.v
+    systolic/axis_hwc_tile_cache.v
     systolic/psum_pingpong_buffer.v
     systolic/psum_stream_feeder.v
     systolic/psum_drain_writer.v
@@ -92,7 +93,9 @@ set tests {
     {tb_conv_accel_core_axi_lite_axis_stream_r18_c8_smoke tb/tb_conv_accel_core_axi_lite_axis_stream_r18_c8_smoke.v}
     {tb_conv_accel_core_axi_lite_axis_stream_native1x1_small tb/tb_conv_accel_core_axi_lite_axis_stream_native1x1_small.v}
     {tb_conv_accel_core_axi_lite_axis_stream_conv7_native1x1_ext_tile0 tb/tb_conv_accel_core_axi_lite_axis_stream_conv7_native1x1_ext_tile0.v diagnostic}
+    {tb_conv_accel_core_axi_lite_axis_stream_conv7_native1x1_raw_hwc_ext_tile0 tb/tb_conv_accel_core_axi_lite_axis_stream_conv7_native1x1_raw_hwc_ext_tile0.v diagnostic}
     {tb_conv_accel_core_axi_lite_axis_stream_conv9_native1x1_ext_tail tb/tb_conv_accel_core_axi_lite_axis_stream_conv9_native1x1_ext_tail.v diagnostic}
+    {tb_conv_accel_core_axi_lite_axis_stream_conv9_native1x1_raw_hwc_ext_tail tb/tb_conv_accel_core_axi_lite_axis_stream_conv9_native1x1_raw_hwc_ext_tail.v diagnostic}
     {tb_conv_accel_core_axi_lite_axis_stream_r18_c16_smoke tb/tb_conv_accel_core_axi_lite_axis_stream_r18_c16_smoke.v}
     {tb_conv_accel_core_axi_lite_axis_stream_r32_c16_smoke tb/tb_conv_accel_core_axi_lite_axis_stream_r32_c16_smoke.v}
     {tb_conv_accel_core_axi_lite_axis_stream_pooling tb/tb_conv_accel_core_axi_lite_axis_stream_pooling.v}
@@ -134,6 +137,7 @@ set tests {
     {tb_ifm_line_stream_loader tb/tb_ifm_line_stream_loader.v}
     {tb_axis_ifm_line_loader tb/tb_axis_ifm_line_loader.v}
     {tb_axis_ifm_vector_loader tb/tb_axis_ifm_vector_loader.v}
+    {tb_axis_hwc_tile_cache tb/tb_axis_hwc_tile_cache.v}
     {tb_ifm_fill_handshake tb/tb_ifm_fill_handshake.v}
     {tb_window_extract tb/tb_window_extract.v}
     {tb_axis_bias_weight_loader tb/tb_axis_bias_weight_loader.v}

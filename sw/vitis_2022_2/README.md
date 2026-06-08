@@ -244,7 +244,7 @@ per-request mode remains available at compile time.
 The batch control registers are:
 
 ```text
-0x64 STREAM_CFG       bit0 = batch mode
+0x64 STREAM_CFG       bit0 = batch mode, bit1 = experimental raw-HWC IFM cache
 0x68 BIAS_PACKETS     expected packet count
 0x6c WEIGHT_PACKETS   expected packet count
 0x70 IFM_PACKETS      expected packet count
@@ -271,6 +271,16 @@ layers in about `1.179 s`; two images measured `1.178568 s` and `1.178591 s`.
 Aggregate IFM packing is about `43.5 ms`, and weight packing is eliminated.
 The fixed golden chain is slower because it performs full per-layer output
 preservation and comparison and should not be used as deployment timing.
+
+An experimental native `1x1` raw-HWC IFM cache path exists behind
+`ACCEL_RAW_HWC_IFM=1` or the manual build script's `-RawHwcIfm` switch. In
+that mode software sends one contiguous `uint8` HWC spatial tile over the
+existing IFM DMA, while PL centers and replays it for all K passes and COUT
+blocks. This path is currently directed-test only; default batch and DDR demos
+still use the prepacked IFM stream. Vivado/xsim `2022.2` validation has passed
+for Conv7 raw tile0 (`13332/0`) and Conv9 raw tail (`332/0`), while the old
+prepacked Conv9 tail remains bit-exact (`332/0`). Default and `-RawHwcIfm`
+manual batch-chain builds also compile successfully.
 
 The `wgt64` hardware build keeps the same software ABI and prepacked weight
 stream format, but the PL weight loader now writes each 64-bit AXIS beat into

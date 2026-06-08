@@ -120,6 +120,13 @@
 #define ACCEL_PREPACKED_WEIGHT 0
 #endif
 
+#ifndef ACCEL_RAW_HWC_IFM
+#define ACCEL_RAW_HWC_IFM    0
+#endif
+
+#define ACCEL_STREAM_CFG_BATCH   0x1U
+#define ACCEL_STREAM_CFG_RAW_HWC 0x2U
+
 /* Mirrors tb_conv_accel_core_axi_lite_axis_stream_r18_c8_smoke.v. */
 #ifndef ACCEL_SMOKE_REAL_CONV0_CROP_POOL
 #define ACCEL_SMOKE_REAL_CONV0_CROP_POOL 0

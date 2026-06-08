@@ -41,6 +41,7 @@ module tb_axi_lite_cfg_bridge;
     wire [1:0] pool_stride;
     wire [31:0] expected_bytes;
     wire stream_batch_mode;
+    wire stream_raw_hwc_mode;
     wire [31:0] stream_bias_packets;
     wire [31:0] stream_weight_packets;
     wire [31:0] stream_ifm_packets;
@@ -99,6 +100,7 @@ module tb_axi_lite_cfg_bridge;
         .pool_enable(pool_enable), .pool_stride(pool_stride),
         .expected_bytes(expected_bytes),
         .stream_batch_mode(stream_batch_mode),
+        .stream_raw_hwc_mode(stream_raw_hwc_mode),
         .stream_bias_packets(stream_bias_packets),
         .stream_weight_packets(stream_weight_packets),
         .stream_ifm_packets(stream_ifm_packets)
@@ -276,12 +278,14 @@ module tb_axi_lite_cfg_bridge;
         axi_write(8'h24, 32'd6, 4'hf);
         axi_write(8'h3c, 32'd36, 4'hf);
         axi_write(8'h40, {28'd0, 2'd2, 1'b0, 1'b1}, 4'hf);
-        axi_write(8'h64, 32'd1, 4'hf);
+        axi_write(8'h64, 32'd3, 4'hf);
         axi_write(8'h68, 32'd7, 4'hf);
         axi_write(8'h6c, 32'd11, 4'hf);
         axi_write(8'h70, 32'd13, 4'hf);
         axi_read(8'h64, rd);
-        check_eq(rd, 32'd1, "stream batch mode read");
+        check_eq(rd, 32'd3, "stream cfg read");
+        check_eq({31'd0, stream_batch_mode}, 32'd1, "stream batch output");
+        check_eq({31'd0, stream_raw_hwc_mode}, 32'd1, "stream raw hwc output");
         axi_read(8'h74, rd);
         check_eq(rd, 32'd7, "stream bias completed read");
         axi_read(8'h78, rd);

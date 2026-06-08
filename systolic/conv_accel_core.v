@@ -53,6 +53,7 @@ module conv_accel_core #(
     output [10:0] current_cout_base,
     output [13:0] current_pass_base_k,
     output [10:0] configured_cout_total,
+    output [13:0] configured_k_total,
     output [15:0] configured_num_pixels,
     output [7:0]  configured_input_zero_point,
     output [8:0]  configured_ofm_w,
@@ -61,6 +62,7 @@ module conv_accel_core #(
     output [1:0]  configured_pool_stride,
     output [31:0] configured_expected_bytes,
     output        configured_stream_batch_mode,
+    output        configured_stream_raw_hwc_mode,
     output [31:0] configured_stream_bias_packets,
     output [31:0] configured_stream_weight_packets,
     output [31:0] configured_stream_ifm_packets,
@@ -158,6 +160,7 @@ module conv_accel_core #(
     wire [1:0] pool_stride;
     wire [31:0] expected_bytes;
     wire stream_batch_mode;
+    wire stream_raw_hwc_mode;
     wire [31:0] stream_bias_packets;
     wire [31:0] stream_weight_packets;
     wire [31:0] stream_ifm_packets;
@@ -183,6 +186,7 @@ module conv_accel_core #(
     integer lut_i;
 
     assign configured_cout_total = cout_total;
+    assign configured_k_total = k_total;
     assign configured_num_pixels = num_pixels;
     assign configured_input_zero_point = input_zero_point;
     assign configured_ofm_w = ofm_w;
@@ -191,6 +195,7 @@ module conv_accel_core #(
     assign configured_pool_stride = pool_stride;
     assign configured_expected_bytes = expected_bytes;
     assign configured_stream_batch_mode = stream_batch_mode;
+    assign configured_stream_raw_hwc_mode = stream_raw_hwc_mode;
     assign configured_stream_bias_packets = stream_bias_packets;
     assign configured_stream_weight_packets = stream_weight_packets;
     assign configured_stream_ifm_packets = stream_ifm_packets;
@@ -270,6 +275,7 @@ module conv_accel_core #(
         .pool_enable(pool_enable), .pool_stride(pool_stride),
         .expected_bytes(expected_bytes),
         .stream_batch_mode(stream_batch_mode),
+        .stream_raw_hwc_mode(stream_raw_hwc_mode),
         .stream_bias_packets(stream_bias_packets),
         .stream_weight_packets(stream_weight_packets),
         .stream_ifm_packets(stream_ifm_packets),

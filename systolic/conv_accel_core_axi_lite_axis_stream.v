@@ -35,6 +35,7 @@ module conv_accel_core_axi_lite_axis_stream #(
     parameter OFM_ADDR_W = 24,
     parameter OFM_FIFO_DEPTH = 32,
     parameter OFM_FIFO_AW = 5,
+    parameter HWC_CACHE_AW = 13,
     parameter AXIS_W = 64,
     parameter AXIS_KEEP_W = AXIS_W / 8
 ) (
@@ -132,10 +133,12 @@ module conv_accel_core_axi_lite_axis_stream #(
     wire [15:0] configured_num_pixels;
     wire [7:0] configured_input_zero_point;
     wire [8:0] configured_ofm_w;
+    wire [13:0] configured_k_total;
     wire configured_pool_enable;
     wire [1:0] configured_pool_stride;
     wire [31:0] configured_expected_bytes;
     wire configured_stream_batch_mode;
+    wire configured_stream_raw_hwc_mode;
     wire [31:0] configured_stream_bias_packets;
     wire [31:0] configured_stream_weight_packets;
     wire [31:0] configured_stream_ifm_packets;
@@ -146,17 +149,34 @@ module conv_accel_core_axi_lite_axis_stream #(
     wire [31:0] weight_completed_packets;
     wire [31:0] line_completed_packets;
     wire [31:0] vector_completed_packets;
+    wire [31:0] raw_hwc_completed_packets;
+    wire [31:0] raw_hwc_completed_pixels;
+    wire [31:0] raw_hwc_accepted_beats;
+    wire [31:0] raw_hwc_fifo_stall_cycles;
     wire [31:0] vector_completed_pixels;
     wire [31:0] vector_accepted_beats;
     wire [31:0] vector_fifo_stall_cycles;
     wire [31:0] ifm_completed_packets =
-        configured_kernel_1x1 ? vector_completed_packets : line_completed_packets;
-    wire [ROWS*IFM_W-1:0] vector_ifm_data;
-    wire vector_ifm_valid;
+        configured_kernel_1x1 ?
+            (configured_stream_raw_hwc_mode ? raw_hwc_completed_packets :
+                                              vector_completed_packets) :
+            line_completed_packets;
+    wire [ROWS*IFM_W-1:0] vector_loader_ifm_data;
+    wire vector_loader_ifm_valid;
     wire vector_ifm_ready;
-    wire vector_packet_done;
+    wire vector_loader_packet_done;
+    wire [ROWS*IFM_W-1:0] raw_hwc_ifm_data;
+    wire raw_hwc_ifm_valid;
+    wire raw_hwc_packet_done;
+    wire [ROWS*IFM_W-1:0] vector_ifm_data =
+        configured_stream_raw_hwc_mode ? raw_hwc_ifm_data : vector_loader_ifm_data;
+    wire vector_ifm_valid =
+        configured_stream_raw_hwc_mode ? raw_hwc_ifm_valid : vector_loader_ifm_valid;
+    wire vector_packet_done =
+        configured_stream_raw_hwc_mode ? raw_hwc_packet_done : vector_loader_packet_done;
     wire line_ifm_tready;
-    wire vector_ifm_tready;
+    wire vector_loader_ifm_tready;
+    wire raw_hwc_ifm_tready;
 
     wire bias_tkeep_error;
     wire bias_tlast_error;
@@ -182,12 +202,21 @@ module conv_accel_core_axi_lite_axis_stream #(
     assign weight_axis_error = weight_tkeep_error || weight_tlast_error;
     wire vector_tkeep_error;
     wire vector_tlast_error;
+    wire raw_hwc_tkeep_error;
+    wire raw_hwc_tlast_error;
+    wire raw_hwc_overflow_error;
     assign ifm_axis_error = configured_config_error ||
                             (configured_kernel_1x1 ?
-                                (vector_tkeep_error || vector_tlast_error) :
+                                (configured_stream_raw_hwc_mode ?
+                                    (raw_hwc_tkeep_error || raw_hwc_tlast_error ||
+                                     raw_hwc_overflow_error) :
+                                    (vector_tkeep_error || vector_tlast_error)) :
                                 (ifm_tkeep_error || ifm_tlast_error));
     assign ifm_s_axis_tready =
-        configured_kernel_1x1 ? vector_ifm_tready : line_ifm_tready;
+        configured_kernel_1x1 ?
+            (configured_stream_raw_hwc_mode ? raw_hwc_ifm_tready :
+                                              vector_loader_ifm_tready) :
+            line_ifm_tready;
     always @(posedge clk) begin
         if (rst) begin
             ofm_byte_count <= 32'd0;
@@ -303,22 +332,57 @@ module conv_accel_core_axi_lite_axis_stream #(
         .expected_packets(configured_stream_ifm_packets),
         .num_pixels(configured_num_pixels),
         .input_zero_point(configured_input_zero_point),
-        .fill_req(feeder_fill_req && configured_kernel_1x1),
-        .s_axis_tready(vector_ifm_tready),
+        .fill_req(feeder_fill_req && configured_kernel_1x1 &&
+                  !configured_stream_raw_hwc_mode),
+        .s_axis_tready(vector_loader_ifm_tready),
         .s_axis_tvalid(ifm_s_axis_tvalid),
         .s_axis_tdata(ifm_s_axis_tdata),
         .s_axis_tkeep(ifm_s_axis_tkeep),
         .s_axis_tlast(ifm_s_axis_tlast),
-        .vector_data(vector_ifm_data),
-        .vector_valid(vector_ifm_valid),
+        .vector_data(vector_loader_ifm_data),
+        .vector_valid(vector_loader_ifm_valid),
         .vector_ready(vector_ifm_ready),
-        .packet_done(vector_packet_done),
+        .packet_done(vector_loader_packet_done),
         .tkeep_error(vector_tkeep_error),
         .tlast_error(vector_tlast_error),
         .completed_packets(vector_completed_packets),
         .completed_pixels(vector_completed_pixels),
         .accepted_beats(vector_accepted_beats),
         .fifo_stall_cycles(vector_fifo_stall_cycles)
+    );
+
+    axis_hwc_tile_cache #(
+        .ROWS(ROWS),
+        .AXIS_W(AXIS_W),
+        .KEEP_W(AXIS_KEEP_W),
+        .CACHE_AW(HWC_CACHE_AW)
+    ) u_axis_hwc_tile_cache (
+        .clk(clk),
+        .rst(rst),
+        .stream_reset(configured_stream_reset && configured_stream_raw_hwc_mode),
+        .expected_packets(configured_stream_ifm_packets),
+        .num_pixels(configured_num_pixels),
+        .k_total(configured_k_total),
+        .pass_base_k(current_pass_base_k),
+        .input_zero_point(configured_input_zero_point),
+        .fill_req(feeder_fill_req && configured_kernel_1x1 &&
+                  configured_stream_raw_hwc_mode),
+        .s_axis_tready(raw_hwc_ifm_tready),
+        .s_axis_tvalid(ifm_s_axis_tvalid),
+        .s_axis_tdata(ifm_s_axis_tdata),
+        .s_axis_tkeep(ifm_s_axis_tkeep),
+        .s_axis_tlast(ifm_s_axis_tlast),
+        .vector_data(raw_hwc_ifm_data),
+        .vector_valid(raw_hwc_ifm_valid),
+        .vector_ready(vector_ifm_ready),
+        .packet_done(raw_hwc_packet_done),
+        .tkeep_error(raw_hwc_tkeep_error),
+        .tlast_error(raw_hwc_tlast_error),
+        .overflow_error(raw_hwc_overflow_error),
+        .completed_packets(raw_hwc_completed_packets),
+        .completed_pixels(raw_hwc_completed_pixels),
+        .accepted_beats(raw_hwc_accepted_beats),
+        .fifo_stall_cycles(raw_hwc_fifo_stall_cycles)
     );
 
     conv_accel_core_axi_lite #(
@@ -356,6 +420,7 @@ module conv_accel_core_axi_lite_axis_stream #(
         .current_cout_base(current_cout_base),
         .current_pass_base_k(current_pass_base_k),
         .configured_cout_total(configured_cout_total),
+        .configured_k_total(configured_k_total),
         .configured_num_pixels(configured_num_pixels),
         .configured_input_zero_point(configured_input_zero_point),
         .configured_ofm_w(configured_ofm_w),
@@ -364,6 +429,7 @@ module conv_accel_core_axi_lite_axis_stream #(
         .configured_pool_stride(configured_pool_stride),
         .configured_expected_bytes(configured_expected_bytes),
         .configured_stream_batch_mode(configured_stream_batch_mode),
+        .configured_stream_raw_hwc_mode(configured_stream_raw_hwc_mode),
         .configured_stream_bias_packets(configured_stream_bias_packets),
         .configured_stream_weight_packets(configured_stream_weight_packets),
         .configured_stream_ifm_packets(configured_stream_ifm_packets),
@@ -377,10 +443,18 @@ module conv_accel_core_axi_lite_axis_stream #(
         .stream_bias_completed(bias_completed_packets),
         .stream_weight_completed(weight_completed_packets),
         .stream_ifm_completed(ifm_completed_packets),
-        .vector_completed_packets(vector_completed_packets),
-        .vector_completed_pixels(vector_completed_pixels),
-        .vector_accepted_beats(vector_accepted_beats),
-        .vector_fifo_stall_cycles(vector_fifo_stall_cycles),
+        .vector_completed_packets(configured_stream_raw_hwc_mode ?
+                                  raw_hwc_completed_packets :
+                                  vector_completed_packets),
+        .vector_completed_pixels(configured_stream_raw_hwc_mode ?
+                                 raw_hwc_completed_pixels :
+                                 vector_completed_pixels),
+        .vector_accepted_beats(configured_stream_raw_hwc_mode ?
+                               raw_hwc_accepted_beats :
+                               vector_accepted_beats),
+        .vector_fifo_stall_cycles(configured_stream_raw_hwc_mode ?
+                                  raw_hwc_fifo_stall_cycles :
+                                  vector_fifo_stall_cycles),
         .bias_wr_addr(bias_wr_addr),
         .bias_wr_data(bias_wr_data),
         .bias_wr_en(bias_wr_en),
