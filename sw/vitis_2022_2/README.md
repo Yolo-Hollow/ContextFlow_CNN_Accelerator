@@ -416,10 +416,39 @@ SUBPERF layer=... feed_fill=... feed_push=... feed_fifo_stall=... feed_win_not_r
 `tools/demo/summarize_uart_perf.py` reports aggregate `SUBPERF` totals and
 residuals against `STAGEPERF`. Local xsim validation has passed for
 configuration register reads, AXI-Lite reads, native1x1, Conv0 batch,
-Conv7/Conv9 native1x1, and the r18_c8 Layer06 tile. Board validation for
-`build_system_xck26_kv260_subperf_2022_2` is deferred; use a full bitstream
-programming run before treating its UART performance numbers as the next
-baseline.
+Conv7/Conv9 native1x1, and the r18_c8 Layer06 tile.
+
+Board validation passed with full bitstream programming. The fixed batch chain
+remained bit-exact and matched the Conv9 decode golden:
+
+```text
+build_system_xck26_kv260_subperf_2022_2/board_smoke_logs/20260608_152628_conv0_conv9_batch_chain_COM8.log
+```
+
+Two DDR demos were also run with full programming. The fixed image measured
+`0.646852 s`; the second image measured `0.646994 s`; detections remained
+unchanged. Logs:
+
+```text
+build_system_xck26_kv260_subperf_2022_2/board_smoke_logs/20260608_153010_conv0_conv9_ddr_demo_COM8.log
+build_system_xck26_kv260_subperf_2022_2/board_smoke_logs/20260608_152819_conv0_conv9_ddr_demo_COM8.log
+```
+
+The fixed-image aggregate counter split is:
+
+```text
+busy=60549732 cycles
+stage coverage=100.00%
+feeder=22100743
+compute_stage=23844930
+drain=8472258
+SUBPERF feed_fill=12119827 feed_push=7432282 feed_fifo_stall=0 feed_win_not_ready=0
+SUBPERF comp_wload=881216 comp_active=7432282 comp_fire=7432282 comp_ifm_stall=0 comp_tail=15200976
+```
+
+The important reading is that `comp_fire` matches the existing compute counter,
+feeder has no FIFO/window stall in this run, and compute-stage overhead is
+mostly tail/drain-adjacent pipeline time rather than active MAC issue.
 
 ## Native 1x1 mode
 
