@@ -349,17 +349,45 @@ from the active shell Vivado (`2025.2`) and closes timing with `WNS=0.348 ns`,
 bitstream SHA256 is
 `FF53FB9BB0EA579B37AB7F0D6D59EE66F0A92F4A064E8607B0D4CDEFE416F5FE`.
 
-Board validation is pending because the current host session does not see the
-KV260 UART or JTAG target. `Win32_SerialPort` only reports Bluetooth COM3/COM4,
-and `C:\Xilinx\Vitis\2022.2\bin\xsct.bat sw/vitis_2022_2/scripts/probe_jtag_targets.tcl`
-prints no JTAG targets. Reconnect or power-cycle the KV260 until the board UART
-and `Cortex-A53 #0` target enumerate, then run the full sequence without
-`-FastRun`:
+Board validation passed after reconnecting the KV260 UART and JTAG. A full
+programming run with `build_system_xck26_kv260_drainpipe` completed
+`conv0_conv9_batch_chain` bit-exact validation and matched the Conv9 decode
+golden:
+
+```text
+build_system_xck26_kv260_drainpipe/board_smoke_logs/20260608_121308_conv0_conv9_batch_chain_COM8.log
+```
+
+Two DDR demos were then run with full bitstream programming. The fixed image
+measured `0.645595 s`; the second image measured `0.645720 s`. Detections
+remained unchanged. The common PL counter summary was:
+
+```text
+busy=60503617 cycles
+compute=12.28%
+wait=28.62%
+stage total=60503313 cycles
+stage coverage=100.00%
+bias=29904
+weight=5617752
+feeder=22054628
+compute_stage=23844930
+drain=8472258
+ofm_post=483841
+```
+
+Compared with the `stageperf` baseline, `stage_drain_cycles` fell from
+`30102432` to `8472258` cycles, about `3.55x`. Total DDR demo latency fell from
+about `0.86136 s` to about `0.6456 s`. The new largest PL stages are
+`compute_stage` and `feeder`, so the next useful optimization direction is
+feeder/compute overlap or reducing feeder-side IFM replay overhead.
+
+The validation commands were:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/run_kv260_smoke_sequence.ps1 -PortName COM8 -BuildDirName build_system_xck26_kv260_drainpipe -RunConv0Conv9BatchChain -CaptureSeconds 240
-powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/run_kv260_image_demo.ps1 -Image D:\MPSoC\python_prj\facemask\images\maksssksksss0.png -PortName COM8 -BuildDirName build_system_xck26_kv260_drainpipe -FastRun -CaptureSeconds 300
-powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/run_kv260_image_demo.ps1 -Image D:\MPSoC\python_prj\facemask\images\maksssksksss1.png -PortName COM8 -BuildDirName build_system_xck26_kv260_drainpipe -FastRun -CaptureSeconds 300
+powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/run_kv260_image_demo.ps1 -Image D:\MPSoC\python_prj\facemask\images\maksssksksss0.png -PortName COM8 -BuildDirName build_system_xck26_kv260_drainpipe -CaptureSeconds 240
+powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/run_kv260_image_demo.ps1 -Image D:\MPSoC\python_prj\facemask\images\maksssksksss1.png -PortName COM8 -BuildDirName build_system_xck26_kv260_drainpipe -CaptureSeconds 240
 ```
 
 ## Native 1x1 mode
