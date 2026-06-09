@@ -623,11 +623,14 @@ case is heavier than the daily smoke set.
 
 Purpose:
 
-- Verify the experimental raw-HWC IFM tile cache in both native `1x1` and
-  directed `3x3` replay modes.
-- The `1x1` mode uses the compact layout `bank = channel % ROWS`.
-- The `3x3` mode uses a replicated global-K layout so each replay cycle can
-  emit one 18-lane vector without a 9-way read crossbar.
+- Verify the raw-HWC IFM tile cache in both native `1x1` and packed `3x3`
+  replay modes.
+- The `1x1` mode packs 18 consecutive channels across two 72-bit banks.
+- The `3x3` mode stores one nine-byte window per channel and output pixel:
+  even/odd channels select the two banks, and one synchronous read from both
+  banks emits the 18-lane K pass.
+- Exercise the four-stripe storage organization used to infer eight URAMs in
+  the Conv6 hardware build.
 
 Checks:
 
@@ -664,12 +667,35 @@ Current result:
 - `854 pass, 0 fail`; Conv6 tile0 loads `4160` 64-bit raw-HWC beats and
   replays `13312` pixel/pass packets with `raw_stalls=0`.
 
+### `tb_conv_accel_core_axi_lite_axis_stream_conv6_3x3_raw_hwc_ext_tile3_cout16`
+
+Purpose:
+
+- Cover Conv6's bottom spatial tile, where `tile_oy_base=12` and
+  `tile_ofm_h=1`.
+- Verify clamped physical-row loading and bottom padding with the packed
+  72-bit cache layout.
+
+Current result:
+
+- `230 pass, 0 fail`; the tile loads `1664` raw-HWC AXIS beats with
+  `raw_stalls=0`.
+
+Implementation result:
+
+- Vivado `2022.2` full implementation uses `8 URAM`, `45.5 BRAM`,
+  `54214 LUT`, `46902 FF`, and `183 DSP`.
+- Timing closes at `WNS=+0.017 ns`, `TNS=0`, `WHS=+0.010 ns`, `THS=0`;
+  route status is `89791` fully routed nets and zero routing errors.
+- Board tests remain pending because the June 9, 2026 probe returned an empty
+  JTAG chain and no KV260 UART/COM8 was present.
+
 Compatibility checks run with the same RTL:
 
 - `tb_conv_accel_core_axi_lite_axis_stream_conv7_native1x1_raw_hwc_ext_tile0`:
   `13334 pass, 0 fail`
-- `tb_conv_accel_core_axi_lite_axis_stream_r18_c8_b2_layer06_ext_tile4`:
-  `26641 pass, 0 fail`
+- `tb_conv_accel_core_axi_lite_axis_stream_r18_c8_b2_conv5_ext_tail_cout16`:
+  `227 pass, 0 fail`
 
 ## 回归命令
 
@@ -700,3 +726,6 @@ foreach ($top in $tops) {
 - Real layer06 已覆盖一组非 identity `mult/shift/zp` 和 LUT activation；仍未覆盖多层、多组量化参数的随机/扫参组合。
 - 当前没有综合后门级仿真，也没有形式验证。
 - FIFO 深度与实际 DMA/DDR 最大 stall 的关系仍需要结合系统时序和带宽评估。
+- Packed cache 目前只对 Conv6 启用并完成 directed test。其它当前网络的
+  `3x3, stride=1, pad=1` 层均满足容量约束，但启用前仍需逐层 xsim 和
+  板级 bit-exact 验证。

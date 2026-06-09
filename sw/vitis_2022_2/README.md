@@ -295,6 +295,47 @@ conclusion is that first-stage raw-HWC for only Conv7/Conv9 is functionally
 useful but not a major performance lever; the next optimization is
 `comp_tail` reduction rather than expanding raw-HWC to `3x3`.
 
+The follow-up `3x3` raw-HWC cache uses two 72-bit logical banks instead of
+replicating one narrow bank per array lane. For each output pixel and channel,
+the nine kernel positions occupy one 72-bit word; even and odd channels select
+the two banks, so one synchronous read from both banks produces the 18 values
+for a K pass. Each bank is split across four depth stripes. With
+`HWC_CACHE_DEPTH=13312` and `HWC_CACHE_USE_URAM=1`, Vivado infers eight URAMs
+total. The final full-top OOC synthesis at 100 MHz reports `WNS=+1.000 ns`.
+
+The first software opt-in is Conv6 only:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/manual_build_accel_smoke.ps1 `
+  -Mode conv0_conv9_ddr_demo -RawHwcConv6 -TailCyclesOverride 1
+```
+
+For image runs, pass the same options when rebuilding the ELF:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/run_kv260_image_demo.ps1 `
+  -Image <image-path> `
+  -BuildDirName build_system_xck26_kv260_hwc3x3_uram_tail1_2022_2 `
+  -RebuildElf -RawHwcConv6 -TailCyclesOverride 1
+```
+
+The RTL and internal `ACCEL_RAW_HWC_3X3` gate are layer-generic rather than
+Conv6-specific. Other `3x3` layers can use it when
+`tile_pixels * ceil(CIN/2) <= HWC_CACHE_DEPTH`. All current chain tiles satisfy
+this limit: Conv0 needs at most 1664 words, Conv1/5/8 need 6656, and
+Conv2/3/4/6 use the full 13312 words. They remain disabled until each layer has
+dedicated xsim and board bit-exact coverage. This statement currently applies
+to the network's `stride=1, pad=1` 3x3 layers; arbitrary stride/pad requires
+extending the software layer descriptor and raw-row selection first.
+
+The Vivado `2022.2` system build is
+`build_system_xck26_kv260_hwc3x3_uram_tail1_2022_2`. It closes timing at
+`WNS=+0.017 ns`, `WHS=+0.010 ns`, with zero routing errors, and uses
+`8 URAM`, `45.5 BRAM`, `54214 LUT`, `46902 FF`, and `183 DSP`. Board
+programming is still pending: the June 9, 2026 probe found no JTAG targets and
+no KV260 UART/COM8. Reconnect testing must therefore start with a full
+bitstream program rather than `-FastRun`.
+
 The `wgt64` hardware build keeps the same software ABI and prepacked weight
 stream format, but the PL weight loader now writes each 64-bit AXIS beat into
 eight byte banks in one cycle.  Build directory

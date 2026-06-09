@@ -15,6 +15,10 @@ set ifm_fifo_depth 1024
 set ifm_fifo_aw 10
 set psum_fifo_depth 1024
 set psum_fifo_aw 10
+set hwc_cache_aw 12
+set hwc_cache_depth 4096
+set hwc_cache_stripes 1
+set hwc_cache_use_uram 0
 set tail_cycles 0
 set run_name ""
 set out_of_context 0
@@ -57,6 +61,18 @@ for {set i 0} {$i < [llength $argv]} {incr i} {
     } elseif {$arg eq "-psum_fifo_aw"} {
         incr i
         set psum_fifo_aw [lindex $argv $i]
+    } elseif {$arg eq "-hwc_cache_aw"} {
+        incr i
+        set hwc_cache_aw [lindex $argv $i]
+    } elseif {$arg eq "-hwc_cache_depth"} {
+        incr i
+        set hwc_cache_depth [lindex $argv $i]
+    } elseif {$arg eq "-hwc_cache_stripes"} {
+        incr i
+        set hwc_cache_stripes [lindex $argv $i]
+    } elseif {$arg eq "-hwc_cache_use_uram"} {
+        incr i
+        set hwc_cache_use_uram [lindex $argv $i]
     } elseif {$arg eq "-tail_cycles"} {
         incr i
         set tail_cycles [lindex $argv $i]
@@ -136,7 +152,7 @@ if {(1 << $psum_fifo_aw) != $psum_fifo_depth} {
     error "PSUM_FIFO_DEPTH must equal 2^PSUM_FIFO_AW"
 }
 
-puts "=== synth top=$top part=$part rows=$rows cols=$cols k_tile=$k_tile cout_tile=$cout_tile ifm_banks=$ifm_banks ifm_fifo_depth=$ifm_fifo_depth ifm_fifo_aw=$ifm_fifo_aw psum_fifo_depth=$psum_fifo_depth psum_fifo_aw=$psum_fifo_aw tail_cycles=$tail_cycles ooc=$out_of_context ==="
+puts "=== synth top=$top part=$part rows=$rows cols=$cols k_tile=$k_tile cout_tile=$cout_tile ifm_banks=$ifm_banks ifm_fifo_depth=$ifm_fifo_depth ifm_fifo_aw=$ifm_fifo_aw psum_fifo_depth=$psum_fifo_depth psum_fifo_aw=$psum_fifo_aw hwc_cache_aw=$hwc_cache_aw hwc_cache_depth=$hwc_cache_depth hwc_cache_stripes=$hwc_cache_stripes hwc_cache_use_uram=$hwc_cache_use_uram tail_cycles=$tail_cycles ooc=$out_of_context ==="
 read_verilog -sv [abs_files $root $rtl_files]
 
 if {$out_of_context} {
@@ -145,6 +161,9 @@ if {$out_of_context} {
         -generic "COUT_TILE=$cout_tile" -generic "IFM_BANKS=$ifm_banks" \
         -generic "IFM_FIFO_DEPTH=$ifm_fifo_depth" -generic "IFM_FIFO_AW=$ifm_fifo_aw" \
         -generic "PSUM_FIFO_DEPTH=$psum_fifo_depth" -generic "PSUM_FIFO_AW=$psum_fifo_aw" \
+        -generic "HWC_CACHE_AW=$hwc_cache_aw" -generic "HWC_CACHE_DEPTH=$hwc_cache_depth" \
+        -generic "HWC_CACHE_STRIPES=$hwc_cache_stripes" \
+        -generic "HWC_CACHE_USE_URAM=$hwc_cache_use_uram" \
         -generic "TAIL_CYCLES_CONFIG=$tail_cycles"
 } else {
     synth_design -top $top -part $part -flatten_hierarchy rebuilt -directive default \
@@ -152,6 +171,9 @@ if {$out_of_context} {
         -generic "COUT_TILE=$cout_tile" -generic "IFM_BANKS=$ifm_banks" \
         -generic "IFM_FIFO_DEPTH=$ifm_fifo_depth" -generic "IFM_FIFO_AW=$ifm_fifo_aw" \
         -generic "PSUM_FIFO_DEPTH=$psum_fifo_depth" -generic "PSUM_FIFO_AW=$psum_fifo_aw" \
+        -generic "HWC_CACHE_AW=$hwc_cache_aw" -generic "HWC_CACHE_DEPTH=$hwc_cache_depth" \
+        -generic "HWC_CACHE_STRIPES=$hwc_cache_stripes" \
+        -generic "HWC_CACHE_USE_URAM=$hwc_cache_use_uram" \
         -generic "TAIL_CYCLES_CONFIG=$tail_cycles"
 }
 

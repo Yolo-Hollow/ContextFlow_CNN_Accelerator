@@ -46,7 +46,10 @@ module tb_axis_hwc_tile_cache;
         .ROWS(ROWS),
         .AXIS_W(AXIS_W),
         .KEEP_W(KEEP_W),
-        .CACHE_AW(CACHE_AW)
+        .CACHE_AW(CACHE_AW),
+        .CACHE_DEPTH(64),
+        .CACHE_STRIPES(4),
+        .CACHE_USE_URAM(1)
     ) dut (
         .clk(clk),
         .rst(rst),
@@ -318,10 +321,6 @@ module tb_axis_hwc_tile_cache;
             fail = fail + 1;
         end else pass = pass + 1;
 
-        @(negedge clk);
-        stream_reset = 1'b1;
-        @(negedge clk);
-        stream_reset = 1'b0;
         num_pixels = 16'd4;
         fm_h = 9'd4;
         fm_w = 9'd4;
@@ -334,9 +333,14 @@ module tb_axis_hwc_tile_cache;
         k_total = 14'd36;
         pass_base_k = 14'd0;
         input_zero_point = 8'd20;
+        @(negedge clk);
+        stream_reset = 1'b1;
+        @(negedge clk);
+        stream_reset = 1'b0;
 
         send_tile3x3();
-        repeat (10) @(negedge clk);
+        wait(completed_packets == 32'd1);
+        @(negedge clk);
 
         if (completed_packets !== 32'd1) begin
             $display("[FAIL] 3x3 completed_packets got=%0d exp=1", completed_packets);

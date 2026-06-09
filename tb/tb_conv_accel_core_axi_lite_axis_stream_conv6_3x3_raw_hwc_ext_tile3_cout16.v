@@ -1,6 +1,6 @@
 `timescale 1ns / 1ps
 
-`define TB_CONV_ACCEL_CORE_MODULE tb_conv_accel_core_axi_lite_axis_stream_conv6_3x3_raw_hwc_ext_tile0_cout16
+`define TB_CONV_ACCEL_CORE_MODULE tb_conv_accel_core_axi_lite_axis_stream_conv6_3x3_raw_hwc_ext_tile3_cout16
 `define TB_CONV_ACCEL_CORE_USE_AXI_LITE
 `define TB_CONV_ACCEL_CORE_USE_AXIS_STREAM
 `define TB_CONV_ACCEL_CORE_BATCH_STREAM
@@ -19,9 +19,9 @@
 `define TB_CONV_ACCEL_CORE_PAD 1
 `define TB_CONV_ACCEL_CORE_STRIDE 1
 `define TB_CONV_ACCEL_CORE_INPUT_ZP 8'd19
-`define TB_CONV_ACCEL_CORE_TILE_OY_BASE 0
-`define TB_CONV_ACCEL_CORE_TILE_OFM_H 4
-`define TB_CONV_ACCEL_CORE_TILE_PIXEL_BASE 0
+`define TB_CONV_ACCEL_CORE_TILE_OY_BASE 12
+`define TB_CONV_ACCEL_CORE_TILE_OFM_H 1
+`define TB_CONV_ACCEL_CORE_TILE_PIXEL_BASE 156
 `define TB_CONV_ACCEL_CORE_TILE_COUNT 1
 `define TB_CONV_ACCEL_CORE_IFM_D 64
 `define TB_CONV_ACCEL_CORE_IFM_AW 6
@@ -44,7 +44,7 @@
 `define TB_CONV_ACCEL_CORE_BIAS_MEM "D:/MPSoC/python_prj/rtl_golden/facemask_chain_conv0_conv6_rtl/06_head_conv6_3x3/xsim_mem_cout16/bias_i32.mem"
 `define TB_CONV_ACCEL_CORE_ACT_LUT_MEM "D:/MPSoC/python_prj/rtl_golden/facemask_chain_conv0_conv6_rtl/06_head_conv6_3x3/xsim_mem_cout16/activation_lut_u8.mem"
 `define TB_CONV_ACCEL_CORE_GOLDEN_MEM "D:/MPSoC/python_prj/rtl_golden/facemask_chain_conv0_conv6_rtl/06_head_conv6_3x3/xsim_mem_cout16/golden_ofm_u8_hwc.mem"
-`define TB_CONV_ACCEL_CORE_TIMEOUT 30000000
+`define TB_CONV_ACCEL_CORE_TIMEOUT 12000000
 `define TB_CONV_ACCEL_CORE_PROGRESS_PRINT
 `define TB_CONV_ACCEL_CORE_PROGRESS_INTERVAL 50000
 

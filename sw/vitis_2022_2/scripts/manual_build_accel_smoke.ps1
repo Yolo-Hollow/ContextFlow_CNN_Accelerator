@@ -2,6 +2,7 @@ param(
     [ValidateSet("r18_c8", "conv0_crop_pool", "conv0_crop_pool_tiles", "layer06_tile4", "layer06_tiles", "layer06_pool_tiles", "conv4_pool_tiles", "conv3_conv4_chain", "conv4_conv5_chain", "conv0_conv4_chain", "conv0_conv5_chain", "conv0_conv6_chain", "conv0_conv7_chain", "conv0_conv8_chain", "conv0_conv9_chain", "conv0_conv9_batch_chain", "conv0_conv9_ddr_demo")]
     [string]$Mode = "r18_c8",
     [switch]$RawHwcIfm,
+    [switch]$RawHwcConv6,
     [switch]$TilePerfTrace,
     [int]$TailCyclesOverride = 0
 )
@@ -261,6 +262,10 @@ if ($Mode -eq "conv0_conv9_batch_chain" -or $Mode -eq "conv0_conv9_ddr_demo") {
     $Defines += "-DACCEL_PREPACKED_WEIGHT=1"
     if ($RawHwcIfm) {
         $Defines += "-DACCEL_RAW_HWC_IFM=1"
+    }
+    if ($RawHwcConv6) {
+        $Defines += "-DACCEL_RAW_HWC_3X3=1"
+        $Defines += "-DACCEL_HWC_CACHE_DEPTH=13312"
     }
 }
     if ($Mode -eq "conv0_conv9_ddr_demo") {

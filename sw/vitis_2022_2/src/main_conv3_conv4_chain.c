@@ -51,6 +51,15 @@
 #ifndef ACCEL_TAIL_CYCLES_OVERRIDE
 #define ACCEL_TAIL_CYCLES_OVERRIDE 0
 #endif
+#ifndef ACCEL_RAW_HWC_IFM
+#define ACCEL_RAW_HWC_IFM 0
+#endif
+#ifndef ACCEL_RAW_HWC_3X3
+#define ACCEL_RAW_HWC_3X3 0
+#endif
+#ifndef ACCEL_HWC_CACHE_DEPTH
+#define ACCEL_HWC_CACHE_DEPTH 4096U
+#endif
 
 #define UART0_BASE            0xFF000000U
 #define UART1_BASE            0xFF010000U
@@ -173,6 +182,7 @@ typedef struct {
     uint32_t tile_count;
     uint32_t dynamic_tile_ofm_h;
     uint32_t kernel_1x1;
+    uint32_t raw_hwc_mode;
 } chain_layer_t;
 
 static uint64_t bias_buf[CHAIN_COUT_TILE / 2U] __attribute__((aligned(64)));
@@ -460,6 +470,8 @@ static chain_layer_t conv6_layer = {
     conv6_tiles,
     4U,
     0U,
+    0U,
+    1U,
 };
 #endif
 
@@ -482,6 +494,7 @@ static chain_layer_t conv7_layer = {
     4U,
     0U,
     ACCEL_NATIVE_1X1,
+    0U,
 };
 #endif
 
@@ -501,6 +514,8 @@ static chain_layer_t conv8_layer = {
     feature_buffer0,
     conv8_tiles,
     4U,
+    0U,
+    0U,
     0U,
 };
 #endif
@@ -524,6 +539,7 @@ static chain_layer_t conv9_layer = {
     4U,
     0U,
     ACCEL_NATIVE_1X1,
+    0U,
 };
 #endif
 
@@ -927,15 +943,26 @@ static int wait_ifm_request_advance(uint32_t serviced_status)
     return -1;
 }
 
+static int layer_uses_raw_hwc(const chain_layer_t *layer)
+{
+    if (!ACCEL_BATCH_STREAM) {
+        return 0;
+    }
+    if (ACCEL_RAW_HWC_IFM && layer->kernel_1x1) {
+        return 1;
+    }
+    return ACCEL_RAW_HWC_3X3 && layer->raw_hwc_mode;
+}
+
 static uint32_t expected_ifm_services_for_tile(const chain_layer_t *layer, const chain_tile_t *tile)
 {
-    if (layer->kernel_1x1) {
-#if ACCEL_RAW_HWC_IFM
+    if (layer_uses_raw_hwc(layer)) {
         (void)tile;
         return 1U;
-#else
+    }
+
+    if (layer->kernel_1x1) {
         return layer->k_passes * layer->cout_blocks;
-#endif
     }
 
     int first_fy = (int)tile->tile_oy_base - 1;
@@ -1042,24 +1069,54 @@ static int pack_batch_ifm_stream(
     uint32_t packets;
     uint32_t total_bytes;
 
-    if (layer->kernel_1x1) {
-#if ACCEL_RAW_HWC_IFM
+    if (layer_uses_raw_hwc(layer)) {
+        const uint8_t *src;
+        uint32_t cache_words_per_pixel =
+            layer->kernel_1x1 ?
+            ((layer->cin + CHAIN_ROWS - 1U) / CHAIN_ROWS) :
+            ((layer->cin + 1U) / 2U);
+        uint32_t required_cache_words =
+            tile->tile_pixels * cache_words_per_pixel;
+
         packets = 1U;
-        total_bytes = tile->tile_pixels * layer->cin;
+        if (required_cache_words > ACCEL_HWC_CACHE_DEPTH) {
+            xil_printf(
+                "%s raw HWC cache overflow words=%lu cap=%lu\r\n",
+                layer->name, (unsigned long)required_cache_words,
+                (unsigned long)ACCEL_HWC_CACHE_DEPTH);
+            return -1;
+        }
+        if (layer->kernel_1x1) {
+            first_fy = (int)tile->tile_oy_base;
+            last_fy = first_fy + (int)tile->tile_ofm_h - 1;
+        } else {
+            first_fy = (int)tile->tile_oy_base - 1;
+            last_fy = (int)tile->tile_oy_base + (int)tile->tile_ofm_h;
+            if (first_fy < 0) {
+                first_fy = 0;
+            }
+            if (last_fy >= (int)layer->fm_h) {
+                last_fy = (int)layer->fm_h - 1;
+            }
+        }
+        total_bytes =
+            (uint32_t)(last_fy - first_fy + 1) * layer->fm_w * layer->cin;
         if (total_bytes > BATCH_IFM_CAPACITY) {
             xil_printf("%s raw HWC IFM overflow bytes=%lu cap=%lu\r\n",
                        layer->name, (unsigned long)total_bytes,
                        (unsigned long)BATCH_IFM_CAPACITY);
             return -1;
         }
-        const uint8_t *src =
-            layer->ifm_u8 + tile->tile_oy_base * layer->fm_w * layer->cin;
+        src = layer->ifm_u8 +
+              (uint32_t)first_fy * layer->fm_w * layer->cin;
         memcpy((void *)(UINTPTR)address, src, total_bytes);
         stream->words = (uint64_t *)(UINTPTR)address;
         stream->bytes = total_bytes;
         stream->packets = packets;
         return 0;
-#else
+    }
+
+    if (layer->kernel_1x1) {
         packets = expected_ifm_services_for_tile(layer, tile);
         total_bytes = packets * tile->tile_pixels * 3U * sizeof(uint64_t);
         if (total_bytes > BATCH_IFM_CAPACITY) {
@@ -1103,7 +1160,6 @@ static int pack_batch_ifm_stream(
         stream->bytes = total_bytes;
         stream->packets = packets;
         return 0;
-#endif
     }
 
     if (first_fy < 0) {
@@ -2041,7 +2097,7 @@ static int configure_layer(const chain_layer_t *layer)
         ACCEL_STREAM_CFG,
         ACCEL_BATCH_STREAM ?
             (ACCEL_STREAM_CFG_BATCH |
-             ((ACCEL_RAW_HWC_IFM && layer->kernel_1x1) ?
+             (layer_uses_raw_hwc(layer) ?
               ACCEL_STREAM_CFG_RAW_HWC : 0U)) :
             0U);
     if (program_quant_tile(layer) != 0) {

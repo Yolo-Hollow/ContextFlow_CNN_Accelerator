@@ -18,6 +18,10 @@ set ifm_fifo_depth 1024
 set ifm_fifo_aw 10
 set psum_fifo_depth 1024
 set psum_fifo_aw 10
+set hwc_cache_aw 12
+set hwc_cache_depth 4096
+set hwc_cache_stripes 1
+set hwc_cache_use_uram 0
 set tail_cycles 0
 set jobs 8
 set board_part ""
@@ -71,6 +75,18 @@ for {set i 0} {$i < [llength $argv]} {incr i} {
     } elseif {$arg eq "-psum_fifo_aw"} {
         incr i
         set psum_fifo_aw [lindex $argv $i]
+    } elseif {$arg eq "-hwc_cache_aw"} {
+        incr i
+        set hwc_cache_aw [lindex $argv $i]
+    } elseif {$arg eq "-hwc_cache_depth"} {
+        incr i
+        set hwc_cache_depth [lindex $argv $i]
+    } elseif {$arg eq "-hwc_cache_stripes"} {
+        incr i
+        set hwc_cache_stripes [lindex $argv $i]
+    } elseif {$arg eq "-hwc_cache_use_uram"} {
+        incr i
+        set hwc_cache_use_uram [lindex $argv $i]
     } elseif {$arg eq "-tail_cycles"} {
         incr i
         set tail_cycles [lindex $argv $i]
@@ -250,6 +266,10 @@ set_property -dict [list \
     CONFIG.IFM_FIFO_AW $ifm_fifo_aw \
     CONFIG.PSUM_FIFO_DEPTH $psum_fifo_depth \
     CONFIG.PSUM_FIFO_AW $psum_fifo_aw \
+    CONFIG.HWC_CACHE_AW $hwc_cache_aw \
+    CONFIG.HWC_CACHE_DEPTH $hwc_cache_depth \
+    CONFIG.HWC_CACHE_STRIPES $hwc_cache_stripes \
+    CONFIG.HWC_CACHE_USE_URAM $hwc_cache_use_uram \
     CONFIG.TAIL_CYCLES_CONFIG $tail_cycles \
 ] [get_bd_cells accel]
 

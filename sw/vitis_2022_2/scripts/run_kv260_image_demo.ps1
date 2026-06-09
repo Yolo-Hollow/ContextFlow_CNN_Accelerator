@@ -6,7 +6,10 @@ param(
     [string]$BuildDirName = "build_system_xck26_kv260_linebuffix",
     [string]$OutputDir,
     [switch]$FastRun,
-    [switch]$RebuildElf
+    [switch]$RebuildElf,
+    [switch]$RawHwcIfm,
+    [switch]$RawHwcConv6,
+    [int]$TailCyclesOverride = 0
 )
 
 $ErrorActionPreference = "Stop"
@@ -44,7 +47,17 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 if ($RebuildElf -or !(Test-Path $Elf)) {
-    & $BuildScript -Mode conv0_conv9_ddr_demo
+    $BuildArgs = @{
+        Mode = "conv0_conv9_ddr_demo"
+        TailCyclesOverride = $TailCyclesOverride
+    }
+    if ($RawHwcIfm) {
+        $BuildArgs.RawHwcIfm = $true
+    }
+    if ($RawHwcConv6) {
+        $BuildArgs.RawHwcConv6 = $true
+    }
+    & $BuildScript @BuildArgs
     if ($LASTEXITCODE -ne 0) {
         throw "DDR demo ELF build failed"
     }
