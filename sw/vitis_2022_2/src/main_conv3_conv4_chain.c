@@ -48,6 +48,10 @@
 #include "xil_types.h"
 #include "xtime_l.h"
 
+#ifndef ACCEL_TAIL_CYCLES_OVERRIDE
+#define ACCEL_TAIL_CYCLES_OVERRIDE 0
+#endif
+
 #define UART0_BASE            0xFF000000U
 #define UART1_BASE            0xFF010000U
 #define UART_SR_OFFSET        0x2CU
@@ -2029,6 +2033,9 @@ static int configure_layer(const chain_layer_t *layer)
     wr32(ACCEL_BASE_ADDR, ACCEL_ACT_CFG, 2U);
     wr32(ACCEL_BASE_ADDR, ACCEL_IFM_ZP, layer->input_zero_point);
     wr32(ACCEL_BASE_ADDR, ACCEL_POOL_CFG, (layer->pool_stride << 2) | layer->pool_enable);
+    if (ACCEL_TAIL_CYCLES_OVERRIDE != 0) {
+        wr32(ACCEL_BASE_ADDR, ACCEL_TAIL_CONFIG, ACCEL_TAIL_CYCLES_OVERRIDE);
+    }
     wr32(
         ACCEL_BASE_ADDR,
         ACCEL_STREAM_CFG,
