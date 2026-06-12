@@ -2,7 +2,11 @@ param(
     [ValidateSet("r18_c8", "conv0_crop_pool", "conv0_crop_pool_tiles", "layer06_tile4", "layer06_tiles", "layer06_pool_tiles", "conv4_pool_tiles", "conv3_conv4_chain", "conv4_conv5_chain", "conv0_conv4_chain", "conv0_conv5_chain", "conv0_conv6_chain", "conv0_conv7_chain", "conv0_conv8_chain", "conv0_conv9_chain", "conv0_conv9_batch_chain", "conv0_conv9_ddr_demo")]
     [string]$Mode = "r18_c8",
     [switch]$RawHwcIfm,
+    [switch]$RawHwcConv4,
+    [switch]$RawHwcConv5,
     [switch]$RawHwcConv6,
+    [switch]$RawHwcConv8,
+    [switch]$RawHwc3x3All,
     [switch]$TilePerfTrace,
     [int]$TailCyclesOverride = 0
 )
@@ -263,9 +267,25 @@ if ($Mode -eq "conv0_conv9_batch_chain" -or $Mode -eq "conv0_conv9_ddr_demo") {
     if ($RawHwcIfm) {
         $Defines += "-DACCEL_RAW_HWC_IFM=1"
     }
-    if ($RawHwcConv6) {
+    $EnableRawHwcConv4 = $RawHwcConv4 -or $RawHwc3x3All
+    $EnableRawHwcConv5 = $RawHwcConv5 -or $RawHwc3x3All
+    $EnableRawHwcConv6 = $RawHwcConv6 -or $RawHwc3x3All
+    $EnableRawHwcConv8 = $RawHwcConv8 -or $RawHwc3x3All
+    if ($EnableRawHwcConv4 -or $EnableRawHwcConv5 -or $EnableRawHwcConv6 -or $EnableRawHwcConv8) {
         $Defines += "-DACCEL_RAW_HWC_3X3=1"
         $Defines += "-DACCEL_HWC_CACHE_DEPTH=13312"
+    }
+    if ($EnableRawHwcConv4) {
+        $Defines += "-DACCEL_RAW_HWC_CONV4=1"
+    }
+    if ($EnableRawHwcConv5) {
+        $Defines += "-DACCEL_RAW_HWC_CONV5=1"
+    }
+    if ($EnableRawHwcConv6) {
+        $Defines += "-DACCEL_RAW_HWC_CONV6=1"
+    }
+    if ($EnableRawHwcConv8) {
+        $Defines += "-DACCEL_RAW_HWC_CONV8=1"
     }
 }
     if ($Mode -eq "conv0_conv9_ddr_demo") {
@@ -328,3 +348,28 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Host "Built $Elf"
+
+if ($Mode -eq "conv0_conv9_batch_chain" -or $Mode -eq "conv0_conv9_ddr_demo") {
+    $VariantTags = @()
+    if ($RawHwcIfm) {
+        $VariantTags += "raw_hwc_1x1"
+    }
+    if ($RawHwcConv4 -or $RawHwc3x3All) {
+        $VariantTags += "conv4"
+    }
+    if ($RawHwcConv5 -or $RawHwc3x3All) {
+        $VariantTags += "conv5"
+    }
+    if ($RawHwcConv6 -or $RawHwc3x3All) {
+        $VariantTags += "conv6"
+    }
+    if ($RawHwcConv8 -or $RawHwc3x3All) {
+        $VariantTags += "conv8"
+    }
+    if ($VariantTags.Count -gt 0) {
+        $VariantName = "raw_hwc_" + ($VariantTags -join "_")
+        $VariantElf = Join-Path $ManualBuildDir "conv_accel_${Mode}_${VariantName}_smoke.elf"
+        Copy-Item -Path $Elf -Destination $VariantElf -Force
+        Write-Host "Built variant alias $VariantElf"
+    }
+}

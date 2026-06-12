@@ -20,6 +20,12 @@ param(
     [switch]$RunConv0Conv9BatchChain,
     [switch]$RunConv0Conv9DdrDemo,
     [string]$InputPackage,
+    [switch]$RawHwcIfm,
+    [switch]$RawHwcConv4,
+    [switch]$RawHwcConv5,
+    [switch]$RawHwcConv6,
+    [switch]$RawHwcConv8,
+    [switch]$RawHwc3x3All,
     [switch]$RunDeterministic,
     [string]$BuildDirName = "build_system_xck26_kv260"
 )
@@ -144,6 +150,33 @@ function Run-Smoke($Name, $Elf, [bool]$ProgramBit, [bool]$UseFastRun, $DataFile 
     Write-Host "$Name serial log: $($capture.Log)"
 }
 
+function Get-RawHwcVariantElf($Mode) {
+    $variantTags = @()
+    if ($RawHwcIfm) {
+        $variantTags += "raw_hwc_1x1"
+    }
+    if ($RawHwcConv4 -or $RawHwc3x3All) {
+        $variantTags += "conv4"
+    }
+    if ($RawHwcConv5 -or $RawHwc3x3All) {
+        $variantTags += "conv5"
+    }
+    if ($RawHwcConv6 -or $RawHwc3x3All) {
+        $variantTags += "conv6"
+    }
+    if ($RawHwcConv8 -or $RawHwc3x3All) {
+        $variantTags += "conv8"
+    }
+    if ($variantTags.Count -eq 0) {
+        if ($Mode -eq "conv0_conv9_ddr_demo") {
+            return $Conv0Conv9DdrDemoElf
+        }
+        return $Conv0Conv9BatchChainElf
+    }
+    $variantName = "raw_hwc_" + ($variantTags -join "_")
+    return (Join-Path $Root "build_vitis_2022_2\conv_accel_r18_c16_smoke\manual_build\conv_accel_${Mode}_${variantName}_smoke.elf")
+}
+
 Ensure-Tool $Xsct "XSCT"
 Ensure-Tool $HwServer "hw_server"
 Ensure-Tool $DownloadTcl "download script"
@@ -160,7 +193,7 @@ if ($RunConv0Conv9DdrDemo) {
     if (!$InputPackage) {
         throw "-InputPackage is required with -RunConv0Conv9DdrDemo"
     }
-    Run-Smoke "conv0_conv9_ddr_demo" $Conv0Conv9DdrDemoElf (!$SkipBit -and !$FastRun) $FastRun $InputPackage
+    Run-Smoke "conv0_conv9_ddr_demo" (Get-RawHwcVariantElf "conv0_conv9_ddr_demo") (!$SkipBit -and !$FastRun) $FastRun $InputPackage
     & $Xsct $ProbeTcl | Tee-Object -FilePath (Join-Path $LogDir "$Stamp`_pl_probe_after_conv0_conv9_ddr_demo.log")
 } elseif ($RunConv0Conv9BatchChain -or $RunConv0Conv9Chain) {
     Ensure-Tool $YoloDecodeScript "YOLO decode reference"
@@ -171,7 +204,7 @@ if ($RunConv0Conv9DdrDemo) {
         throw "Failed to generate Conv9 decode golden"
     }
     $chainName = if ($RunConv0Conv9BatchChain) { "conv0_conv9_batch_chain" } else { "conv0_conv9_chain" }
-    $chainElf = if ($RunConv0Conv9BatchChain) { $Conv0Conv9BatchChainElf } else { $Conv0Conv9ChainElf }
+    $chainElf = if ($RunConv0Conv9BatchChain) { Get-RawHwcVariantElf "conv0_conv9_batch_chain" } else { $Conv0Conv9ChainElf }
     Run-Smoke $chainName $chainElf (!$SkipBit -and !$FastRun) $FastRun
     & $Python $YoloCompareScript $script:LastSmokeLog $YoloDecodeGolden
     if ($LASTEXITCODE -ne 0) {

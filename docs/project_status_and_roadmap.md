@@ -1,6 +1,6 @@
 # Systolic Accelerator 当前状态与后续计划
 
-> 最后更新：2026-06-07
+> 最后更新：2026-06-12
 
 本文档作为当前项目的主入口。旧版 `accelerator_systolic.md` 保留早期设计记录和阶段性实验过程；本文档只记录当前 RTL 状态、已验证内容、已知限制和后续路线。
 
@@ -447,3 +447,27 @@ D:/MPSoC/python_prj
 - Independent build directory: `build_system_xck26_kv260_hwc3x3_uram_tail1_2022_2`, linked to the successful short-path Vivado 2022.2 build. With `TAIL_CYCLES_CONFIG=1`, full implementation closes at `WNS=+0.017 ns`, `TNS=0`, `WHS=+0.010 ns`, and `THS=0`, with `89791` fully routed nets and zero routing errors. Final resources are `54214 LUT`, `46902 FF`, `45.5 BRAM`, `8 URAM`, and `183 DSP`.
 - Final artifact hashes are: bitstream `A172432642A3D102AA9355ECC939D249CB79C885B969E07200FB2CCB75BBD591`; XSA `0BD7E3C31E0FDD19FB65F8AC768776D52829F7B4C010B9EC049CC51A74BC8E77`.
 - Board validation is pending external connectivity. On June 9, 2026, XSCT reported an empty JTAG chain and Windows exposed no KV260 UART/COM8, so the new bitstream could not be programmed. The first reconnect run must use full programming, not `-FastRun`, then execute raw Conv6 batch-chain, prepacked A/B, and two DDR images.
+
+## 16. 2026-06-12 3x3 raw-HWC cache expansion to Conv5/Conv8
+
+- Extended the bare-metal raw-HWC selection from Conv6-only to explicit per-layer switches: `-RawHwcConv5`, `-RawHwcConv6`, `-RawHwcConv8`, plus `-RawHwc3x3All` for the currently enabled backend 3x3 layers. Default builds still leave `raw_hwc_mode=0`, so the prepacked path remains the fallback.
+- `manual_build_accel_smoke.ps1` now emits variant ELF aliases such as `conv_accel_conv0_conv9_batch_chain_raw_hwc_conv6_conv8_smoke.elf` and `conv_accel_conv0_conv9_batch_chain_raw_hwc_conv5_conv6_conv8_smoke.elf`. `run_kv260_smoke_sequence.ps1` accepts the same raw-HWC switches and downloads the matching alias for batch-chain or DDR-demo runs.
+- Added lightweight xsim wrappers for Conv5 and Conv8 raw-HWC tile0/tile3 with `COUT_TOTAL=16`. `tb/make_single_scale_xsim_mem.py` gained `--cout-limit` so these small tests emit correctly sliced KCO weights, bias, and HWC golden tensors instead of truncating a full-COUT stream in the wrong order.
+- Vivado/xsim `2022.2` validation passed for the four new tests: `tb_conv_accel_core_axi_lite_axis_stream_conv8_3x3_raw_hwc_ext_tile0_cout16`, `...conv8...tile3...`, `...conv5...tile0...`, and `...conv5...tile3...`. The first failed attempt exposed the missing `--cout-limit` support rather than a cache datapath error; after regenerating sliced mem files all four were bit-exact.
+- Board validation passed with the existing `build_system_xck26_kv260_hwc3x3_uram_tail1_2022_2` bitstream and `-FastRun` ELF swaps. `Conv6+Conv8` raw-HWC passed Conv0->Conv9 bit-exact and YOLO decode golden comparison; log: `board_smoke_logs/20260612_195828_conv0_conv9_batch_chain_COM8.log`. `Conv5+Conv6+Conv8` raw-HWC also passed; log: `board_smoke_logs/20260612_195954_conv0_conv9_batch_chain_COM8.log`.
+- A fixed-image DDR demo with `Conv5+Conv6+Conv8` raw-HWC completed successfully and kept the same detection (`with_mask`, score `0.357321`); log: `board_smoke_logs/20260612_200200_conv0_conv9_ddr_demo_COM8.log`. The ten-layer `PERF total_us` sum was `544.118 ms`.
+- Layer-level effect in the bit-exact smoke is as expected: Conv5 IFM pack+DMA dropped from about `3.827 ms` to `0.031 ms`, Conv8 from about `3.819 ms` to `0.033 ms`, and both report `VECTORSTAT packets=4`, `beats=7904`, `fifo_stall_cycles=0`. Conv6 remains raw-HWC with `packets=4`, `beats=15808`, `fifo_stall_cycles=0`.
+- The main remaining backend-layer costs are not software IFM packing anymore. In the DDR demo, Conv5 and Conv8 are about `59.17 ms` each and Conv6 about `222.07 ms`; their `control_us` values still dominate because PL feeder/replay, weight, compute, and drain stages remain serialized inside each tile. The next optimization target should therefore be PL-side overlap/replay/drain scheduling rather than more A53 packing work for these three layers.
+
+## 17. 2026-06-12 Conv4 raw-HWC cache validation and expansion stop point
+
+- Added a verified `-RawHwcConv4` path for the existing `build_system_xck26_kv260_hwc3x3_uram_tail1_2022_2` bitstream. The switch is non-default and can be combined with `-RawHwcConv5`, `-RawHwcConv6`, and `-RawHwcConv8`. `-RawHwc3x3All` now covers the currently validated backend set `Conv4/5/6/8`; Conv3 and earlier layers remain disabled until their own validation is complete.
+- Conv4 uses the full-chain dynamic tile shape, not the old standalone `conv4_tiles[7]` shape. The active schedule is four pre-pool conv tiles with `tile_ofm_h=8,8,8,2`; the largest tile requires `26*8*ceil(128/2)=13312` cache words, exactly matching the current HWC cache capacity.
+- `tb/make_single_scale_xsim_mem.py` now reshapes golden output using `shape.final_ofm_hwc` when present. This fixes pooled layers such as Conv4, whose golden is `13x13x256` even though the conv output shape is `26x26x256`.
+- Added Conv4 raw-HWC xsim wrappers for the largest tile and bottom tile: `tb_conv_accel_core_axi_lite_axis_stream_conv4_3x3_raw_hwc_ext_tile0_cout16` and `...tile3_cout16`. Both passed under Vivado/xsim `2022.2`: tile0 `854 pass, 0 fail`, tile3 `230 pass, 0 fail`.
+- A first xsim attempt used an IFM FIFO depth of `128` and stalled at replay pixel `128`. The actual board build has `IFM_FIFO_DEPTH=1024`, and the Conv4 wrapper was corrected to `256` for the lightweight test. This was a testbench capacity error, not a cache datapath error.
+- Board bit-exact validation passed with `Conv4+Conv5+Conv6+Conv8` raw-HWC enabled. Log: `build_system_xck26_kv260_hwc3x3_uram_tail1_2022_2/board_smoke_logs/20260612_204228_conv0_conv9_batch_chain_COM8.log`. Conv9 decode still matches the RTL-chain golden detection.
+- Fixed-image DDR demo also passed with unchanged detection (`with_mask`, score `0.357321`). Log: `build_system_xck26_kv260_hwc3x3_uram_tail1_2022_2/board_smoke_logs/20260612_204403_conv0_conv9_ddr_demo_COM8.log`. Ten-layer `PERF total_us` sum was `548.925 ms`.
+- Conv4 software IFM work was eliminated as intended: baseline `Conv5/6/8` raw run had Conv4 `ifm_pack_us=2602`, `ifm_dma_us=421`; the Conv4 raw run reduced this to `ifm_pack_us=42`, `ifm_dma_us=12`. However, Conv4 `control_us` increased from `32662` to `41107`, and layer total rose from `37.201 ms` to `42.008 ms`. End-to-end latency therefore worsened slightly from `544.118 ms` to `548.925 ms`.
+- A Conv3 raw-HWC attempt was started but not kept in the formal switches. The lightweight xsim progressed through cache load and the first K pass (`compute_fire=416`) but then stopped making progress in the compute stage. Because this path was not bit-exact validated, the Conv3 switch and diagnostic wrapper were removed from the committed surface.
+- Current conclusion: raw-HWC cache is functionally extendable beyond Conv6, and Conv4/5/6/8 are now verified. But expanding to earlier pooled 3x3 layers is not automatically a performance win because PL replay/control cost can exceed the A53 packing saved. The next high-value direction is to reduce or overlap PL feeder/replay/compute/drain stages before enabling Conv3/2/1/0.

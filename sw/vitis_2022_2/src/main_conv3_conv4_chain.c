@@ -57,6 +57,18 @@
 #ifndef ACCEL_RAW_HWC_3X3
 #define ACCEL_RAW_HWC_3X3 0
 #endif
+#ifndef ACCEL_RAW_HWC_CONV4
+#define ACCEL_RAW_HWC_CONV4 0
+#endif
+#ifndef ACCEL_RAW_HWC_CONV5
+#define ACCEL_RAW_HWC_CONV5 0
+#endif
+#ifndef ACCEL_RAW_HWC_CONV6
+#define ACCEL_RAW_HWC_CONV6 0
+#endif
+#ifndef ACCEL_RAW_HWC_CONV8
+#define ACCEL_RAW_HWC_CONV8 0
+#endif
 #ifndef ACCEL_HWC_CACHE_DEPTH
 #define ACCEL_HWC_CACHE_DEPTH 4096U
 #endif
@@ -431,6 +443,8 @@ static chain_layer_t conv4_layer = {
     0,
     4U,
     8U,
+    0U,
+    ACCEL_RAW_HWC_CONV4,
 };
 
 #if ACCEL_CHAIN_CONV0_CONV5 || ACCEL_CHAIN_CONV0_CONV6 || ACCEL_CHAIN_CONV0_CONV7 || ACCEL_CHAIN_CONV0_CONV8 || ACCEL_CHAIN_CONV0_CONV9
@@ -450,6 +464,8 @@ static chain_layer_t conv5_layer = {
     conv5_tiles,
     4U,
     0U,
+    0U,
+    ACCEL_RAW_HWC_CONV5,
 };
 #endif
 
@@ -471,7 +487,7 @@ static chain_layer_t conv6_layer = {
     4U,
     0U,
     0U,
-    1U,
+    ACCEL_RAW_HWC_CONV6,
 };
 #endif
 
@@ -516,7 +532,7 @@ static chain_layer_t conv8_layer = {
     4U,
     0U,
     0U,
-    0U,
+    ACCEL_RAW_HWC_CONV8,
 };
 #endif
 
