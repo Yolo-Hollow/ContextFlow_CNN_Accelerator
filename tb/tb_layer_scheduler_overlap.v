@@ -74,6 +74,28 @@ module tb_layer_scheduler_overlap;
     end
 
     initial begin
+        run_overlap_case(0);
+        run_overlap_case(1);
+
+        $display("=== tb_layer_scheduler_overlap: %0d fail ===", fail);
+        if (fail != 0) $fatal(1);
+        $finish;
+    end
+
+    task run_overlap_case;
+        input feeder_done_before_compute;
+        begin
+        rst = 1'b1;
+        start = 1'b0;
+        bias_load_done = 1'b0;
+        weight_load_done = 1'b0;
+        feeder_done = 1'b0;
+        feeder_compute_ready = 1'b0;
+        compute_done = 1'b0;
+        psum_drain_done = 1'b0;
+        compute_before_feeder_done = 0;
+        drain_before_feeder_done = 0;
+        feeder_done_seen = 1'b0;
         repeat (3) @(negedge clk);
         rst = 1'b0;
         @(negedge clk);
@@ -100,15 +122,27 @@ module tb_layer_scheduler_overlap;
         wait(compute_start);
         @(negedge clk);
         feeder_compute_ready = 1'b0;
-        repeat (2) @(negedge clk);
-        compute_done = 1'b1;
-        @(negedge clk);
-        compute_done = 1'b0;
 
-        repeat (3) @(negedge clk);
-        feeder_done = 1'b1;
-        @(negedge clk);
-        feeder_done = 1'b0;
+        if (feeder_done_before_compute) begin
+            repeat (1) @(negedge clk);
+            feeder_done = 1'b1;
+            @(negedge clk);
+            feeder_done = 1'b0;
+            repeat (3) @(negedge clk);
+            compute_done = 1'b1;
+            @(negedge clk);
+            compute_done = 1'b0;
+        end else begin
+            repeat (2) @(negedge clk);
+            compute_done = 1'b1;
+            @(negedge clk);
+            compute_done = 1'b0;
+
+            repeat (3) @(negedge clk);
+            feeder_done = 1'b1;
+            @(negedge clk);
+            feeder_done = 1'b0;
+        end
 
         wait(psum_drain_start);
         @(negedge clk);
@@ -134,13 +168,12 @@ module tb_layer_scheduler_overlap;
             fail = fail + 1;
         end
 
-        $display("=== tb_layer_scheduler_overlap: %0d fail ===", fail);
-        if (fail != 0) $fatal(1);
-        $finish;
-    end
+        $display("[INFO] overlap case feeder_done_before_compute=%0d passed", feeder_done_before_compute);
+        end
+    endtask
 
     initial begin
-        repeat (200) @(negedge clk);
+        repeat (400) @(negedge clk);
         $display("[FAIL] timeout cycle=%0d busy=%0d done=%0d compute_before_done=%0d drain_before_done=%0d",
             cycle_count, busy, done, compute_before_feeder_done, drain_before_feeder_done);
         $fatal(1);

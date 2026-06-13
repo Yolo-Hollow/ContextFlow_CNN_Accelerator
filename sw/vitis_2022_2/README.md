@@ -903,6 +903,25 @@ default. Nonzero values enable the experimental overlap path. Local Icarus check
 overlap, and feeder path pass, and the Python image-demo parser test passes in
 `conda pytorch_env`.
 
+The scheduler-side fix after the first board timeout latches feeder completion
+per pass. This is important because `feeder_done` is a one-cycle pulse: in
+overlap mode it can arrive before `compute_done`, and the older scheduler could
+miss it and never start PSUM drain. Vivado/xsim `2022.2` now passes
+`RawHwcComputeStartLevel=64` for Conv5 tile0, Conv6 tile0, and Conv8 tile0. The
+serialized `RawHwcComputeStartLevel=0` path remains the default until the fixed
+RTL is rebuilt and board-validated.
+
+The fixed RTL has a 2022.2 implementation in the short external build directory
+`D:/MPSoC/b_ovcred_22`. A first attempt in the long in-repo build directory hit
+the Windows 260-character checkpoint path limit. The short-path implementation
+meets timing (`WNS=+0.155 ns`, `TNS=0`, `WHS=+0.010 ns`, `THS=0`) with `0`
+routing errors. Artifact hashes are:
+
+```text
+XSA SHA256       E5A1FB0BB1509C9D090CEF6781AB31185B17AEA08794ECA8AD5FBD53C8C02B8A
+bitstream SHA256 4ABDD8736868B8571417AFC8D1B9E56D63D9EFD6898F69CCF982B2077FCC66CC
+```
+
 The first hardware build for this prototype is:
 
 ```text
@@ -923,4 +942,18 @@ Board validation with full programming shows the serialized control value
 The nonzero overlap candidates tested so far, `64` and `1024`, both timeout at
 Conv5 tile0. Debug registers for the `1024` run show only one vector packet and
 52 compute fires completed while raw-HWC load/replay was still active, so the
-simple total-push watermark is not a safe overlap boundary.
+original simple total-push watermark implementation was not safe without the
+per-pass feeder completion latch.
+
+After adding the feeder completion latch, the credit-fix bitstream in
+`D:/MPSoC/b_ovcred_22` passes board validation for the fixed `maksssksksss0`
+DDR package:
+
+```text
+RawHwcComputeStartLevel=64  PASS  total=542.448 ms  log=20260613_221152_conv0_conv9_ddr_demo_COM8.log
+RawHwcComputeStartLevel=0   PASS  total=544.415 ms  log=20260613_221401_conv0_conv9_ddr_demo_COM8.log
+```
+
+The detection result is unchanged (`with_mask`, score `0.357321`). The timeout
+is fixed, but the measured speedup is only about `1.97 ms`, so this overlap
+knob is functional but not yet a major performance lever.

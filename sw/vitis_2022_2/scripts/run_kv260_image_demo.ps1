@@ -39,7 +39,12 @@ $PerfScript = Join-Path $Root "tools\demo\summarize_uart_perf.py"
 $BuildScript = Join-Path $ScriptDir "manual_build_accel_smoke.ps1"
 $RunScript = Join-Path $ScriptDir "run_kv260_smoke_sequence.ps1"
 $Elf = Join-Path $Root "build_vitis_2022_2\conv_accel_r18_c16_smoke\manual_build\conv_accel_conv0_conv9_ddr_demo_smoke.elf"
-$LogDir = Join-Path (Join-Path $Root $BuildDirName) "board_smoke_logs"
+if ([System.IO.Path]::IsPathRooted($BuildDirName)) {
+    $DemoBuildDir = $BuildDirName
+} else {
+    $DemoBuildDir = Join-Path $Root $BuildDirName
+}
+$LogDir = Join-Path $DemoBuildDir "board_smoke_logs"
 
 & $Python $PrepareScript $ImagePath --package $Package --metadata $Metadata --preview $Preview
 if ($LASTEXITCODE -ne 0) {

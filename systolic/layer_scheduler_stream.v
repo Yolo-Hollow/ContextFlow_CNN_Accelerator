@@ -68,6 +68,7 @@ module layer_scheduler_stream #(
 
     reg [3:0] state;
     reg compute_done_seen;
+    reg feeder_done_seen;
 
     localparam [14:0] K_STEP_EXT = K_TILE;
     localparam [10:0] COUT_STEP = COUT_TILE;
@@ -111,6 +112,7 @@ module layer_scheduler_stream #(
             compute_start <= 1'b0;
             psum_drain_start <= 1'b0;
             compute_done_seen <= 1'b0;
+            feeder_done_seen <= 1'b0;
         end else begin
             done <= 1'b0;
             bias_load_start <= 1'b0;
@@ -153,10 +155,13 @@ module layer_scheduler_stream #(
 
                 ST_FEED_START: begin
                     feeder_start <= 1'b1;
+                    feeder_done_seen <= 1'b0;
                     state <= ST_FEED_WAIT;
                 end
 
                 ST_FEED_WAIT: begin
+                    if (feeder_done)
+                        feeder_done_seen <= 1'b1;
                     if (feeder_done || (feeder_overlap_mode && feeder_compute_ready))
                         state <= ST_COMP_START;
                 end
@@ -170,8 +175,10 @@ module layer_scheduler_stream #(
                 ST_COMP_WAIT: begin
                     if (compute_done)
                         compute_done_seen <= 1'b1;
+                    if (feeder_done)
+                        feeder_done_seen <= 1'b1;
                     if ((compute_done || compute_done_seen) &&
-                        (!feeder_overlap_mode || feeder_done))
+                        (!feeder_overlap_mode || feeder_done || feeder_done_seen))
                         state <= ST_DRAIN_START;
                 end
 

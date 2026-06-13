@@ -36,7 +36,11 @@ $SwDir = Split-Path -Parent $ScriptDir
 $Root = Split-Path -Parent (Split-Path -Parent $SwDir)
 $Xsct = "C:\Xilinx\Vitis\2022.2\bin\xsct.bat"
 $HwServer = "C:\Xilinx\Vivado\2022.2\bin\hw_server.bat"
-$BuildDir = Join-Path $Root $BuildDirName
+if ([System.IO.Path]::IsPathRooted($BuildDirName)) {
+    $BuildDir = $BuildDirName
+} else {
+    $BuildDir = Join-Path $Root $BuildDirName
+}
 $LogDir = Join-Path $BuildDir "board_smoke_logs"
 $BitFile = Join-Path $BuildDir "conv_accel_ps_dma_minimal\conv_accel_ps_dma_minimal.runs\impl_1\conv_accel_ps_dma_wrapper.bit"
 $DetElf = Join-Path $Root "build_vitis_2022_2\conv_accel_r18_c16_smoke\manual_build\conv_accel_r18_c8_smoke.elf"

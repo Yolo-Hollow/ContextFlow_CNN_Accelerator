@@ -6,6 +6,7 @@ file mkdir $build_dir
 set top_filter {}
 set waves 0
 set tail_cycles 0
+set raw_hwc_compute_start_level 0
 for {set i 0} {$i < [llength $argv]} {incr i} {
     set arg [lindex $argv $i]
     if {$arg eq "-top"} {
@@ -24,6 +25,9 @@ for {set i 0} {$i < [llength $argv]} {incr i} {
     } elseif {$arg eq "-tail_cycles"} {
         incr i
         set tail_cycles [lindex $argv $i]
+    } elseif {$arg eq "-raw_hwc_compute_start_level"} {
+        incr i
+        set raw_hwc_compute_start_level [lindex $argv $i]
     } else {
         error "unknown argument: $arg"
     }
@@ -135,6 +139,7 @@ set tests {
     {tb_conv_accel_core_axi_lite_axis_stream_conv8_3x3_raw_hwc_ext_tile0_cout16 tb/tb_conv_accel_core_axi_lite_axis_stream_conv8_3x3_raw_hwc_ext_tile0_cout16.v diagnostic}
     {tb_conv_accel_core_axi_lite_axis_stream_conv8_3x3_raw_hwc_ext_tile3_cout16 tb/tb_conv_accel_core_axi_lite_axis_stream_conv8_3x3_raw_hwc_ext_tile3_cout16.v diagnostic}
     {tb_conv_accel_core_axi_lite_axis_stream_conv5_3x3_raw_hwc_ext_tile0_cout16 tb/tb_conv_accel_core_axi_lite_axis_stream_conv5_3x3_raw_hwc_ext_tile0_cout16.v diagnostic}
+    {tb_conv_accel_core_axi_lite_axis_stream_conv5_3x3_raw_hwc_overlap64_ext_tile0_cout16 tb/tb_conv_accel_core_axi_lite_axis_stream_conv5_3x3_raw_hwc_overlap64_ext_tile0_cout16.v diagnostic}
     {tb_conv_accel_core_axi_lite_axis_stream_conv5_3x3_raw_hwc_ext_tile3_cout16 tb/tb_conv_accel_core_axi_lite_axis_stream_conv5_3x3_raw_hwc_ext_tile3_cout16.v diagnostic}
     {tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_tiles tb/tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_tiles.v}
     {tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_ext_tiles tb/tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_ext_tiles.v}
@@ -223,6 +228,9 @@ foreach test $tests {
     set fh [open $tail_include w]
     if {$tail_cycles != 0} {
         puts $fh "`define TB_TAIL_CYCLES_OVERRIDE $tail_cycles"
+    }
+    if {$raw_hwc_compute_start_level != 0} {
+        puts $fh "`define TB_RAW_HWC_COMPUTE_START_LEVEL_OVERRIDE $raw_hwc_compute_start_level"
     }
     close $fh
     exec {*}$xvlog -sv -L work -i [file join $root tb] -log $xvlog_log {*}$srcs >@ stdout 2>@ stderr
