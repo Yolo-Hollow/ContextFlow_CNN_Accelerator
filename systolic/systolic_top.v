@@ -70,6 +70,8 @@ module systolic_top #(
     wire [4:0] ctrl_w_col;
     wire compute_active;
     wire compute_fire;
+    wire perf_comp_ifm_stall_ctrl;
+    wire perf_comp_ifm_underflow;
     wire [ROWS*IFM_W-1:0] ifm_fifo_rd_data;
     wire [31:0] ifm_fifo_empty;
     wire compute_ready = !ifm_fifo_empty[0];
@@ -90,10 +92,11 @@ module systolic_top #(
         .pre_write(ctrl_pre_write),
         .perf_comp_wload(perf_comp_wload),
         .perf_comp_active(perf_comp_active),
-        .perf_comp_ifm_stall(perf_comp_ifm_stall),
+        .perf_comp_ifm_stall(perf_comp_ifm_stall_ctrl),
         .perf_comp_tail(perf_comp_tail),
         .tail_cycles_configured(perf_tail_cycles_configured)
     );
+    assign perf_comp_ifm_stall = perf_comp_ifm_stall_ctrl || perf_comp_ifm_underflow;
 
     // ---- Weight FIFOs (32 × 16-bit) ----
     // rd_en = start||ctrl_w_load: pre-reads 1 cycle before weight load
@@ -171,6 +174,7 @@ module systolic_top #(
                 .empty(ifm_fifo_empty_active[r]), .full(ifm_full_active[r]));
         end
     endgenerate
+    assign perf_comp_ifm_underflow = |(ifm_rd_stagger & ifm_fifo_empty_active);
 
     reg [ROWS-1:0] ifm_fifo_rd_valid;
     always @(posedge clk) begin

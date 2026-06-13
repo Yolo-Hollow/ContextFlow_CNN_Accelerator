@@ -195,7 +195,11 @@ module axis_hwc_tile_cache #(
     output reg [31:0] completed_packets,
     output reg [31:0] completed_pixels,
     output reg [31:0] accepted_beats,
-    output reg [31:0] fifo_stall_cycles
+    output reg [31:0] fifo_stall_cycles,
+    output reg [31:0] load_active_cycles,
+    output reg [31:0] load_unpack_cycles,
+    output reg [31:0] replay_active_cycles,
+    output reg [31:0] replay_wait_ready_cycles
 );
     reg load_active;
     reg tile_loaded;
@@ -464,6 +468,10 @@ module axis_hwc_tile_cache #(
             completed_pixels <= 32'd0;
             accepted_beats <= 32'd0;
             fifo_stall_cycles <= 32'd0;
+            load_active_cycles <= 32'd0;
+            load_unpack_cycles <= 32'd0;
+            replay_active_cycles <= 32'd0;
+            replay_wait_ready_cycles <= 32'd0;
         end else begin
             packet_done <= 1'b0;
             replay_read_en <= 1'b0;
@@ -499,7 +507,18 @@ module axis_hwc_tile_cache #(
                 completed_pixels <= 32'd0;
                 accepted_beats <= 32'd0;
                 fifo_stall_cycles <= 32'd0;
+                load_active_cycles <= 32'd0;
+                load_unpack_cycles <= 32'd0;
+                replay_active_cycles <= 32'd0;
+                replay_wait_ready_cycles <= 32'd0;
             end
+
+            if (load_active && !tile_loaded)
+                load_active_cycles <= load_active_cycles + 1'b1;
+            if (beat_pending)
+                load_unpack_cycles <= load_unpack_cycles + 1'b1;
+            if (replay_active || replay_valid || replay_read_pending)
+                replay_active_cycles <= replay_active_cycles + 1'b1;
 
             if (!fill_req)
                 req_armed <= 1'b1;
@@ -584,8 +603,10 @@ module axis_hwc_tile_cache #(
                 end
             end
 
-            if (vector_valid && !vector_ready)
+            if (vector_valid && !vector_ready) begin
                 fifo_stall_cycles <= fifo_stall_cycles + 1'b1;
+                replay_wait_ready_cycles <= replay_wait_ready_cycles + 1'b1;
+            end
 
             if (vector_fire) begin
                 completed_pixels <= completed_pixels + 1'b1;

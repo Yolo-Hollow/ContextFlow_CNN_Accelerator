@@ -32,6 +32,8 @@ module systolic_top_feeder #(
     input  compute_start,
     input  [15:0] num_pixels,
     input  [15:0] tail_cycles_config,
+    input  [15:0] raw_hwc_compute_start_level,
+    output feeder_compute_ready,
     output compute_done,
     output compute_fire_out,
     output perf_feed_push,
@@ -96,9 +98,19 @@ module systolic_top_feeder #(
     wire line_feed_win_not_ready;
     reg vector_fill_req;
     reg vector_feeder_done;
+    reg [15:0] vector_push_count;
     wire vector_mode = kernel_1x1 || raw_hwc_mode;
+    wire [15:0] vector_start_level =
+        (raw_hwc_compute_start_level > num_pixels) ? num_pixels :
+        raw_hwc_compute_start_level;
+    wire vector_push_fire = vector_ifm_valid && vector_ifm_ready;
+    wire raw_overlap_enabled = raw_hwc_mode && (vector_start_level != 16'd0);
 
     assign feeder_done = vector_mode ? vector_feeder_done : line_feeder_done;
+    assign feeder_compute_ready =
+        raw_overlap_enabled && vector_fill_req &&
+        ((vector_push_count >= vector_start_level) ||
+         (vector_push_fire && (vector_push_count + 16'd1 >= vector_start_level)));
     assign feeder_busy = vector_mode ? vector_fill_req : line_feeder_busy;
     assign feeder_fill_req = vector_mode ? vector_fill_req : line_fill_req;
     assign feeder_fill_fy = vector_mode ? 9'd0 : line_fill_fy;
@@ -113,16 +125,24 @@ module systolic_top_feeder #(
         if (rst) begin
             vector_fill_req <= 1'b0;
             vector_feeder_done <= 1'b0;
+            vector_push_count <= 16'd0;
         end else begin
             vector_feeder_done <= 1'b0;
-            if (vector_mode && feeder_start)
+            if (vector_mode && feeder_start) begin
                 vector_fill_req <= 1'b1;
+                vector_push_count <= 16'd0;
+            end
+            if (vector_mode && vector_fill_req && vector_push_fire &&
+                vector_push_count != 16'hffff)
+                vector_push_count <= vector_push_count + 16'd1;
             if (vector_mode && vector_fill_req && vector_packet_done) begin
                 vector_fill_req <= 1'b0;
                 vector_feeder_done <= 1'b1;
             end
-            if (!vector_mode)
+            if (!vector_mode) begin
                 vector_fill_req <= 1'b0;
+                vector_push_count <= 16'd0;
+            end
         end
     end
 

@@ -112,10 +112,14 @@ def main():
             "feed_fifo_stall=19 feed_win_not_ready=20 comp_wload=21 "
             "comp_active=22 comp_fire=90 comp_ifm_stall=23 comp_tail=24 "
             "version=2\n"
-            "TAILSTAT layer=conv0 tail_config=138 tail_elapsed=14 "
+            "TAILSTAT layer=conv0 tail_config=138 raw_start_level=64 tail_elapsed=14 "
             "drain_empty_wait=0 drain_empty_sticky=0\n"
-            "TAILSTAT layer=conv1 tail_config=138 tail_elapsed=24 "
+            "TAILSTAT layer=conv1 tail_config=138 raw_start_level=64 tail_elapsed=24 "
             "drain_empty_wait=2 drain_empty_sticky=1\n"
+            "RAWSTAT layer=conv0 load_active=3 load_unpack=4 "
+            "replay_active=5 replay_wait_ready=0 compute_wait_ifm=0\n"
+            "RAWSTAT layer=conv1 load_active=13 load_unpack=14 "
+            "replay_active=15 replay_wait_ready=1 compute_wait_ifm=2\n"
         )
         assert summary["layer_count"] == 2
         assert summary["total_microseconds"] == 300
@@ -152,9 +156,15 @@ def main():
         assert summary["subperf"]["feed_residual_cycles"] == 12
         assert summary["subperf"]["comp_residual_cycles"] == 56
         assert summary["tailstat"]["tail_config_cycles"] == 138
+        assert summary["tailstat"]["raw_compute_start_level"] == 64
         assert summary["tailstat"]["tail_elapsed_cycles"] == 38
         assert summary["tailstat"]["drain_empty_wait_cycles"] == 2
         assert summary["tailstat"]["drain_empty_sticky"] == 1
+        assert summary["rawstat"]["load_active_cycles"] == 16
+        assert summary["rawstat"]["load_unpack_cycles"] == 18
+        assert summary["rawstat"]["replay_active_cycles"] == 20
+        assert summary["rawstat"]["replay_wait_ready_cycles"] == 1
+        assert summary["rawstat"]["compute_wait_ifm_cycles"] == 2
 
     print("PASS: KV260 runtime image package and visualization tests")
 

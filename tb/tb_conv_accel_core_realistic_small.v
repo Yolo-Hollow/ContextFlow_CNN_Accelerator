@@ -428,6 +428,10 @@ module `TB_CONV_ACCEL_CORE_MODULE;
         .feeder_fill_req(feeder_fill_req), .feeder_fill_fy(feeder_fill_fy),
         .dma_bank_wr_en(dma_bank_wr_en), .dma_wr_x(dma_wr_x), .dma_wr_fy(dma_wr_fy),
         .dma_wr_data(dma_wr_data), .dma_line_advance(dma_line_advance),
+        .raw_hwc_load_active_cycles(32'd0),
+        .raw_hwc_load_unpack_cycles(32'd0),
+        .raw_hwc_replay_active_cycles(32'd0),
+        .raw_hwc_replay_wait_ready_cycles(32'd0),
 `endif
 `ifndef TB_CONV_ACCEL_CORE_USE_AXIS_STREAM
         .quant_wr_en(quant_wr_en), .quant_wr_addr(quant_wr_addr), .quant_wr_data(quant_wr_data),

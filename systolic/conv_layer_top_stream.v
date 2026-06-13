@@ -72,6 +72,7 @@ module conv_layer_top_stream #(
     input  [10:0] cout_total,
     input  [15:0] num_pixels,
     input  [15:0] tail_cycles_config,
+    input  [15:0] raw_hwc_compute_start_level,
     input  [8:0] tile_oy_base,
     input  [8:0] tile_ofm_h,
     input  [OFM_ADDR_W-1:0] tile_pixel_base,
@@ -151,6 +152,8 @@ module conv_layer_top_stream #(
     wire sched_done;
     reg  sched_weight_done;
     wire feeder_done;
+    wire feeder_compute_ready;
+    wire feeder_overlap_mode = stream_raw_hwc_mode && (raw_hwc_compute_start_level != 16'd0);
     wire compute_done;
     wire drain_done;
     wire drain_packet_ready;
@@ -200,6 +203,8 @@ module conv_layer_top_stream #(
         .bias_load_start(sched_bias_start), .bias_load_done(bias_load_done),
         .weight_load_start(sched_weight_start), .weight_load_done(sched_weight_done),
         .feeder_start(sched_feeder_start), .feeder_done(feeder_done),
+        .feeder_compute_ready(feeder_compute_ready),
+        .feeder_overlap_mode(feeder_overlap_mode),
         .compute_start(sched_compute_start), .compute_done(compute_done),
         .psum_drain_start(sched_drain_start), .psum_drain_done(drain_done),
         .perf_stage_bias(perf_stage_bias),
@@ -342,6 +347,8 @@ module conv_layer_top_stream #(
         .raw_hwc_mode(stream_raw_hwc_mode),
         .compute_start(sched_compute_start), .num_pixels(sched_num_pixels),
         .tail_cycles_config(tail_cycles_config),
+        .raw_hwc_compute_start_level(raw_hwc_compute_start_level),
+        .feeder_compute_ready(feeder_compute_ready),
         .compute_done(compute_done), .compute_fire_out(compute_fire),
         .perf_feed_push(perf_feed_push),
         .perf_feed_fifo_stall(perf_feed_fifo_stall),

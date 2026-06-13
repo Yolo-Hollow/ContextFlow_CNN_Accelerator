@@ -167,6 +167,10 @@ module conv_accel_core_axi_lite_axis_stream #(
     wire [31:0] raw_hwc_completed_pixels;
     wire [31:0] raw_hwc_accepted_beats;
     wire [31:0] raw_hwc_fifo_stall_cycles;
+    wire [31:0] raw_hwc_load_active_cycles;
+    wire [31:0] raw_hwc_load_unpack_cycles;
+    wire [31:0] raw_hwc_replay_active_cycles;
+    wire [31:0] raw_hwc_replay_wait_ready_cycles;
     wire [31:0] vector_completed_pixels;
     wire [31:0] vector_accepted_beats;
     wire [31:0] vector_fifo_stall_cycles;
@@ -403,7 +407,11 @@ module conv_accel_core_axi_lite_axis_stream #(
         .completed_packets(raw_hwc_completed_packets),
         .completed_pixels(raw_hwc_completed_pixels),
         .accepted_beats(raw_hwc_accepted_beats),
-        .fifo_stall_cycles(raw_hwc_fifo_stall_cycles)
+        .fifo_stall_cycles(raw_hwc_fifo_stall_cycles),
+        .load_active_cycles(raw_hwc_load_active_cycles),
+        .load_unpack_cycles(raw_hwc_load_unpack_cycles),
+        .replay_active_cycles(raw_hwc_replay_active_cycles),
+        .replay_wait_ready_cycles(raw_hwc_replay_wait_ready_cycles)
     );
 
     conv_accel_core_axi_lite #(
@@ -483,6 +491,10 @@ module conv_accel_core_axi_lite_axis_stream #(
         .vector_fifo_stall_cycles(configured_stream_raw_hwc_mode ?
                                   raw_hwc_fifo_stall_cycles :
                                   vector_fifo_stall_cycles),
+        .raw_hwc_load_active_cycles(raw_hwc_load_active_cycles),
+        .raw_hwc_load_unpack_cycles(raw_hwc_load_unpack_cycles),
+        .raw_hwc_replay_active_cycles(raw_hwc_replay_active_cycles),
+        .raw_hwc_replay_wait_ready_cycles(raw_hwc_replay_wait_ready_cycles),
         .bias_wr_addr(bias_wr_addr),
         .bias_wr_data(bias_wr_data),
         .bias_wr_en(bias_wr_en),

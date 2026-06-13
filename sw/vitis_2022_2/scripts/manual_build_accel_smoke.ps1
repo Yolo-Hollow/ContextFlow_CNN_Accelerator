@@ -8,6 +8,7 @@ param(
     [switch]$RawHwcConv8,
     [switch]$RawHwc3x3All,
     [switch]$TilePerfTrace,
+    [int]$RawHwcComputeStartLevel = 0,
     [int]$TailCyclesOverride = 0
 )
 
@@ -58,6 +59,7 @@ $Defines = @()
 if ($TailCyclesOverride -ne 0) {
     $Defines += "-DACCEL_TAIL_CYCLES_OVERRIDE=$TailCyclesOverride"
 }
+$Defines += "-DACCEL_RAW_HWC_COMPUTE_START_LEVEL=$RawHwcComputeStartLevel"
 if ($TilePerfTrace) {
     $Defines += "-DACCEL_TILE_PERF_TRACE=1"
 }

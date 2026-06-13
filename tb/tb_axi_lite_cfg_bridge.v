@@ -47,6 +47,7 @@ module tb_axi_lite_cfg_bridge;
     wire [31:0] stream_weight_packets;
     wire [31:0] stream_ifm_packets;
     wire [15:0] tail_cycles_config;
+    wire [15:0] raw_hwc_compute_start_level;
 
     axi_lite_cfg_bridge dut_bridge (
         .clk(clk), .rst(rst),
@@ -94,6 +95,10 @@ module tb_axi_lite_cfg_bridge;
         .vector_completed_pixels(32'd0),
         .vector_accepted_beats(32'd0),
         .vector_fifo_stall_cycles(32'd0),
+        .raw_hwc_load_active_cycles(32'd0),
+        .raw_hwc_load_unpack_cycles(32'd0),
+        .raw_hwc_replay_active_cycles(32'd0),
+        .raw_hwc_replay_wait_ready_cycles(32'd0),
         .start_pulse(start_pulse),
         .fm_h(fm_h), .fm_w(fm_w), .ofm_h(ofm_h), .ofm_w(ofm_w),
         .conv_stride(conv_stride), .conv_pad(conv_pad),
@@ -111,6 +116,7 @@ module tb_axi_lite_cfg_bridge;
         .stream_weight_packets(stream_weight_packets),
         .stream_ifm_packets(stream_ifm_packets),
         .tail_cycles_config(tail_cycles_config),
+        .raw_hwc_compute_start_level(raw_hwc_compute_start_level),
         .config_error()
     );
 
@@ -309,7 +315,7 @@ module tb_axi_lite_cfg_bridge;
         axi_read(8'hdc, rd);
         check_eq(rd, 32'd2, "subperf version read");
         axi_read(8'he0, rd);
-        check_eq(rd, 32'd138, "tail config read");
+        check_eq(rd, {16'd0, 16'd138}, "tail config read");
         axi_read(8'h3c, rd);
         check_eq(rd, 32'd36, "input_zero_point read");
         check_eq({24'd0, input_zero_point}, 32'd36, "input_zero_point output");

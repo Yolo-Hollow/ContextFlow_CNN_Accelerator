@@ -10,6 +10,7 @@ VECTORSTAT_PREFIX = "VECTORSTAT "
 STAGEPERF_PREFIX = "STAGEPERF "
 SUBPERF_PREFIX = "SUBPERF "
 TAILSTAT_PREFIX = "TAILSTAT "
+RAWSTAT_PREFIX = "RAWSTAT "
 
 
 def parse_metric_line(line, prefix):
@@ -210,6 +211,9 @@ def summarize_perf(log_text):
             "tail_config_cycles": max(
                 layer["tail_config"] for layer in tail_layers
             ),
+            "raw_compute_start_level": max(
+                layer.get("raw_start_level", 0) for layer in tail_layers
+            ),
             "tail_elapsed_cycles": sum(
                 layer["tail_elapsed"] for layer in tail_layers
             ),
@@ -218,6 +222,26 @@ def summarize_perf(log_text):
             ),
             "drain_empty_sticky": max(
                 layer["drain_empty_sticky"] for layer in tail_layers
+            ),
+        }
+
+    raw_layers = [
+        parse_metric_line(line.strip(), RAWSTAT_PREFIX)
+        for line in log_text.splitlines()
+        if line.strip().startswith(RAWSTAT_PREFIX)
+    ]
+    rawstat = None
+    if raw_layers:
+        rawstat = {
+            "layers": raw_layers,
+            "load_active_cycles": sum(layer["load_active"] for layer in raw_layers),
+            "load_unpack_cycles": sum(layer["load_unpack"] for layer in raw_layers),
+            "replay_active_cycles": sum(layer["replay_active"] for layer in raw_layers),
+            "replay_wait_ready_cycles": sum(
+                layer["replay_wait_ready"] for layer in raw_layers
+            ),
+            "compute_wait_ifm_cycles": sum(
+                layer.get("compute_wait_ifm", 0) for layer in raw_layers
             ),
         }
 
@@ -233,6 +257,7 @@ def summarize_perf(log_text):
         "vector": vector,
         "subperf": subperf,
         "tailstat": tailstat,
+        "rawstat": rawstat,
     }
 
 
@@ -309,9 +334,20 @@ def print_summary(summary):
         print(
             "TAILSTAT summary: "
             f"tail_config={tailstat['tail_config_cycles']} "
+            f"raw_start_level={tailstat['raw_compute_start_level']} "
             f"tail_elapsed={tailstat['tail_elapsed_cycles']} "
             f"drain_empty_wait={tailstat['drain_empty_wait_cycles']} "
             f"drain_empty_sticky={tailstat['drain_empty_sticky']}"
+        )
+    if summary["rawstat"]:
+        rawstat = summary["rawstat"]
+        print(
+            "RAWSTAT summary: "
+            f"load_active={rawstat['load_active_cycles']} "
+            f"load_unpack={rawstat['load_unpack_cycles']} "
+            f"replay_active={rawstat['replay_active_cycles']} "
+            f"replay_wait_ready={rawstat['replay_wait_ready_cycles']} "
+            f"compute_wait_ifm={rawstat['compute_wait_ifm_cycles']}"
         )
 
 

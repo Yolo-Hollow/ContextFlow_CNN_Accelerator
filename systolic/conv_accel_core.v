@@ -42,7 +42,8 @@ module conv_accel_core #(
     parameter OFM_ADDR_W = 24,
     parameter OFM_FIFO_DEPTH = 32,
     parameter OFM_FIFO_AW = 5,
-    parameter TAIL_CYCLES_CONFIG = `SYSTOLIC_TAIL_CYCLES_CONFIG
+    parameter TAIL_CYCLES_CONFIG = `SYSTOLIC_TAIL_CYCLES_CONFIG,
+    parameter [15:0] RAW_HWC_COMPUTE_START_LEVEL = 16'd0
 ) (
     input  clk,
     input  rst,
@@ -90,6 +91,10 @@ module conv_accel_core #(
     input  [31:0] vector_completed_pixels,
     input  [31:0] vector_accepted_beats,
     input  [31:0] vector_fifo_stall_cycles,
+    input  [31:0] raw_hwc_load_active_cycles,
+    input  [31:0] raw_hwc_load_unpack_cycles,
+    input  [31:0] raw_hwc_replay_active_cycles,
+    input  [31:0] raw_hwc_replay_wait_ready_cycles,
     output        configured_config_error,
 
     input  [5:0]        bias_wr_addr,
@@ -179,6 +184,7 @@ module conv_accel_core #(
     wire [31:0] stream_weight_packets;
     wire [31:0] stream_ifm_packets;
     wire [15:0] tail_cycles_config;
+    wire [15:0] raw_hwc_compute_start_level;
     wire config_error;
     wire [OFM_ADDR_W-1:0] tile_pixel_base_ext = tile_pixel_base[OFM_ADDR_W-1:0];
     wire [COLS*2*MULT_W-1:0] quant_mult_flat;
@@ -249,7 +255,10 @@ module conv_accel_core #(
         end
     end
 
-    layer_config_regs #(.IFM_FIFO_DEPTH(IFM_FIFO_DEPTH)) u_cfg (
+    layer_config_regs #(
+        .IFM_FIFO_DEPTH(IFM_FIFO_DEPTH),
+        .RAW_HWC_COMPUTE_START_LEVEL(RAW_HWC_COMPUTE_START_LEVEL)
+    ) u_cfg (
         .clk(clk), .rst(rst),
         .cfg_wr_en(cfg_wr_en), .cfg_addr(cfg_addr), .cfg_wdata(cfg_wdata),
         .cfg_rd_en(cfg_rd_en), .cfg_rdata(layer_cfg_rdata),
@@ -288,6 +297,10 @@ module conv_accel_core #(
         .vector_completed_pixels(vector_completed_pixels),
         .vector_accepted_beats(vector_accepted_beats),
         .vector_fifo_stall_cycles(vector_fifo_stall_cycles),
+        .raw_hwc_load_active_cycles(raw_hwc_load_active_cycles),
+        .raw_hwc_load_unpack_cycles(raw_hwc_load_unpack_cycles),
+        .raw_hwc_replay_active_cycles(raw_hwc_replay_active_cycles),
+        .raw_hwc_replay_wait_ready_cycles(raw_hwc_replay_wait_ready_cycles),
         .start_pulse(start_pulse),
         .fm_h(fm_h), .fm_w(fm_w), .ofm_h(ofm_h), .ofm_w(ofm_w),
         .conv_stride(conv_stride), .conv_pad(conv_pad), .kernel_1x1(kernel_1x1),
@@ -304,6 +317,7 @@ module conv_accel_core #(
         .stream_weight_packets(stream_weight_packets),
         .stream_ifm_packets(stream_ifm_packets),
         .tail_cycles_config(tail_cycles_config),
+        .raw_hwc_compute_start_level(raw_hwc_compute_start_level),
         .config_error(config_error)
     );
 
@@ -352,6 +366,7 @@ module conv_accel_core #(
         .stream_raw_hwc_mode(stream_raw_hwc_mode),
         .k_total(k_total), .cout_total(cout_total), .num_pixels(num_pixels),
         .tail_cycles_config(tail_cycles_config),
+        .raw_hwc_compute_start_level(raw_hwc_compute_start_level),
         .tile_oy_base(tile_oy_base), .tile_ofm_h(tile_ofm_h),
         .tile_pixel_base(tile_pixel_base_ext),
         .pool_enable(pool_enable), .pool_stride(pool_stride),

@@ -51,6 +51,7 @@ module tb_systolic_top_feeder_singlepass;
         .feeder_fill_req(feeder_fill_req), .feeder_fill_fy(feeder_fill_fy),
         .kernel_1x1(1'b0), .raw_hwc_mode(1'b0),
         .compute_start(compute_start), .tail_cycles_config(16'd0),
+        .raw_hwc_compute_start_level(16'd0), .feeder_compute_ready(),
         .num_pixels(16'd9), .compute_done(compute_done),
         .fm_h(9'd5), .fm_w(9'd5), .ofm_h(9'd3), .ofm_w(9'd3),
         .tile_oy_base(9'd0), .tile_ofm_h(9'd0),

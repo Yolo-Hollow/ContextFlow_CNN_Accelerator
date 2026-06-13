@@ -260,6 +260,7 @@ typedef struct {
     uint64_t hw_comp_tail_cycles;
     uint64_t hw_subperf_version;
     uint64_t hw_tail_config_cycles;
+    uint64_t hw_raw_compute_start_level;
     uint64_t hw_tail_elapsed_cycles;
     uint64_t hw_drain_empty_wait_cycles;
     uint64_t hw_drain_empty_sticky;
@@ -267,6 +268,10 @@ typedef struct {
     uint64_t vector_pixels;
     uint64_t vector_beats;
     uint64_t vector_fifo_stall_cycles;
+    uint64_t raw_load_active_cycles;
+    uint64_t raw_load_unpack_cycles;
+    uint64_t raw_replay_active_cycles;
+    uint64_t raw_replay_wait_ready_cycles;
     uint32_t dma_bias_starts;
     uint32_t dma_weight_starts;
     uint32_t dma_ifm_starts;
@@ -1403,10 +1408,11 @@ static void print_layer_perf(const chain_layer_t *layer)
         (unsigned long long)layer_perf.hw_comp_tail_cycles,
         (unsigned long long)layer_perf.hw_subperf_version);
     xil_printf(
-        "TAILSTAT layer=%s tail_config=%llu tail_elapsed=%llu "
-        "drain_empty_wait=%llu drain_empty_sticky=%llu\r\n",
+        "TAILSTAT layer=%s tail_config=%llu raw_start_level=%llu "
+        "tail_elapsed=%llu drain_empty_wait=%llu drain_empty_sticky=%llu\r\n",
         layer->name,
         (unsigned long long)layer_perf.hw_tail_config_cycles,
+        (unsigned long long)layer_perf.hw_raw_compute_start_level,
         (unsigned long long)layer_perf.hw_tail_elapsed_cycles,
         (unsigned long long)layer_perf.hw_drain_empty_wait_cycles,
         (unsigned long long)layer_perf.hw_drain_empty_sticky);
@@ -1424,6 +1430,15 @@ static void print_layer_perf(const chain_layer_t *layer)
         (unsigned long long)layer_perf.vector_pixels,
         (unsigned long long)layer_perf.vector_beats,
         (unsigned long long)layer_perf.vector_fifo_stall_cycles);
+    xil_printf(
+        "RAWSTAT layer=%s load_active=%llu load_unpack=%llu "
+        "replay_active=%llu replay_wait_ready=%llu compute_wait_ifm=%llu\r\n",
+        layer->name,
+        (unsigned long long)layer_perf.raw_load_active_cycles,
+        (unsigned long long)layer_perf.raw_load_unpack_cycles,
+        (unsigned long long)layer_perf.raw_replay_active_cycles,
+        (unsigned long long)layer_perf.raw_replay_wait_ready_cycles,
+        (unsigned long long)layer_perf.hw_comp_ifm_stall_cycles);
 }
 
 static void clear_ofm(uint8_t *ofm, uint32_t bytes)
@@ -1656,6 +1671,8 @@ static int run_one_tile(const chain_layer_t *layer, const chain_tile_t *tile, ui
     uint32_t tile_comp_tail = rd32(ACCEL_BASE_ADDR, ACCEL_COMP_TAIL);
     uint32_t tile_subperf_version = rd32(ACCEL_BASE_ADDR, ACCEL_SUBPERF_VERSION);
     uint32_t tile_tail_config = rd32(ACCEL_BASE_ADDR, ACCEL_TAIL_CONFIG);
+    uint32_t tile_raw_start_level = (tile_tail_config >> 16) & 0xffffU;
+    tile_tail_config &= 0xffffU;
     uint32_t tile_tail_elapsed = rd32(ACCEL_BASE_ADDR, ACCEL_TAIL_ELAPSED);
     uint32_t tile_drain_empty_wait = rd32(ACCEL_BASE_ADDR, ACCEL_DRAIN_EMPTY_WAIT);
     uint32_t tile_drain_empty_sticky = rd32(ACCEL_BASE_ADDR, ACCEL_DRAIN_EMPTY_STICKY);
@@ -1663,6 +1680,10 @@ static int run_one_tile(const chain_layer_t *layer, const chain_tile_t *tile, ui
     uint32_t tile_vector_pixels = rd32(ACCEL_BASE_ADDR, ACCEL_VECTOR_PIXELS);
     uint32_t tile_vector_beats = rd32(ACCEL_BASE_ADDR, ACCEL_VECTOR_BEATS);
     uint32_t tile_vector_stalls = rd32(ACCEL_BASE_ADDR, ACCEL_VECTOR_STALLS);
+    uint32_t tile_raw_load_active = rd32(ACCEL_BASE_ADDR, ACCEL_RAW_LOAD_ACTIVE);
+    uint32_t tile_raw_load_unpack = rd32(ACCEL_BASE_ADDR, ACCEL_RAW_LOAD_UNPACK);
+    uint32_t tile_raw_replay_active = rd32(ACCEL_BASE_ADDR, ACCEL_RAW_REPLAY_ACTIVE);
+    uint32_t tile_raw_replay_wait_ready = rd32(ACCEL_BASE_ADDR, ACCEL_RAW_REPLAY_WAIT_READY);
 
 #if ACCEL_TILE_PERF_TRACE
     xil_printf(
@@ -1672,8 +1693,11 @@ static int run_one_tile(const chain_layer_t *layer, const chain_tile_t *tile, ui
         "stage_b=%lu stage_w=%lu stage_f=%lu stage_c=%lu stage_d=%lu stage_o=%lu "
         "feed_fill=%lu feed_push=%lu feed_fifo_stall=%lu feed_win_not_ready=%lu "
         "comp_wload=%lu comp_active=%lu comp_fire=%lu comp_ifm_stall=%lu comp_tail=%lu "
-        "tail_cfg=%lu tail_elapsed=%lu drain_empty_wait=%lu drain_empty_sticky=%lu "
+        "tail_cfg=%lu raw_start_level=%lu tail_elapsed=%lu "
+        "drain_empty_wait=%lu drain_empty_sticky=%lu "
         "vector_packets=%lu vector_pixels=%lu vector_beats=%lu vector_stalls=%lu "
+        "raw_load_active=%lu raw_load_unpack=%lu raw_replay_active=%lu "
+        "raw_replay_wait_ready=%lu "
         "subperf_version=%lu\r\n",
         layer->name,
         (unsigned long)tile_index,
@@ -1706,6 +1730,7 @@ static int run_one_tile(const chain_layer_t *layer, const chain_tile_t *tile, ui
         (unsigned long)tile_comp_ifm_stall,
         (unsigned long)tile_comp_tail,
         (unsigned long)tile_tail_config,
+        (unsigned long)tile_raw_start_level,
         (unsigned long)tile_tail_elapsed,
         (unsigned long)tile_drain_empty_wait,
         (unsigned long)tile_drain_empty_sticky,
@@ -1713,6 +1738,10 @@ static int run_one_tile(const chain_layer_t *layer, const chain_tile_t *tile, ui
         (unsigned long)tile_vector_pixels,
         (unsigned long)tile_vector_beats,
         (unsigned long)tile_vector_stalls,
+        (unsigned long)tile_raw_load_active,
+        (unsigned long)tile_raw_load_unpack,
+        (unsigned long)tile_raw_replay_active,
+        (unsigned long)tile_raw_replay_wait_ready,
         (unsigned long)tile_subperf_version);
 #endif
 
@@ -1740,6 +1769,7 @@ static int run_one_tile(const chain_layer_t *layer, const chain_tile_t *tile, ui
     layer_perf.hw_comp_tail_cycles += tile_comp_tail;
     layer_perf.hw_subperf_version = tile_subperf_version;
     layer_perf.hw_tail_config_cycles = tile_tail_config;
+    layer_perf.hw_raw_compute_start_level = tile_raw_start_level;
     layer_perf.hw_tail_elapsed_cycles += tile_tail_elapsed;
     layer_perf.hw_drain_empty_wait_cycles += tile_drain_empty_wait;
     layer_perf.hw_drain_empty_sticky |= tile_drain_empty_sticky;
@@ -1747,6 +1777,10 @@ static int run_one_tile(const chain_layer_t *layer, const chain_tile_t *tile, ui
     layer_perf.vector_pixels += tile_vector_pixels;
     layer_perf.vector_beats += tile_vector_beats;
     layer_perf.vector_fifo_stall_cycles += tile_vector_stalls;
+    layer_perf.raw_load_active_cycles += tile_raw_load_active;
+    layer_perf.raw_load_unpack_cycles += tile_raw_load_unpack;
+    layer_perf.raw_replay_active_cycles += tile_raw_replay_active;
+    layer_perf.raw_replay_wait_ready_cycles += tile_raw_replay_wait_ready;
 
     wr32(ACCEL_BASE_ADDR, ACCEL_CTRL, 2U);
     trace_printf("%s tile[%lu] services bias=%lu weight=%lu ifm=%lu\r\n",
@@ -1976,6 +2010,8 @@ static int run_one_tile_batch(
     uint32_t tile_comp_tail = rd32(ACCEL_BASE_ADDR, ACCEL_COMP_TAIL);
     uint32_t tile_subperf_version = rd32(ACCEL_BASE_ADDR, ACCEL_SUBPERF_VERSION);
     uint32_t tile_tail_config = rd32(ACCEL_BASE_ADDR, ACCEL_TAIL_CONFIG);
+    uint32_t tile_raw_start_level = (tile_tail_config >> 16) & 0xffffU;
+    tile_tail_config &= 0xffffU;
     uint32_t tile_tail_elapsed = rd32(ACCEL_BASE_ADDR, ACCEL_TAIL_ELAPSED);
     uint32_t tile_drain_empty_wait = rd32(ACCEL_BASE_ADDR, ACCEL_DRAIN_EMPTY_WAIT);
     uint32_t tile_drain_empty_sticky = rd32(ACCEL_BASE_ADDR, ACCEL_DRAIN_EMPTY_STICKY);
@@ -1983,6 +2019,10 @@ static int run_one_tile_batch(
     uint32_t tile_vector_pixels = rd32(ACCEL_BASE_ADDR, ACCEL_VECTOR_PIXELS);
     uint32_t tile_vector_beats = rd32(ACCEL_BASE_ADDR, ACCEL_VECTOR_BEATS);
     uint32_t tile_vector_stalls = rd32(ACCEL_BASE_ADDR, ACCEL_VECTOR_STALLS);
+    uint32_t tile_raw_load_active = rd32(ACCEL_BASE_ADDR, ACCEL_RAW_LOAD_ACTIVE);
+    uint32_t tile_raw_load_unpack = rd32(ACCEL_BASE_ADDR, ACCEL_RAW_LOAD_UNPACK);
+    uint32_t tile_raw_replay_active = rd32(ACCEL_BASE_ADDR, ACCEL_RAW_REPLAY_ACTIVE);
+    uint32_t tile_raw_replay_wait_ready = rd32(ACCEL_BASE_ADDR, ACCEL_RAW_REPLAY_WAIT_READY);
 
 #if ACCEL_TILE_PERF_TRACE
     xil_printf(
@@ -1992,8 +2032,11 @@ static int run_one_tile_batch(
         "stage_b=%lu stage_w=%lu stage_f=%lu stage_c=%lu stage_d=%lu stage_o=%lu "
         "feed_fill=%lu feed_push=%lu feed_fifo_stall=%lu feed_win_not_ready=%lu "
         "comp_wload=%lu comp_active=%lu comp_fire=%lu comp_ifm_stall=%lu comp_tail=%lu "
-        "tail_cfg=%lu tail_elapsed=%lu drain_empty_wait=%lu drain_empty_sticky=%lu "
+        "tail_cfg=%lu raw_start_level=%lu tail_elapsed=%lu "
+        "drain_empty_wait=%lu drain_empty_sticky=%lu "
         "vector_packets=%lu vector_pixels=%lu vector_beats=%lu vector_stalls=%lu "
+        "raw_load_active=%lu raw_load_unpack=%lu raw_replay_active=%lu "
+        "raw_replay_wait_ready=%lu "
         "subperf_version=%lu\r\n",
         layer->name,
         (unsigned long)tile_index,
@@ -2026,6 +2069,7 @@ static int run_one_tile_batch(
         (unsigned long)tile_comp_ifm_stall,
         (unsigned long)tile_comp_tail,
         (unsigned long)tile_tail_config,
+        (unsigned long)tile_raw_start_level,
         (unsigned long)tile_tail_elapsed,
         (unsigned long)tile_drain_empty_wait,
         (unsigned long)tile_drain_empty_sticky,
@@ -2033,6 +2077,10 @@ static int run_one_tile_batch(
         (unsigned long)tile_vector_pixels,
         (unsigned long)tile_vector_beats,
         (unsigned long)tile_vector_stalls,
+        (unsigned long)tile_raw_load_active,
+        (unsigned long)tile_raw_load_unpack,
+        (unsigned long)tile_raw_replay_active,
+        (unsigned long)tile_raw_replay_wait_ready,
         (unsigned long)tile_subperf_version);
 #endif
 
@@ -2060,6 +2108,7 @@ static int run_one_tile_batch(
     layer_perf.hw_comp_tail_cycles += tile_comp_tail;
     layer_perf.hw_subperf_version = tile_subperf_version;
     layer_perf.hw_tail_config_cycles = tile_tail_config;
+    layer_perf.hw_raw_compute_start_level = tile_raw_start_level;
     layer_perf.hw_tail_elapsed_cycles += tile_tail_elapsed;
     layer_perf.hw_drain_empty_wait_cycles += tile_drain_empty_wait;
     layer_perf.hw_drain_empty_sticky |= tile_drain_empty_sticky;
@@ -2067,6 +2116,10 @@ static int run_one_tile_batch(
     layer_perf.vector_pixels += tile_vector_pixels;
     layer_perf.vector_beats += tile_vector_beats;
     layer_perf.vector_fifo_stall_cycles += tile_vector_stalls;
+    layer_perf.raw_load_active_cycles += tile_raw_load_active;
+    layer_perf.raw_load_unpack_cycles += tile_raw_load_unpack;
+    layer_perf.raw_replay_active_cycles += tile_raw_replay_active;
+    layer_perf.raw_replay_wait_ready_cycles += tile_raw_replay_wait_ready;
 
     wr32(ACCEL_BASE_ADDR, ACCEL_CTRL, 2U);
     *total_bias += actual_bias;
@@ -2105,9 +2158,11 @@ static int configure_layer(const chain_layer_t *layer)
     wr32(ACCEL_BASE_ADDR, ACCEL_ACT_CFG, 2U);
     wr32(ACCEL_BASE_ADDR, ACCEL_IFM_ZP, layer->input_zero_point);
     wr32(ACCEL_BASE_ADDR, ACCEL_POOL_CFG, (layer->pool_stride << 2) | layer->pool_enable);
-    if (ACCEL_TAIL_CYCLES_OVERRIDE != 0) {
-        wr32(ACCEL_BASE_ADDR, ACCEL_TAIL_CONFIG, ACCEL_TAIL_CYCLES_OVERRIDE);
-    }
+    wr32(
+        ACCEL_BASE_ADDR,
+        ACCEL_TAIL_CONFIG,
+        ((ACCEL_RAW_HWC_COMPUTE_START_LEVEL & 0xffffU) << 16) |
+        (ACCEL_TAIL_CYCLES_OVERRIDE & 0xffffU));
     wr32(
         ACCEL_BASE_ADDR,
         ACCEL_STREAM_CFG,

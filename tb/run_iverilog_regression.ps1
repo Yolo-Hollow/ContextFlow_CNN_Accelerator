@@ -71,6 +71,7 @@ $tests = @(
     @{ Top = "tb_axi_lite_cfg_bridge"; Files = @("tb/tb_axi_lite_cfg_bridge.v") },
     @{ Top = "tb_quant_param_regs"; Files = @("tb/tb_quant_param_regs.v") },
     @{ Top = "tb_layer_scheduler_stream"; Files = @("tb/tb_layer_scheduler_stream.v") },
+    @{ Top = "tb_layer_scheduler_overlap"; Files = @("tb/tb_layer_scheduler_overlap.v") },
     @{ Top = "tb_layer_scheduler_small"; Files = @("tb/tb_layer_scheduler_small.v") },
     @{ Top = "tb_weight_tile_loader"; Files = @("tb/tb_weight_tile_loader.v") },
     @{ Top = "tb_bias_weight_stream_loader"; Files = @("tb/tb_bias_weight_stream_loader.v") },
@@ -161,8 +162,13 @@ foreach ($test in $tests) {
     if ($LASTEXITCODE -ne 0) { throw "iverilog failed for $top" }
 
     Write-Host "=== run $top ==="
-    & vvp $vvp
-    if ($LASTEXITCODE -ne 0) { throw "vvp failed for $top" }
+    $runOutput = & vvp $vvp 2>&1
+    $runCode = $LASTEXITCODE
+    $runOutput | ForEach-Object { Write-Host $_ }
+    $runText = $runOutput -join "`n"
+    if ($runCode -ne 0 -or $runText -match "(?m)(FATAL|\[FAIL\])") {
+        throw "vvp failed for $top"
+    }
 }
 
 Write-Host "=== all selected Icarus regressions passed ==="

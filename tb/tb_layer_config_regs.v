@@ -23,6 +23,10 @@ module tb_layer_config_regs;
     reg [31:0] vector_completed_pixels;
     reg [31:0] vector_accepted_beats;
     reg [31:0] vector_fifo_stall_cycles;
+    reg [31:0] raw_hwc_load_active_cycles;
+    reg [31:0] raw_hwc_load_unpack_cycles;
+    reg [31:0] raw_hwc_replay_active_cycles;
+    reg [31:0] raw_hwc_replay_wait_ready_cycles;
     wire start_pulse;
     wire [8:0] fm_h, fm_w, ofm_h, ofm_w;
     wire [1:0] conv_stride, conv_pad;
@@ -43,6 +47,7 @@ module tb_layer_config_regs;
     wire [31:0] stream_weight_packets;
     wire [31:0] stream_ifm_packets;
     wire [15:0] tail_cycles_config;
+    wire [15:0] raw_hwc_compute_start_level;
     wire [31:0] tail_cycles_selected =
         {16'd0, (tail_cycles_config == 16'd0) ? 16'd138 : tail_cycles_config};
     wire config_error;
@@ -84,6 +89,10 @@ module tb_layer_config_regs;
         .vector_completed_pixels(vector_completed_pixels),
         .vector_accepted_beats(vector_accepted_beats),
         .vector_fifo_stall_cycles(vector_fifo_stall_cycles),
+        .raw_hwc_load_active_cycles(raw_hwc_load_active_cycles),
+        .raw_hwc_load_unpack_cycles(raw_hwc_load_unpack_cycles),
+        .raw_hwc_replay_active_cycles(raw_hwc_replay_active_cycles),
+        .raw_hwc_replay_wait_ready_cycles(raw_hwc_replay_wait_ready_cycles),
         .start_pulse(start_pulse),
         .fm_h(fm_h), .fm_w(fm_w), .ofm_h(ofm_h), .ofm_w(ofm_w),
         .conv_stride(conv_stride), .conv_pad(conv_pad), .kernel_1x1(kernel_1x1),
@@ -100,6 +109,7 @@ module tb_layer_config_regs;
         .stream_weight_packets(stream_weight_packets),
         .stream_ifm_packets(stream_ifm_packets),
         .tail_cycles_config(tail_cycles_config),
+        .raw_hwc_compute_start_level(raw_hwc_compute_start_level),
         .config_error(config_error)
     );
 
@@ -177,6 +187,10 @@ module tb_layer_config_regs;
         vector_completed_pixels = 32'd19;
         vector_accepted_beats = 32'd23;
         vector_fifo_stall_cycles = 32'd29;
+        raw_hwc_load_active_cycles = 32'd31;
+        raw_hwc_load_unpack_cycles = 32'd37;
+        raw_hwc_replay_active_cycles = 32'd41;
+        raw_hwc_replay_wait_ready_cycles = 32'd43;
         pass = 0;
         fail = 0;
         start_pulse_count = 0;
@@ -199,7 +213,7 @@ module tb_layer_config_regs;
         write_reg(6'h1a, 32'd7);
         write_reg(6'h1b, 32'd11);
         write_reg(6'h1c, 32'd13);
-        write_reg(6'h38, 32'd96);
+        write_reg(6'h38, {16'd64, 16'd96});
 
         check_value(fm_h, 7, "fm_h");
         check_value(fm_w, 5, "fm_w");
@@ -223,6 +237,7 @@ module tb_layer_config_regs;
         check_value(stream_weight_packets, 11, "stream weight packets");
         check_value(stream_ifm_packets, 13, "stream ifm packets");
         check_value(tail_cycles_config, 96, "tail cycles config output");
+        check_value(raw_hwc_compute_start_level, 64, "raw hwc compute start level");
         cfg_addr = 6'h1d;
         #1;
         check_value(cfg_rdata, 7, "stream bias completed");
@@ -376,7 +391,7 @@ module tb_layer_config_regs;
         check_value(cfg_rdata, 2, "subperf version");
         cfg_addr = 6'h38;
         #1;
-        check_value(cfg_rdata, 96, "tail cycles configured");
+        check_value(cfg_rdata, {16'd64, 16'd96}, "tail cycles configured");
         cfg_addr = 6'h39;
         #1;
         check_value(cfg_rdata, 2, "tail elapsed alias");
@@ -435,6 +450,7 @@ module tb_layer_config_regs;
         check_value(stream_weight_packets, 11, "busy freeze weight packets");
         check_value(stream_ifm_packets, 13, "busy freeze ifm packets");
         check_value(tail_cycles_config, 96, "busy freeze tail config");
+        check_value(raw_hwc_compute_start_level, 64, "busy freeze raw start level");
 
         write_reg(6'h00, 32'd1);
         repeat (2) @(negedge clk);
@@ -491,6 +507,18 @@ module tb_layer_config_regs;
         cfg_addr = 6'h27;
         #1;
         check_value(cfg_rdata, 29, "vector stall counter");
+        cfg_addr = 6'h3c;
+        #1;
+        check_value(cfg_rdata, 31, "raw load active counter");
+        cfg_addr = 6'h3d;
+        #1;
+        check_value(cfg_rdata, 37, "raw load unpack counter");
+        cfg_addr = 6'h3e;
+        #1;
+        check_value(cfg_rdata, 41, "raw replay active counter");
+        cfg_addr = 6'h3f;
+        #1;
+        check_value(cfg_rdata, 43, "raw replay wait-ready counter");
 
         $display("=== tb_layer_config_regs: %0d pass, %0d fail ===", pass, fail);
         if (fail != 0) $fatal(1);

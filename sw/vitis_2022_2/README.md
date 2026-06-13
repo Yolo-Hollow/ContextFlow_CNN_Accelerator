@@ -476,15 +476,19 @@ The runtime prints one additional line per layer:
 ```text
 SUBPERF layer=... feed_fill=... feed_push=... feed_fifo_stall=... feed_win_not_ready=... comp_wload=... comp_active=... comp_fire=... comp_ifm_stall=... comp_tail=... version=2
 TAILSTAT layer=... tail_config=... tail_elapsed=... drain_empty_wait=... drain_empty_sticky=...
+RAWSTAT layer=... load_active=... load_unpack=... replay_active=... replay_wait_ready=...
 ```
 
 `SUBPERF` version 2 keeps the same feeder/compute counters and adds the
 tailtrim safety map at byte offsets `0xe0..0xec`: configured tail cycles,
 elapsed tail cycles, PSUM-drain FIFO-empty wait cycles, and a sticky
-FIFO-empty wait flag. `tools/demo/summarize_uart_perf.py` reports aggregate
-`SUBPERF`/`TAILSTAT` totals and residuals against `STAGEPERF`. Local xsim
-validation has passed for configuration register reads, AXI-Lite reads,
-native1x1, Conv0 batch, Conv7/Conv9 native1x1, and the r18_c8 Layer06 tile.
+FIFO-empty wait flag. The raw-HWC replay diagnostic map at byte offsets
+`0xf0..0xfc` reports cache load-active cycles, beat-unpack cycles, replay-active
+cycles, and replay wait-for-ready cycles. `tools/demo/summarize_uart_perf.py`
+reports aggregate `SUBPERF`/`TAILSTAT`/`RAWSTAT` totals and residuals against
+`STAGEPERF`. Local xsim validation has passed for configuration register reads,
+AXI-Lite reads, native1x1, Conv0 batch, Conv7/Conv9 native1x1, and the r18_c8
+Layer06 tile.
 
 Board validation passed with full bitstream programming. The fixed batch chain
 remained bit-exact and matched the Conv9 decode golden:
@@ -810,3 +814,113 @@ continuing with stale registers.
 The deterministic smoke is kept as a control/DMA/GPIO diagnostic. Core
 correctness should be judged first from the real Conv0 crop + pool fixture,
 which uses external RTL semantic golden data.
+
+## 2026-06-13 raw-HWC replay diagnostics
+
+Diagnostic RTL adds read-only raw-HWC cache counters at accelerator byte
+offsets `0xf0..0xfc`:
+
+```text
+0xf0 RAW_LOAD_ACTIVE
+0xf4 RAW_LOAD_UNPACK
+0xf8 RAW_REPLAY_ACTIVE
+0xfc RAW_REPLAY_WAIT_READY
+```
+
+The runtime prints one `RAWSTAT` line per layer, and
+`tools/demo/summarize_uart_perf.py` aggregates the totals.
+
+The dedicated diagnostic hardware build is:
+
+```text
+build_system_xck26_kv260_rawstat_2022_2
+```
+
+It was built with `HWC_CACHE_AW=14`, `HWC_CACHE_DEPTH=13312`,
+`HWC_CACHE_STRIPES=4`, `HWC_CACHE_USE_URAM=1`, and `TAIL_CYCLES_CONFIG=1`.
+Implementation completed with all timing constraints met (`WNS=0.000 ns`,
+`TNS=0`, `WHS=0.010 ns`, `THS=0`) and zero routing errors. Final resources
+include `45.5` BRAM tiles, `8` URAMs, and `183` DSPs. The generated XSA is:
+
+```text
+build_system_xck26_kv260_rawstat_2022_2/conv_accel_ps_dma_minimal.xsa
+```
+
+Board validation used full PL programming for the first run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/run_kv260_smoke_sequence.ps1 -PortName COM8 -BuildDirName build_system_xck26_kv260_rawstat_2022_2 -RunConv0Conv9DdrDemo -RawHwcConv5 -RawHwcConv6 -RawHwcConv8 -InputPackage D:\MPSoC\accelerator_systolic\demo_output\20260608_234008_maksssksksss0\image_package.bin -CaptureSeconds 240
+```
+
+The log
+`build_system_xck26_kv260_rawstat_2022_2/board_smoke_logs/20260613_193856_conv0_conv9_ddr_demo_COM8.log`
+passed with the unchanged `with_mask` detection (`score=0.357321`) and summed
+to `544.576 ms`.
+
+A fast-run A/B test then enabled Conv4 as well:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/run_kv260_smoke_sequence.ps1 -PortName COM8 -BuildDirName build_system_xck26_kv260_rawstat_2022_2 -FastRun -RunConv0Conv9DdrDemo -RawHwcConv4 -RawHwcConv5 -RawHwcConv6 -RawHwcConv8 -InputPackage D:\MPSoC\accelerator_systolic\demo_output\20260608_234008_maksssksksss0\image_package.bin -CaptureSeconds 240
+```
+
+The log
+`build_system_xck26_kv260_rawstat_2022_2/board_smoke_logs/20260613_194053_conv0_conv9_ddr_demo_COM8.log`
+passed with the same detection and summed to `549.328 ms`.
+
+The important RAWSTAT result is that `replay_wait_ready=0` for Conv4, Conv5,
+Conv6, and Conv8. Conv4 reports `load_active=971792` and
+`replay_active=1384448`; Conv6 reports `load_active=1153984` and
+`replay_active=5537792`. The raw cache replay is therefore not blocked by IFM
+FIFO backpressure. The remaining cost is the serialized
+load/replay-before-compute boundary, so the next optimization should overlap
+raw-HWC replay with compute after a safe FIFO watermark rather than simply
+enabling raw-HWC on earlier 3x3 layers.
+
+## 2026-06-13 raw-HWC replay/compute overlap prototype
+
+The current RTL prototype adds a controlled overlap mode for raw-HWC replay.
+`TAIL_CONFIG` at byte offset `0xe0` now packs two fields:
+
+```text
+[15:0]  tail_cycles
+[31:16] raw_hwc_compute_start_level
+```
+
+The low half keeps the previous tail-cycle override behavior. The high half is
+the raw-HWC feeder watermark: when nonzero, compute may start after the raw
+vector feeder has pushed at least that many pixel vectors into the IFM FIFOs.
+PSUM drain still waits until both compute completion and the feeder-done event
+have occurred, so output ordering and all DMA/AXIS formats remain unchanged.
+
+The software build script accepts:
+
+```powershell
+-RawHwcComputeStartLevel <N>
+```
+
+and currently defaults to `0`, keeping the serialized raw-HWC path as the safe
+default. Nonzero values enable the experimental overlap path. Local Icarus checks for the configuration registers, scheduler
+overlap, and feeder path pass, and the Python image-demo parser test passes in
+`conda pytorch_env`.
+
+The first hardware build for this prototype is:
+
+```text
+build_system_xck26_kv260_hwcoverlap_2022_2
+```
+
+It uses the same URAM raw-HWC cache parameters as the prior 3x3 build and
+`TAIL_CYCLES_CONFIG=1`. Vivado `2022.2` implementation met timing with
+`WNS=+0.143 ns`, `TNS=0`, `WHS=+0.010 ns`, `THS=0`, and zero routing errors.
+Final resources are `54145` LUT, `47037` FF, `45.5` BRAM, `8` URAM, and `183`
+DSP. The XSA SHA256 is
+`010D703591D7F1322E474ABEDEBDED956EE237B50C5D2B0B8B406C0C1F487B26`; the
+bitstream SHA256 is
+`2567A1C61D98D2A1F53CF17D1D6E552E7E5D8AEA15106AD43A23D48DE0ED2A14`.
+
+Board validation with full programming shows the serialized control value
+`-RawHwcComputeStartLevel 0` passes the fixed-image DDR demo at `544.490 ms`.
+The nonzero overlap candidates tested so far, `64` and `1024`, both timeout at
+Conv5 tile0. Debug registers for the `1024` run show only one vector packet and
+52 compute fires completed while raw-HWC load/replay was still active, so the
+simple total-push watermark is not a safe overlap boundary.

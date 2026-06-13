@@ -56,12 +56,18 @@
 //   0x35 COMP_IFM_STALL: core active cycles stalled by empty IFM FIFO
 //   0x36 COMP_TAIL:      core systolic tail cycles inside compute stage
 //   0x37 SUBPERF_VERSION: fixed sub-stage counter map version
-//   0x38 TAIL_CONFIG:    configured systolic tail cycles per compute pass
+//   0x38 TAIL_CONFIG:    [15:0]=configured systolic tail cycles per compute pass,
+//                        [31:16]=raw-HWC compute start FIFO level
 //   0x39 TAIL_ELAPSED:   alias of COMP_TAIL for tail-sweep scripts
 //   0x3a DRAIN_EMPTY_WAIT: PSUM drain cycles waiting for FIFO data
 //   0x3b DRAIN_EMPTY_STICKY: sticky flag for any PSUM drain FIFO wait
+//   0x3c RAW_LOAD_ACTIVE: raw-HWC cache loading cycles
+//   0x3d RAW_LOAD_UNPACK: raw-HWC cache beat-unpack cycles
+//   0x3e RAW_REPLAY_ACTIVE: raw-HWC cache replay active cycles
+//   0x3f RAW_REPLAY_WAIT_READY: raw-HWC replay cycles stalled by IFM FIFO ready
 module layer_config_regs #(
-    parameter IFM_FIFO_DEPTH = 1024
+    parameter IFM_FIFO_DEPTH = 1024,
+    parameter [15:0] RAW_HWC_COMPUTE_START_LEVEL = 16'd0
 ) (
     input  clk,
     input  rst,
@@ -108,6 +114,10 @@ module layer_config_regs #(
     input  [31:0] vector_completed_pixels,
     input  [31:0] vector_accepted_beats,
     input  [31:0] vector_fifo_stall_cycles,
+    input  [31:0] raw_hwc_load_active_cycles,
+    input  [31:0] raw_hwc_load_unpack_cycles,
+    input  [31:0] raw_hwc_replay_active_cycles,
+    input  [31:0] raw_hwc_replay_wait_ready_cycles,
     output reg start_pulse,
 
     output reg [8:0]  fm_h,
@@ -134,6 +144,7 @@ module layer_config_regs #(
     output reg [31:0] stream_weight_packets,
     output reg [31:0] stream_ifm_packets,
     output reg [15:0] tail_cycles_config,
+    output reg [15:0] raw_hwc_compute_start_level,
     output reg        config_error
 );
     reg done_sticky;
@@ -196,6 +207,7 @@ module layer_config_regs #(
             stream_weight_packets <= 32'd0;
             stream_ifm_packets <= 32'd0;
             tail_cycles_config <= 16'd0;
+            raw_hwc_compute_start_level <= RAW_HWC_COMPUTE_START_LEVEL;
             config_error <= 1'b0;
             perf_busy_cycles <= 32'd0;
             perf_wait_any_cycles <= 32'd0;
@@ -359,7 +371,10 @@ module layer_config_regs #(
                     6'h1a: if (cfg_idle) stream_bias_packets <= cfg_wdata;
                     6'h1b: if (cfg_idle) stream_weight_packets <= cfg_wdata;
                     6'h1c: if (cfg_idle) stream_ifm_packets <= cfg_wdata;
-                    6'h38: if (cfg_idle) tail_cycles_config <= cfg_wdata[15:0];
+                    6'h38: if (cfg_idle) begin
+                        tail_cycles_config <= cfg_wdata[15:0];
+                        raw_hwc_compute_start_level <= cfg_wdata[31:16];
+                    end
                     default: begin end
                 endcase
             end
@@ -420,10 +435,14 @@ module layer_config_regs #(
             6'h35: cfg_rdata = perf_comp_ifm_stall_cycles;
             6'h36: cfg_rdata = perf_comp_tail_cycles;
             6'h37: cfg_rdata = 32'd2;
-            6'h38: cfg_rdata = perf_tail_cycles_configured;
+            6'h38: cfg_rdata = {raw_hwc_compute_start_level, perf_tail_cycles_configured[15:0]};
             6'h39: cfg_rdata = perf_comp_tail_cycles;
             6'h3a: cfg_rdata = perf_drain_fifo_empty_wait_cycles;
             6'h3b: cfg_rdata = {31'd0, perf_drain_fifo_empty_sticky_latched};
+            6'h3c: cfg_rdata = raw_hwc_load_active_cycles;
+            6'h3d: cfg_rdata = raw_hwc_load_unpack_cycles;
+            6'h3e: cfg_rdata = raw_hwc_replay_active_cycles;
+            6'h3f: cfg_rdata = raw_hwc_replay_wait_ready_cycles;
             default: cfg_rdata = 32'd0;
         endcase
     end
