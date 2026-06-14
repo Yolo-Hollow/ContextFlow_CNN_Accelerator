@@ -60,7 +60,9 @@ module tb_layer_scheduler_psum_overlap;
         .COUT_TILE(COUT_TILE)
     ) dut (
         .clk(clk), .rst(rst), .start(start), .busy(busy), .done(done),
-        .k_total(14'd12), .cout_total(11'd4), .num_pixels(16'd80),
+        // Runtime Conv5/6/8 spatial tiles contain 13 pixels. Keep this test
+        // at the real tile size so an unreachable fixed warmup cannot pass.
+        .k_total(14'd12), .cout_total(11'd4), .num_pixels(16'd13),
         .pass_base_k(pass_base_k), .cout_base(cout_base),
         .cout_valid(cout_valid), .num_pixels_out(num_pixels_out),
         .is_first_pass(is_first_pass), .is_final_pass(is_final_pass),

@@ -101,7 +101,10 @@ module layer_scheduler_stream #(
 
     localparam [14:0] K_STEP_EXT = K_TILE;
     localparam [10:0] COUT_STEP = COUT_TILE;
-    localparam [15:0] PSUM_OVERLAP_LEAD = (K_TILE * 5) + (COUT_TILE / 2 * 4) + 32;
+    // The partial-PSUM reader has an exact per-pixel available-count guard.
+    // One committed packet is therefore sufficient to start the next pass;
+    // any later read that catches the writer is stalled by psum_stream_feeder.
+    localparam [15:0] PSUM_OVERLAP_LEAD = 16'd1;
     wire [14:0] next_k = {1'b0, pass_base_k} + K_STEP_EXT;
     wire last_k = (next_k >= {1'b0, k_total});
     wire last_cout = (cout_base + COUT_STEP >= cout_total);
