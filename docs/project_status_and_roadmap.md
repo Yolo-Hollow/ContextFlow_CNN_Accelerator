@@ -721,7 +721,30 @@ drain_residual = STAGE_DRAIN
   Vitis 2022.2: batch-chain and DDR-demo experimental ELFs build
   ```
 
-- This stage is not yet synthesized or board-tested. The current board
-  performance baseline remains `b_passprefetch_22` at about `386.64 ms`.
-  Next acceptance step is a 2022.2 implementation followed by full-programming
-  batch-chain and two-image DDR-demo validation.
+- Vivado `2022.2` synthesis and implementation completed in
+  `D:/MPSoC/b_psumovl_22` with the current production parameters:
+  `ROWS=18`, `COLS=8`, `IFM_BANKS=2`, `HWC_CACHE_AW=14`,
+  `HWC_CACHE_DEPTH=13312`, `HWC_CACHE_STRIPES=4`,
+  `HWC_CACHE_USE_URAM=1`, and `TAIL_CYCLES_CONFIG=1`.
+- Final implementation meets all timing constraints:
+  `WNS=+0.038 ns`, `TNS=0`, `WHS=+0.010 ns`, and `THS=0`.
+  Route status reports `110035` fully routed nets and `0` routing errors.
+- Final resources are `78900 LUT`, `48294 FF`, `31 BRAM`, `8 URAM`, and
+  `183 DSP`. Compared with `b_passprefetch_22`, LUT use increases by `24353`
+  and BRAM use falls from `45.5` to `31`. Hierarchical synthesis attributes
+  most of this change to `u_pp`: the concurrent-read/write PSUM ping-pong
+  buffer is implemented as about `23616` LUTs instead of the previous
+  `14 BRAM` mapping. The design fits, but this is an important architecture
+  cost and leaves only `+0.038 ns` final setup margin.
+- Artifact hashes:
+
+  ```text
+  bit A4D3C5796631A8F5DDC6B1948824D0DE7340ED452EE31E67C91084A0F2C0B4E3
+  xsa 4482BA0C2C932DD6F52E8856157C23DA4195C38B794BFADA42FEC04EE4C9F8EB
+  ```
+
+- Board validation is still pending. The current measured board baseline
+  remains `b_passprefetch_22` at about `386.64 ms`. The next acceptance step
+  is full programming, batch-chain bit-exact validation, and two-image DDR
+  demo measurement. If the measured gain is small, the LUT-heavy PSUM storage
+  should be redesigned as explicit dual-bank BRAM before keeping this mode.

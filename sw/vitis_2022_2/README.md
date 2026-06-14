@@ -1128,5 +1128,22 @@ underflow, and version. Local Icarus scheduler/config tests pass. Vivado/xsim
 `2022.2` external-golden tests pass for Conv5, Conv6, and Conv8 raw-HWC tile0
 with overlap64, early drain, pass prefetch, and partial-PSUM overlap enabled;
 each reports `854 pass, 0 fail`. The batch-chain and DDR-demo experimental
-ELFs also build successfully. Synthesis and board validation have not yet been
-performed.
+ELFs also build successfully.
+
+The Vivado `2022.2` implementation is available at
+`D:/MPSoC/b_psumovl_22`. It meets timing with `WNS=+0.038 ns`, `TNS=0`,
+`WHS=+0.010 ns`, and `THS=0`; route status has zero errors. Resources are
+`78900 LUT`, `48294 FF`, `31 BRAM`, `8 URAM`, and `183 DSP`.
+
+The partial-PSUM overlap prototype currently has a significant storage cost:
+the concurrent ping-pong PSUM buffer maps to about `23616` LUTs instead of the
+previous `14 BRAM` implementation. The bitstream is suitable for board
+validation, but this mapping should be revisited if the measured performance
+gain does not justify the extra LUT use and reduced timing margin.
+
+```text
+bit SHA256 A4D3C5796631A8F5DDC6B1948824D0DE7340ED452EE31E67C91084A0F2C0B4E3
+xsa SHA256 4482BA0C2C932DD6F52E8856157C23DA4195C38B794BFADA42FEC04EE4C9F8EB
+```
+
+Board validation has not yet been performed.

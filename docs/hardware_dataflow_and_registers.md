@@ -695,5 +695,11 @@ Additional read-only counters:
 
 Vivado/xsim `2022.2` external-golden tests pass for Conv5, Conv6, and Conv8
 raw-HWC tile0 with overlap64, early drain, pass prefetch, and partial-PSUM
-overlap enabled. Synthesis, implementation, and board validation remain
-pending.
+overlap enabled.
+
+The first Vivado `2022.2` implementation in `D:/MPSoC/b_psumovl_22` meets
+timing (`WNS=+0.038 ns`, `WHS=+0.010 ns`) with zero routing errors. The
+concurrent PSUM ping-pong memory currently maps to about `23616` LUTs rather
+than the previous `14 BRAM` storage, increasing total LUT use to `78900`.
+Board validation remains pending, and a later revision should restore explicit
+BRAM mapping if the measured overlap gain does not justify this resource cost.
