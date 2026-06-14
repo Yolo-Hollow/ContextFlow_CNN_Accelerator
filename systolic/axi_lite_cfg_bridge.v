@@ -3,12 +3,12 @@
 // Minimal AXI4-Lite to local configuration bus bridge.
 //
 // Address mapping is word based:
-//   AXI byte address [7:2] -> cfg_addr[5:0]
+//   AXI byte address [8:2] -> cfg_addr[6:0]
 //
 // This bridge intentionally only wraps the local config register path. Data
 // movement for bias/weight/IFM/OFM remains outside this module.
 module axi_lite_cfg_bridge #(
-    parameter ADDR_W = 8,
+    parameter ADDR_W = 9,
     parameter DATA_W = 32
 ) (
     input  clk,
@@ -37,7 +37,7 @@ module axi_lite_cfg_bridge #(
     input                   s_axi_rready,
 
     output reg              cfg_wr_en,
-    output reg [5:0]        cfg_addr,
+    output reg [6:0]        cfg_addr,
     output reg [DATA_W-1:0] cfg_wdata,
     input      [DATA_W-1:0] cfg_rdata,
     output reg              cfg_rd_en
@@ -105,7 +105,7 @@ module axi_lite_cfg_bridge #(
             s_axi_rresp <= 2'b00;
             s_axi_rvalid <= 1'b0;
             cfg_wr_en <= 1'b0;
-            cfg_addr <= 6'd0;
+            cfg_addr <= 7'd0;
             cfg_wdata <= {DATA_W{1'b0}};
             cfg_rd_en <= 1'b0;
             awaddr_hold <= {ADDR_W{1'b0}};
@@ -136,11 +136,11 @@ module axi_lite_cfg_bridge #(
             end
 
             if (do_write) begin
-                cfg_addr <= write_addr[7:2];
+                cfg_addr <= write_addr[8:2];
                 aw_hold_valid <= 1'b0;
                 w_hold_valid <= 1'b0;
-                if (write_strb == {DATA_W/8{1'b1}} || write_addr[7:2] == 6'h00) begin
-                    cfg_wdata <= (write_addr[7:2] == 6'h00) ? apply_wstrb_mask(write_data, write_strb) : write_data;
+                if (write_strb == {DATA_W/8{1'b1}} || write_addr[8:2] == 7'h00) begin
+                    cfg_wdata <= (write_addr[8:2] == 7'h00) ? apply_wstrb_mask(write_data, write_strb) : write_data;
                     cfg_wr_en <= 1'b1;
                     s_axi_bresp <= 2'b00;
                     s_axi_bvalid <= 1'b1;
@@ -156,7 +156,7 @@ module axi_lite_cfg_bridge #(
             end
 
             if (wr_state == WR_MERGE) begin
-                cfg_addr <= wr_merge_addr[7:2];
+                cfg_addr <= wr_merge_addr[8:2];
                 cfg_wdata <= merge_wstrb(cfg_rdata, wr_merge_data, wr_merge_strb);
                 cfg_wr_en <= 1'b1;
                 s_axi_bresp <= 2'b00;
@@ -167,7 +167,7 @@ module axi_lite_cfg_bridge #(
             case (rd_state)
                 RD_IDLE: begin
                     if (s_axi_arvalid && s_axi_arready) begin
-                        cfg_addr <= s_axi_araddr[7:2];
+                        cfg_addr <= s_axi_araddr[8:2];
                         cfg_rd_en <= 1'b1;
                         rd_state <= RD_WAIT;
                     end

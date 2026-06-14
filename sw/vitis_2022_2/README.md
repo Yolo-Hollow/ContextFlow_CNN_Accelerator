@@ -244,7 +244,7 @@ per-request mode remains available at compile time.
 The batch control registers are:
 
 ```text
-0x64 STREAM_CFG       bit0 = batch mode, bit1 = experimental raw-HWC IFM cache
+0x64 STREAM_CFG       bit0 = batch mode, bit1 = experimental raw-HWC IFM cache, bit2 = experimental early PSUM drain, bit3 = experimental K-pass prefetch, bit4 = experimental partial-PSUM overlap
 0x68 BIAS_PACKETS     expected packet count
 0x6c WEIGHT_PACKETS   expected packet count
 0x70 IFM_PACKETS      expected packet count
@@ -957,3 +957,176 @@ RawHwcComputeStartLevel=0   PASS  total=544.415 ms  log=20260613_221401_conv0_co
 The detection result is unchanged (`with_mask`, score `0.357321`). The timeout
 is fixed, but the measured speedup is only about `1.97 ms`, so this overlap
 knob is functional but not yet a major performance lever.
+
+## 2026-06-13 PSUM drain sub-performance counters
+
+The current RTL adds a diagnostic-only `DRAINPERF` line to split the PSUM drain
+stage into smaller causes. This does not change the DMA packet formats, raw-HWC
+tile format, prepacked IFM format, weight stream format, quantization path, or
+OFM output order.
+
+The AXI-Lite config address path is now 9-bit wide at the top-level wrapper.
+Existing offsets below `0x100` are unchanged, and the new read-only offsets are:
+
+```text
+0x100 DRAIN_READ_FIRE
+0x104 DRAIN_PACKET_FIRE
+0x108 DRAIN_READY_STALL
+0x10c DRAIN_INTERNAL_FULL
+0x110 DRAINPERF_VERSION
+```
+
+Runtime output now includes:
+
+```text
+DRAINPERF layer=... read_fire=... packet_fire=... ready_stall=... internal_full=... empty_wait=... version=...
+```
+
+`tools/demo/summarize_uart_perf.py` parses this line and reports drain residual
+cycles. Before board use, rebuild the Vivado 2022.2 system so the BD/IP wrapper
+sees the widened AXI-Lite address port.
+
+The first 2022.2 drainperf bitstream was built in `D:/MPSoC/b_drainperf_22`
+with the same URAM raw-HWC cache parameters and `TAIL_CYCLES_CONFIG=1`.
+Full-programming board validation passed for `Conv5/6/8 raw-HWC` and
+`RawHwcComputeStartLevel=64`:
+
+```text
+DDR demo    PASS  total=543.006 ms  log=20260613_231413_conv0_conv9_ddr_demo_COM8.log
+Batch chain PASS  RTL golden and YOLO decode matched  log=20260613_231623_conv0_conv9_batch_chain_COM8.log
+```
+
+The new counters show that Conv5/6/8 drain bubbles are dominated by
+`empty_wait`, while `ready_stall` and `internal_full` are zero for those backend
+layers. The next performance work should therefore inspect PSUM availability
+and drain scheduling rather than OFM downstream backpressure.
+
+## 2026-06-14 experimental early PSUM drain
+
+`-EarlyDrain` enables `ACCEL_EARLY_DRAIN=1`, which sets `STREAM_CFG[2]` for
+the experimental ELF variant. Default builds leave this bit at `0`.
+
+Early drain lets the scheduler start `psum_drain_writer` after the current pass
+has begun producing PSUM packets, instead of waiting for compute completion.
+The scheduler still waits for feeder completion, compute completion, and drain
+completion before advancing to the next K/COUT block, so the optimization does
+not change packet formats, layer order, DMA usage, or quantization semantics.
+
+Validation summary:
+
+```text
+Icarus: tb_layer_config_regs, tb_axi_lite_cfg_bridge,
+        tb_layer_scheduler_early_drain, tb_layer_scheduler_overlap,
+        tb_psum_drain_writer PASS
+xsim 2022.2: Conv5/Conv6/Conv8 raw-HWC tile0,
+             RawHwcComputeStartLevel=64, EarlyDrain PASS
+Vivado 2022.2 build: D:/MPSoC/b_earlydrain_22
+Timing: WNS=+0.181 ns, TNS=0, WHS=+0.010 ns, THS=0
+Resources: 54437 LUT, 47179 FF, 45.5 BRAM, 8 URAM, 183 DSP
+```
+
+Board validation on `COM8`:
+
+```text
+DDR demo maksssksksss0  PASS  total=520.446 ms  log=20260614_000915_conv0_conv9_ddr_demo_COM8.log
+DDR demo maksssksksss1  PASS  total=520.505 ms  log=20260614_001239_conv0_conv9_ddr_demo_COM8.log
+Batch chain             PASS  RTL golden + YOLO decode  log=20260614_001057_conv0_conv9_batch_chain_COM8.log
+```
+
+Compared with the `b_drainperf_22` baseline (`543.006 ms`), early drain saves
+about `22.6 ms`. Conv5/6/8 still report the same `DRAINPERF empty_wait`
+components, so the gain comes from overlap/hiding rather than faster PSUM FIFO
+production. This is useful but not a complete solution for the remaining
+feeder/compute/drain serialization bottleneck.
+
+## 2026-06-14 experimental K-pass prefetch
+
+`-PassPrefetch` enables `ACCEL_PASS_PREFETCH=1`, which sets `STREAM_CFG[3]`
+only for raw-HWC layers. Default builds leave this bit at `0`.
+
+The first RTL prototype prefetches the next K pass inside the same COUT block.
+It keeps the current execution pass and the raw-HWC replay pass separate:
+compute/PSUM/final-pass logic still uses the current execution K pass, while
+the raw-HWC cache may replay `feeder_pass_base_k` for the next K pass. The
+prefetch path never crosses COUT blocks and never starts next-pass compute until
+the current pass drain has finished.
+
+Runtime output now includes:
+
+```text
+PREFETCHPERF layer=... start=... weight_done=... feed_done=... hit=... miss=... stall=... version=...
+```
+
+New read-only byte offsets:
+
+```text
+0x114 PREFETCH_START
+0x118 PREFETCH_WEIGHT_DONE
+0x11c PREFETCH_FEED_DONE
+0x120 PREFETCH_HIT
+0x124 PREFETCH_MISS
+0x128 PREFETCH_STALL
+0x12c PREFETCHPERF_VERSION
+```
+
+Local validation summary:
+
+```text
+Icarus: tb_layer_config_regs, tb_axi_lite_cfg_bridge,
+        tb_layer_scheduler_pass_prefetch PASS
+xsim 2022.2: Conv5/Conv6/Conv8 raw-HWC tile0,
+             RawHwcComputeStartLevel=64, EarlyDrain, PassPrefetch PASS
+Python: tb/test_kv260_image_demo.py PASS
+```
+
+One important implementation detail is that `systolic_top` now uses an explicit
+weight-read budget: the compute start cycle consumes the first vector and the
+following load cycles consume exactly `COLS-1` more vectors. This prevents the
+array from reading into a prefetched next-pass weight tile while also avoiding
+the earlier under-read case.
+
+The prefetch trigger is intentionally conservative in this prototype, so it
+overlaps mainly the drain / pass-boundary window. The `D:/MPSoC/b_passprefetch_22`
+2022.2 bitstream meets timing (`WNS=+0.280 ns`, `TNS=0`, `WHS=+0.011 ns`,
+`THS=0`), and its SHA256 is
+`7439BDAEDAD63F1F0628400EFD1989A4A937CE64796E09E42902647B877CC14A`.
+
+Board validation on `COM8` passed:
+
+```text
+Batch chain             PASS  RTL golden + YOLO decode  log=20260615_000328_conv0_conv9_batch_chain_COM8.log
+DDR demo maksssksksss0  PASS  total=386.649 ms          log=20260615_000527_conv0_conv9_ddr_demo_COM8.log
+DDR demo maksssksksss1  PASS  total=386.637 ms          log=20260615_000700_conv0_conv9_ddr_demo_COM8.log
+```
+
+`PREFETCHPERF` reports `start=97792`, `weight_done=97792`,
+`feed_done=97792`, `hit=97792`, `miss=0`, and `stall=0` across the full DDR
+demo. Compared with the previous early-drain baseline (`520.446 ms`), this
+saves about `133.8 ms`; compared with the drainperf baseline (`543.006 ms`), it
+saves about `156.4 ms`.
+
+## 2026-06-15 experimental partial-PSUM overlap
+
+`-PsumStreamOverlap` defines `ACCEL_PSUM_STREAM_OVERLAP=1` and sets
+`STREAM_CFG[4]` for the selected raw-HWC Conv5/6/8 layers. Default ELFs leave
+the bit clear.
+
+The mode allows the next K-pass compute to start after the previous pass has
+written a conservative lead of partial-PSUM pixels, rather than waiting for
+the complete partial drain. Ping-pong PSUM banks and per-bank available counts
+guard read-after-write ordering. The external DMA, weight, raw-HWC, OFM, and
+quantization formats are unchanged.
+
+Runtime output adds:
+
+```text
+PSUMOVLPERF layer=... start=... hit=... wait_psum=... underflow=... version=...
+```
+
+Read-only byte offsets are `0x130` through `0x140` for start, hit, wait,
+underflow, and version. Local Icarus scheduler/config tests pass. Vivado/xsim
+`2022.2` external-golden tests pass for Conv5, Conv6, and Conv8 raw-HWC tile0
+with overlap64, early drain, pass prefetch, and partial-PSUM overlap enabled;
+each reports `854 pass, 0 fail`. The batch-chain and DDR-demo experimental
+ELFs also build successfully. Synthesis and board validation have not yet been
+performed.

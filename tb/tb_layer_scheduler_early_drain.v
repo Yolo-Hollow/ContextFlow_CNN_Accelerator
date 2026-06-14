@@ -1,6 +1,6 @@
 `timescale 1ns / 1ps
 
-module tb_layer_scheduler_overlap;
+module tb_layer_scheduler_early_drain;
     reg clk = 1'b0;
     reg rst = 1'b1;
     reg start = 1'b0;
@@ -25,21 +25,21 @@ module tb_layer_scheduler_overlap;
     reg weight_load_done = 1'b0;
     reg feeder_done = 1'b0;
     reg feeder_compute_ready = 1'b0;
+    reg compute_fire = 1'b0;
     reg compute_done = 1'b0;
     reg psum_drain_done = 1'b0;
+    reg psum_drain_data_ready = 1'b0;
 
     integer fail = 0;
-    integer compute_before_feeder_done = 0;
-    integer drain_before_feeder_done = 0;
-    integer cycle_count = 0;
-    reg feeder_done_seen = 1'b0;
+    integer weight_start_count = 0;
+    integer drain_started_before_compute_done = 0;
 
     layer_scheduler_stream #(
         .K_TILE(18),
         .COUT_TILE(16)
     ) dut (
         .clk(clk), .rst(rst), .start(start), .busy(busy), .done(done),
-        .k_total(14'd18), .cout_total(11'd16), .num_pixels(16'd169),
+        .k_total(14'd36), .cout_total(11'd16), .num_pixels(16'd52),
         .pass_base_k(pass_base_k), .cout_base(cout_base),
         .cout_valid(cout_valid), .num_pixels_out(num_pixels_out),
         .is_first_pass(is_first_pass), .is_final_pass(is_final_pass),
@@ -51,12 +51,12 @@ module tb_layer_scheduler_overlap;
         .feeder_compute_ready(feeder_compute_ready),
         .feeder_overlap_mode(1'b1),
         .raw_hwc_mode(1'b0),
-        .early_drain_enable(1'b0),
+        .early_drain_enable(1'b1),
         .pass_prefetch_enable(1'b0),
         .psum_stream_overlap_enable(1'b0),
-        .psum_drain_data_ready(1'b0),
+        .psum_drain_data_ready(psum_drain_data_ready),
         .psum_drain_packet_fire(1'b0),
-        .compute_fire(1'b0),
+        .compute_fire(compute_fire),
         .compute_start(compute_start), .compute_done(compute_done),
         .psum_drain_start(psum_drain_start), .psum_drain_done(psum_drain_done),
         .feeder_pass_base_k(),
@@ -72,42 +72,17 @@ module tb_layer_scheduler_overlap;
 
     always @(posedge clk) begin
         if (rst) begin
-            cycle_count <= 0;
-            feeder_done_seen <= 1'b0;
+            weight_start_count <= 0;
+            drain_started_before_compute_done <= 0;
         end else begin
-            cycle_count <= cycle_count + 1;
-            if (feeder_done)
-                feeder_done_seen <= 1'b1;
-            if (compute_start && !feeder_done)
-                compute_before_feeder_done <= 1;
-            if (psum_drain_start && !feeder_done_seen)
-                drain_before_feeder_done <= 1;
+            if (weight_load_start)
+                weight_start_count <= weight_start_count + 1;
+            if (psum_drain_start && !compute_done)
+                drain_started_before_compute_done <= 1;
         end
     end
 
     initial begin
-        run_overlap_case(0);
-        run_overlap_case(1);
-
-        $display("=== tb_layer_scheduler_overlap: %0d fail ===", fail);
-        if (fail != 0) $fatal(1);
-        $finish;
-    end
-
-    task run_overlap_case;
-        input feeder_done_before_compute;
-        begin
-        rst = 1'b1;
-        start = 1'b0;
-        bias_load_done = 1'b0;
-        weight_load_done = 1'b0;
-        feeder_done = 1'b0;
-        feeder_compute_ready = 1'b0;
-        compute_done = 1'b0;
-        psum_drain_done = 1'b0;
-        compute_before_feeder_done = 0;
-        drain_before_feeder_done = 0;
-        feeder_done_seen = 1'b0;
         repeat (3) @(negedge clk);
         rst = 1'b0;
         @(negedge clk);
@@ -116,78 +91,86 @@ module tb_layer_scheduler_overlap;
         start = 1'b0;
 
         wait(bias_load_start);
-        @(negedge clk);
-        bias_load_done = 1'b1;
-        @(negedge clk);
-        bias_load_done = 1'b0;
+        pulse_bias_done();
 
         wait(weight_load_start);
-        @(negedge clk);
-        weight_load_done = 1'b1;
-        @(negedge clk);
-        weight_load_done = 1'b0;
+        pulse_weight_done();
 
         wait(feeder_start);
         repeat (2) @(negedge clk);
         feeder_compute_ready = 1'b1;
-
         wait(compute_start);
         @(negedge clk);
         feeder_compute_ready = 1'b0;
 
-        if (feeder_done_before_compute) begin
-            repeat (1) @(negedge clk);
-            feeder_done = 1'b1;
-            @(negedge clk);
-            feeder_done = 1'b0;
-            repeat (3) @(negedge clk);
-            compute_done = 1'b1;
-            @(negedge clk);
-            compute_done = 1'b0;
-        end else begin
-            repeat (2) @(negedge clk);
-            compute_done = 1'b1;
-            @(negedge clk);
-            compute_done = 1'b0;
-
-            repeat (3) @(negedge clk);
-            feeder_done = 1'b1;
-            @(negedge clk);
-            feeder_done = 1'b0;
-        end
-
+        compute_fire = 1'b1;
+        repeat (2) @(negedge clk);
+        psum_drain_data_ready = 1'b1;
         wait(psum_drain_start);
         @(negedge clk);
+        psum_drain_data_ready = 1'b0;
+
+        repeat (2) @(negedge clk);
         psum_drain_done = 1'b1;
         @(negedge clk);
         psum_drain_done = 1'b0;
 
-        wait(done);
+        repeat (2) @(negedge clk);
+        compute_done = 1'b1;
         @(negedge clk);
+        compute_done = 1'b0;
+        compute_fire = 1'b0;
 
-        if (!compute_before_feeder_done) begin
-            $display("[FAIL] compute did not start before feeder_done");
-            fail = fail + 1;
-        end
-        if (drain_before_feeder_done) begin
-            $display("[FAIL] drain started before feeder_done");
-            fail = fail + 1;
-        end
-        if (pass_base_k !== 14'd0 || cout_base !== 11'd0 || cout_valid !== 11'd16 ||
-            num_pixels_out !== 16'd169 || !is_first_pass || !is_final_pass ||
-            use_ext_psum || use_psum_stream) begin
-            $display("[FAIL] scheduler outputs changed unexpectedly");
+        repeat (4) @(negedge clk);
+        if (weight_start_count !== 1) begin
+            $display("[FAIL] next pass started before feeder_done weight_start_count=%0d",
+                     weight_start_count);
             fail = fail + 1;
         end
 
-        $display("[INFO] overlap case feeder_done_before_compute=%0d passed", feeder_done_before_compute);
+        feeder_done = 1'b1;
+        @(negedge clk);
+        feeder_done = 1'b0;
+
+        wait(weight_start_count == 2);
+        if (!drain_started_before_compute_done) begin
+            $display("[FAIL] early drain did not start before compute_done");
+            fail = fail + 1;
+        end
+        if (pass_base_k !== 14'd18 || cout_base !== 11'd0 || cout_valid !== 11'd16 ||
+            num_pixels_out !== 16'd52 || is_first_pass || !is_final_pass ||
+            !use_ext_psum || !use_psum_stream) begin
+            $display("[FAIL] second pass scheduler outputs unexpected");
+            fail = fail + 1;
+        end
+
+        $display("=== tb_layer_scheduler_early_drain: %0d fail ===", fail);
+        if (fail != 0) $fatal(1);
+        $finish;
+    end
+
+    task pulse_bias_done;
+        begin
+            @(negedge clk);
+            bias_load_done = 1'b1;
+            @(negedge clk);
+            bias_load_done = 1'b0;
+        end
+    endtask
+
+    task pulse_weight_done;
+        begin
+            @(negedge clk);
+            weight_load_done = 1'b1;
+            @(negedge clk);
+            weight_load_done = 1'b0;
         end
     endtask
 
     initial begin
-        repeat (400) @(negedge clk);
-        $display("[FAIL] timeout cycle=%0d busy=%0d done=%0d compute_before_done=%0d drain_before_done=%0d",
-            cycle_count, busy, done, compute_before_feeder_done, drain_before_feeder_done);
+        repeat (300) @(negedge clk);
+        $display("[FAIL] timeout busy=%0d done=%0d pass_base_k=%0d weight_start_count=%0d",
+                 busy, done, pass_base_k, weight_start_count);
         $fatal(1);
     end
 endmodule

@@ -53,6 +53,7 @@ module systolic_top #(
     input                       use_ext_psum,     // 1: use psum_top_ext; 0: use internal
     input  [COLS*2*PSUM_W-1:0]  psum_stream_data,
     input                       psum_stream_valid,
+    input                       psum_stream_compute_ready,
     input                       use_psum_stream,
 
     // ---- Weight FIFO write ports (fill externally) ----
@@ -74,7 +75,8 @@ module systolic_top #(
     wire perf_comp_ifm_underflow;
     wire [ROWS*IFM_W-1:0] ifm_fifo_rd_data;
     wire [31:0] ifm_fifo_empty;
-    wire compute_ready = !ifm_fifo_empty[0];
+    wire compute_ready = !ifm_fifo_empty[0] &&
+                         (!use_psum_stream || psum_stream_compute_ready);
     assign compute_fire_out = compute_fire;
 
     systolic_ctrl #(
@@ -99,10 +101,21 @@ module systolic_top #(
     assign perf_comp_ifm_stall = perf_comp_ifm_stall_ctrl || perf_comp_ifm_underflow;
 
     // ---- Weight FIFOs (32 × 16-bit) ----
-    // rd_en = start||ctrl_w_load: pre-reads 1 cycle before weight load
-    wire wgt_fifo_rd = ctrl_w_load || start;
+    // Pre-read column 0 on start, then read exactly COLS-1 more packets while
+    // loading. A fixed budget avoids both under-reading and consuming the
+    // first packet of a prefetched next pass.
+    reg [5:0] wgt_reads_left;
+    wire wgt_fifo_rd = start || (ctrl_w_load && (wgt_reads_left != 6'd0));
     wire [ROWS*WEIGHT_W*2-1:0] wgt_fifo_rd_data;
     wire [ROWS-1:0] wgt_fifo_empty;
+    always @(posedge clk) begin
+        if (rst)
+            wgt_reads_left <= 6'd0;
+        else if (start)
+            wgt_reads_left <= COLS - 1;
+        else if (ctrl_w_load && (wgt_reads_left != 6'd0))
+            wgt_reads_left <= wgt_reads_left - 1'b1;
+    end
     genvar r;
     generate
         for (r = 0; r < ROWS; r = r + 1) begin : wgt_fifo_gen

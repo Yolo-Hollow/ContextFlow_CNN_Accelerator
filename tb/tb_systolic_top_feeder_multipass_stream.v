@@ -74,7 +74,7 @@ module tb_systolic_top_feeder_multipass_stream;
         .dma_wr_data(dma_wr_data), .dma_line_advance(dma_line_advance),
         .bias_wr_addr(bias_wr_addr), .bias_wr_data(bias_wr_data), .bias_wr_en(bias_wr_en),
         .is_first_pass(is_first_pass), .psum_top_ext(psum_top_ext), .use_ext_psum(use_ext_psum),
-        .psum_stream_data(psum_stream_data), .psum_stream_valid(psum_stream_valid),
+        .psum_stream_data(psum_stream_data), .psum_stream_valid(psum_stream_valid), .psum_stream_compute_ready(1'b1),
         .use_psum_stream(use_psum_stream),
         .wgt_fifo_wr_en(wgt_fifo_wr_en), .wgt_fifo_wr_data(wgt_fifo_wr_data),
         .wgt_fifo_full(wgt_fifo_full),

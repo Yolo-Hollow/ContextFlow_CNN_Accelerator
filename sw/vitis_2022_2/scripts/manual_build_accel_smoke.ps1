@@ -7,6 +7,9 @@ param(
     [switch]$RawHwcConv6,
     [switch]$RawHwcConv8,
     [switch]$RawHwc3x3All,
+    [switch]$EarlyDrain,
+    [switch]$PassPrefetch,
+    [switch]$PsumStreamOverlap,
     [switch]$TilePerfTrace,
     [int]$RawHwcComputeStartLevel = 0,
     [int]$TailCyclesOverride = 0
@@ -62,6 +65,15 @@ if ($TailCyclesOverride -ne 0) {
 $Defines += "-DACCEL_RAW_HWC_COMPUTE_START_LEVEL=$RawHwcComputeStartLevel"
 if ($TilePerfTrace) {
     $Defines += "-DACCEL_TILE_PERF_TRACE=1"
+}
+if ($EarlyDrain) {
+    $Defines += "-DACCEL_EARLY_DRAIN=1"
+}
+if ($PassPrefetch) {
+    $Defines += "-DACCEL_PASS_PREFETCH=1"
+}
+if ($PsumStreamOverlap) {
+    $Defines += "-DACCEL_PSUM_STREAM_OVERLAP=1"
 }
 $Source = Join-Path $AppSrcDir "main.c"
 if ($Mode -eq "conv0_crop_pool" -or $Mode -eq "conv0_crop_pool_tiles") {
@@ -367,6 +379,15 @@ if ($Mode -eq "conv0_conv9_batch_chain" -or $Mode -eq "conv0_conv9_ddr_demo") {
     }
     if ($RawHwcConv8 -or $RawHwc3x3All) {
         $VariantTags += "conv8"
+    }
+    if ($EarlyDrain) {
+        $VariantTags += "early_drain"
+    }
+    if ($PassPrefetch) {
+        $VariantTags += "pass_prefetch"
+    }
+    if ($PsumStreamOverlap) {
+        $VariantTags += "psum_stream_overlap"
     }
     if ($VariantTags.Count -gt 0) {
         $VariantName = "raw_hwc_" + ($VariantTags -join "_")

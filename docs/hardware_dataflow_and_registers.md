@@ -453,7 +453,7 @@ kernel_1x1=1 时必须满足：
 
 | Byte offset | Name | R/W | Bit field | 作用 |
 |---:|---|---|---|---|
-| `0x64` | `STREAM_CFG` | R/W | `bit0=batch_mode`, `bit1=raw_hwc_mode` | 选择 batch stream 和 raw-HWC cache |
+| `0x64` | `STREAM_CFG` | R/W | `bit0=batch_mode`, `bit1=raw_hwc_mode`, `bit2=early_drain_enable`, `bit3=pass_prefetch_enable`, `bit4=psum_stream_overlap_enable` | Select batch stream, raw-HWC cache, early drain, next-K prefetch, and experimental partial-PSUM overlap |
 | `0x68` | `BIAS_PACKETS` | R/W | `[31:0]` | 当前 tile 期望 bias packet 数 |
 | `0x6c` | `WEIGHT_PACKETS` | R/W | `[31:0]` | 当前 tile 期望 weight packet 数 |
 | `0x70` | `IFM_PACKETS` | R/W | `[31:0]` | 当前 tile 期望 IFM packet 数 |
@@ -559,7 +559,33 @@ tail、drain empty 等计数已经接到硬件路径，Vitis runtime 可打印
 raw tile；硬件在 `stream_reset` 后重新进入 load 状态，之后每个 K pass 通过
 `fill_req` replay vector。
 
-## 14. 当前设计边界
+## 14. 2026-06-13 DRAINPERF addendum
+
+The AXI-Lite configuration path now uses 9-bit byte addresses. The bridge maps
+AXI byte address `[8:2]` to the internal 7-bit `cfg_addr[6:0]`. Existing byte
+offsets below `0x100` keep their previous values, but the top-level AXI-Lite
+address ports are now `[8:0]`; rebuild the Vivado block design before board
+use.
+
+Additional read-only drain sub-performance registers:
+
+| Byte offset | Name | R/W | Meaning |
+|---:|---|---|---|
+| `0x100` | `DRAIN_READ_FIRE` | R | PSUM drain FIFO read request handshakes |
+| `0x104` | `DRAIN_PACKET_FIRE` | R | Drain packets accepted by the downstream OFM path |
+| `0x108` | `DRAIN_READY_STALL` | R | Drain cycles stalled by downstream backpressure |
+| `0x10c` | `DRAIN_INTERNAL_FULL` | R | Drain cycles blocked by the internal output/skid register |
+| `0x110` | `DRAINPERF_VERSION` | R | Current fixed value: `1` |
+
+The existing `0xe8 DRAIN_EMPTY_WAIT` counter remains the FIFO-empty component.
+Runtime software prints these fields as `DRAINPERF`, and the summarizer reports
+the residual:
+
+```text
+STAGE_DRAIN - packet_fire - ready_stall - internal_full - empty_wait
+```
+
+## 15. 当前设计边界
 
 - 当前 OFM AXIS 是 debug byte packet 格式，不是连续 HWC burst。
 - native 1x1 只承诺 batch mode、stride 1、pad 0、tile 不超过 IFM FIFO。
@@ -567,3 +593,107 @@ raw tile；硬件在 `stream_reset` 后重新进入 load 状态，之后每个 K
 - pooling 目前只实现 bypass 和 uint8 2x2 stride-2 maxpool。
 - pass/fail 应以 RTL semantic golden 为准，PyTorch reference 只适合作模型级 sanity check。
 - 大型 golden 数据不在本仓库，仍按 `golden/README.md` 放在外部 `D:/MPSoC/python_prj/rtl_golden/`。
+
+## 16. 2026-06-14 early-drain addendum
+
+`STREAM_CFG[2]` is an experimental early PSUM drain enable. Reset/default value
+is `0`, and the validated default software flow keeps it disabled unless the
+Vitis build is explicitly generated with `-EarlyDrain`.
+
+When enabled, `layer_scheduler_stream` may issue `psum_drain_start` before the
+current compute pass has fully completed, once the pass has started producing
+PSUM data. The scheduler still requires all three conditions before advancing
+to the next pass:
+
+```text
+feeder_done_seen && compute_done_seen && drain_done_seen
+```
+
+Therefore early drain does not change packet address order, OFM packet format,
+DMA streams, raw-HWC tile format, or quantization semantics. It only overlaps
+part of PSUM FIFO drain wait with the tail of the current compute pass.
+
+Board validation for `D:/MPSoC/b_earlydrain_22` passed on `COM8` with
+`Conv5/6/8 raw-HWC`, `RawHwcComputeStartLevel=64`, and `-EarlyDrain`:
+
+```text
+maksssksksss0 DDR demo  PASS  total=520.446 ms
+maksssksksss1 DDR demo  PASS  total=520.505 ms
+batch-chain             PASS  RTL golden and YOLO decode
+```
+
+Compared with the prior `b_drainperf_22` baseline (`543.006 ms`), the observed
+fixed-image gain is about `22.6 ms`. Conv5/6/8 `DRAINPERF empty_wait` values are
+still unchanged, so the improvement is overlap/hiding rather than faster PSUM
+production.
+
+## 17. 2026-06-14 K-pass prefetch addendum
+
+`STREAM_CFG[3]` is an experimental next-K-pass prefetch enable. Reset/default
+value is `0`, and software only sets it for experimental builds generated with
+`-PassPrefetch`. Hardware ignores the bit for non-raw-HWC layers.
+
+When enabled, the scheduler may prepare the next K pass while the current pass
+is still completing. The design keeps two pass indices:
+
+```text
+exec_pass_base_k   -> compute, PSUM, final-pass decisions, debug current pass
+feeder_pass_base_k -> raw-HWC replay address generation
+```
+
+The first prototype is intentionally conservative:
+
+- only prefetches within the same COUT block;
+- does not prefetch bias;
+- does not start next-pass compute until current-pass drain is complete;
+- falls back to waiting if next-pass weight or IFM replay is not ready.
+
+The weight stream format is unchanged. Internally, `systolic_top` now consumes
+exactly one weight vector on compute start plus `COLS-1` additional vectors
+during weight-load cycles. This keeps the current pass from over-reading into
+the prefetched next-pass weight tile.
+
+Additional read-only prefetch counters:
+
+| Byte offset | Name | R/W | Meaning |
+|---:|---|---|---|
+| `0x114` | `PREFETCH_START` | R | Next-pass prefetch start pulses |
+| `0x118` | `PREFETCH_WEIGHT_DONE` | R | Prefetched weight-load completions |
+| `0x11c` | `PREFETCH_FEED_DONE` | R | Prefetched raw-HWC replay completions |
+| `0x120` | `PREFETCH_HIT` | R | Pass-boundary transitions that found prefetch ready |
+| `0x124` | `PREFETCH_MISS` | R | Pass-boundary transitions that still had to wait |
+| `0x128` | `PREFETCH_STALL` | R | Cycles spent waiting for pending prefetch work |
+| `0x12c` | `PREFETCHPERF_VERSION` | R | Current fixed value: `1` |
+
+Runtime software prints these fields as `PREFETCHPERF`. Local Vivado/xsim
+`2022.2` validation passes Conv5/Conv6/Conv8 raw-HWC tile0 with
+`RawHwcComputeStartLevel=64`, early drain, and pass prefetch enabled.
+
+## 18. 2026-06-15 partial-PSUM stream overlap addendum
+
+`STREAM_CFG[4]` enables experimental partial-PSUM overlap. It is effective only
+with raw-HWC mode and next-K prefetch enabled. Reset and normal software builds
+keep the bit at `0`.
+
+For a non-final K pass, the current drain writes partial sums into one
+ping-pong bank while the next pass reads the other bank. The scheduler may
+start the next compute after a conservative drain lead is available. Per-bank
+available counters prevent the PSUM reader from overtaking the writer; a
+blocked reader deasserts compute-ready rather than reading unwritten data.
+Drain completion is latched independently of scheduler state so a one-cycle
+done pulse cannot be lost during prefetch commit.
+
+Additional read-only counters:
+
+| Byte offset | Name | R/W | Meaning |
+|---:|---|---|---|
+| `0x130` | `PSUMOVL_START` | R | Partial-PSUM overlap transitions |
+| `0x134` | `PSUMOVL_HIT` | R | Transitions that met prefetch and PSUM lead conditions |
+| `0x138` | `PSUMOVL_WAIT_PSUM` | R | Cycles waiting for the conservative PSUM lead |
+| `0x13c` | `PSUMOVL_UNDERFLOW` | R | Sticky/count indication that a reader reached unavailable data |
+| `0x140` | `PSUMOVLPERF_VERSION` | R | Current fixed value: `1` |
+
+Vivado/xsim `2022.2` external-golden tests pass for Conv5, Conv6, and Conv8
+raw-HWC tile0 with overlap64, early drain, pass prefetch, and partial-PSUM
+overlap enabled. Synthesis, implementation, and board validation remain
+pending.

@@ -50,7 +50,7 @@ module conv_accel_core_axi_lite_axis_stream #(
     input  clk,
     input  rst,
 
-    input  [7:0]  s_axi_awaddr,
+    input  [8:0]  s_axi_awaddr,
     input         s_axi_awvalid,
     output        s_axi_awready,
     input  [31:0] s_axi_wdata,
@@ -60,7 +60,7 @@ module conv_accel_core_axi_lite_axis_stream #(
     output [1:0]  s_axi_bresp,
     output        s_axi_bvalid,
     input         s_axi_bready,
-    input  [7:0]  s_axi_araddr,
+    input  [8:0]  s_axi_araddr,
     input         s_axi_arvalid,
     output        s_axi_arready,
     output [31:0] s_axi_rdata,
@@ -159,6 +159,7 @@ module conv_accel_core_axi_lite_axis_stream #(
     wire configured_stream_reset;
     wire configured_kernel_1x1;
     wire configured_config_error;
+    wire [13:0] current_feeder_pass_base_k;
     wire [31:0] bias_completed_packets;
     wire [31:0] weight_completed_packets;
     wire [31:0] line_completed_packets;
@@ -389,7 +390,7 @@ module conv_accel_core_axi_lite_axis_stream #(
         .conv_pad(configured_conv_pad),
         .kernel_1x1(configured_kernel_1x1),
         .k_total(configured_k_total),
-        .pass_base_k(current_pass_base_k),
+        .pass_base_k(current_feeder_pass_base_k),
         .input_zero_point(configured_input_zero_point),
         .fill_req(feeder_fill_req && configured_stream_raw_hwc_mode),
         .s_axis_tready(raw_hwc_ifm_tready),
@@ -449,6 +450,7 @@ module conv_accel_core_axi_lite_axis_stream #(
         .bias_load_done(bias_load_done),
         .current_cout_base(current_cout_base),
         .current_pass_base_k(current_pass_base_k),
+        .current_feeder_pass_base_k(current_feeder_pass_base_k),
         .configured_cout_total(configured_cout_total),
         .configured_k_total(configured_k_total),
         .configured_num_pixels(configured_num_pixels),

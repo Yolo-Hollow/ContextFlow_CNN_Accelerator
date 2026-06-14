@@ -8,7 +8,7 @@ module tb_conv_accel_core_axi_lite_quant_lut;
     localparam OFM_ADDR_W = 24;
 
     reg clk, rst;
-    reg  [7:0]  awaddr;
+    reg  [8:0]  awaddr;
     reg         awvalid;
     wire        awready;
     reg  [31:0] wdata;
@@ -18,7 +18,7 @@ module tb_conv_accel_core_axi_lite_quant_lut;
     wire [1:0]  bresp;
     wire        bvalid;
     reg         bready;
-    reg  [7:0]  araddr;
+    reg  [8:0]  araddr;
     reg         arvalid;
     wire        arready;
     wire [31:0] rdata;

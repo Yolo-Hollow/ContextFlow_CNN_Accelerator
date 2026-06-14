@@ -28,8 +28,18 @@ module tb_layer_scheduler_stream;
         .weight_load_start(weight_load_start), .weight_load_done(weight_load_done),
         .feeder_start(feeder_start), .feeder_done(feeder_done),
         .feeder_compute_ready(1'b0), .feeder_overlap_mode(1'b0),
+        .raw_hwc_mode(1'b0),
+        .early_drain_enable(1'b0), .psum_drain_data_ready(1'b0),
+        .psum_drain_packet_fire(1'b0),
+        .pass_prefetch_enable(1'b0),
+        .psum_stream_overlap_enable(1'b0),
+        .compute_fire(1'b0),
         .compute_start(compute_start), .compute_done(compute_done),
-        .psum_drain_start(psum_drain_start), .psum_drain_done(psum_drain_done)
+        .psum_drain_start(psum_drain_start), .psum_drain_done(psum_drain_done),
+        .feeder_pass_base_k(),
+        .perf_prefetch_start(), .perf_prefetch_weight_done(),
+        .perf_prefetch_feed_done(), .perf_prefetch_hit(),
+        .perf_prefetch_miss(), .perf_prefetch_stall()
     );
 
     always #5 clk = ~clk;

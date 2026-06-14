@@ -7,6 +7,9 @@ set top_filter {}
 set waves 0
 set tail_cycles 0
 set raw_hwc_compute_start_level 0
+set early_drain 0
+set pass_prefetch 0
+set psum_stream_overlap 0
 for {set i 0} {$i < [llength $argv]} {incr i} {
     set arg [lindex $argv $i]
     if {$arg eq "-top"} {
@@ -28,6 +31,12 @@ for {set i 0} {$i < [llength $argv]} {incr i} {
     } elseif {$arg eq "-raw_hwc_compute_start_level"} {
         incr i
         set raw_hwc_compute_start_level [lindex $argv $i]
+    } elseif {$arg eq "-early_drain"} {
+        set early_drain 1
+    } elseif {$arg eq "-pass_prefetch"} {
+        set pass_prefetch 1
+    } elseif {$arg eq "-psum_stream_overlap"} {
+        set psum_stream_overlap 1
     } else {
         error "unknown argument: $arg"
     }
@@ -95,6 +104,9 @@ set tests {
     {tb_conv_accel_core_pooling tb/tb_conv_accel_core_pooling.v}
     {tb_layer_scheduler_cout64_fulltile tb/tb_layer_scheduler_cout64_fulltile.v}
     {tb_layer_scheduler_stream tb/tb_layer_scheduler_stream.v}
+    {tb_layer_scheduler_early_drain tb/tb_layer_scheduler_early_drain.v}
+    {tb_layer_scheduler_pass_prefetch tb/tb_layer_scheduler_pass_prefetch.v}
+    {tb_layer_scheduler_psum_overlap tb/tb_layer_scheduler_psum_overlap.v}
     {tb_layer_scheduler_k9216 tb/tb_layer_scheduler_k9216.v}
     {tb_conv_accel_core_cout64_fulltile tb/tb_conv_accel_core_cout64_fulltile.v}
     {tb_conv_accel_core_cout128_blocks tb/tb_conv_accel_core_cout128_blocks.v}
@@ -231,6 +243,15 @@ foreach test $tests {
     }
     if {$raw_hwc_compute_start_level != 0} {
         puts $fh "`define TB_RAW_HWC_COMPUTE_START_LEVEL_OVERRIDE $raw_hwc_compute_start_level"
+    }
+    if {$early_drain != 0} {
+        puts $fh "`define TB_EARLY_DRAIN_OVERRIDE 1"
+    }
+    if {$pass_prefetch != 0} {
+        puts $fh "`define TB_PASS_PREFETCH_OVERRIDE 1"
+    }
+    if {$psum_stream_overlap != 0} {
+        puts $fh "`define TB_PSUM_STREAM_OVERLAP_OVERRIDE 1"
     }
     close $fh
     exec {*}$xvlog -sv -L work -i [file join $root tb] -log $xvlog_log {*}$srcs >@ stdout 2>@ stderr

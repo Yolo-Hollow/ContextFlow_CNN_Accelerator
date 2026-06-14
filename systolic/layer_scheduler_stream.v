@@ -42,10 +42,27 @@ module layer_scheduler_stream #(
     input      feeder_done,
     input      feeder_compute_ready,
     input      feeder_overlap_mode,
+    input      raw_hwc_mode,
+    input      early_drain_enable,
+    input      pass_prefetch_enable,
+    input      psum_stream_overlap_enable,
+    input      psum_drain_data_ready,
+    input      psum_drain_packet_fire,
+    input      compute_fire,
     output reg compute_start,
     input      compute_done,
     output reg psum_drain_start,
     input      psum_drain_done,
+    output reg [13:0] feeder_pass_base_k,
+    output reg perf_prefetch_start,
+    output reg perf_prefetch_weight_done,
+    output reg perf_prefetch_feed_done,
+    output reg perf_prefetch_hit,
+    output reg perf_prefetch_miss,
+    output     perf_prefetch_stall,
+    output reg perf_psumovl_start,
+    output reg perf_psumovl_hit,
+    output     perf_psumovl_wait_psum,
 
     output     perf_stage_bias,
     output     perf_stage_weight,
@@ -65,17 +82,49 @@ module layer_scheduler_stream #(
     localparam ST_DRAIN_START = 4'd9;
     localparam ST_DRAIN_WAIT  = 4'd10;
     localparam ST_DONE        = 4'd11;
+    localparam ST_PREFETCH_WAIT = 4'd12;
+    localparam ST_PREFETCH_COMMIT = 4'd13;
 
     reg [3:0] state;
     reg compute_done_seen;
+    reg compute_started_seen;
     reg feeder_done_seen;
+    reg drain_started;
+    reg drain_done_seen;
+    reg prefetch_started;
+    reg prefetch_weight_done;
+    reg prefetch_feed_done;
+    reg [13:0] prefetch_pass_base_k;
+    reg pass_bank;
+    reg prev_drain_pending;
+    reg [15:0] drain_packet_count;
 
     localparam [14:0] K_STEP_EXT = K_TILE;
     localparam [10:0] COUT_STEP = COUT_TILE;
+    localparam [15:0] PSUM_OVERLAP_LEAD = (K_TILE * 5) + (COUT_TILE / 2 * 4) + 32;
     wire [14:0] next_k = {1'b0, pass_base_k} + K_STEP_EXT;
     wire last_k = (next_k >= {1'b0, k_total});
     wire last_cout = (cout_base + COUT_STEP >= cout_total);
     wire [10:0] cout_remaining = cout_total - cout_base;
+    wire prefetch_enable_current =
+        pass_prefetch_enable && raw_hwc_mode && !last_k;
+    wire prefetch_weight_done_now =
+        prefetch_weight_done ||
+        (prefetch_started && weight_load_done);
+    wire prefetch_feed_done_now =
+        prefetch_feed_done ||
+        (prefetch_started && feeder_done);
+    wire prefetch_ready_now =
+        prefetch_started && prefetch_weight_done_now && prefetch_feed_done_now;
+    wire prefetch_start_now =
+        busy && prefetch_enable_current && !prefetch_started &&
+        (compute_done_seen || compute_done) &&
+        (!feeder_overlap_mode || feeder_done_seen || feeder_done);
+    wire psum_overlap_enable_current =
+        psum_stream_overlap_enable && prefetch_enable_current && prefetch_started;
+    wire psum_overlap_ready_now =
+        psum_overlap_enable_current && prefetch_ready_now && drain_started &&
+        !prev_drain_pending && (drain_packet_count >= PSUM_OVERLAP_LEAD);
 
     assign perf_stage_bias =
         busy && (state == ST_BIAS_START || state == ST_BIAS_WAIT);
@@ -87,6 +136,10 @@ module layer_scheduler_stream #(
         busy && (state == ST_COMP_START || state == ST_COMP_WAIT);
     assign perf_stage_drain =
         busy && (state == ST_DRAIN_START || state == ST_DRAIN_WAIT);
+    assign perf_prefetch_stall = busy && (state == ST_PREFETCH_WAIT);
+    assign perf_psumovl_wait_psum =
+        busy && psum_overlap_enable_current && prefetch_ready_now && drain_started &&
+        !prev_drain_pending && (drain_packet_count < PSUM_OVERLAP_LEAD);
 
     always @(*) begin
         cout_valid = (cout_remaining < COUT_STEP) ? cout_remaining : COUT_STEP;
@@ -94,8 +147,8 @@ module layer_scheduler_stream #(
         is_final_pass = last_k;
         use_ext_psum = (pass_base_k != 14'd0);
         use_psum_stream = (pass_base_k != 14'd0);
-        psum_rd_bank = 1'b0;
-        psum_wr_bank = 1'b0;
+        psum_wr_bank = pass_bank;
+        psum_rd_bank = ~pass_bank;
     end
 
     always @(posedge clk) begin
@@ -111,8 +164,26 @@ module layer_scheduler_stream #(
             feeder_start <= 1'b0;
             compute_start <= 1'b0;
             psum_drain_start <= 1'b0;
+            feeder_pass_base_k <= 14'd0;
             compute_done_seen <= 1'b0;
+            compute_started_seen <= 1'b0;
             feeder_done_seen <= 1'b0;
+            drain_started <= 1'b0;
+            drain_done_seen <= 1'b0;
+            prefetch_started <= 1'b0;
+            prefetch_weight_done <= 1'b0;
+            prefetch_feed_done <= 1'b0;
+            prefetch_pass_base_k <= 14'd0;
+            pass_bank <= 1'b0;
+            prev_drain_pending <= 1'b0;
+            drain_packet_count <= 16'd0;
+            perf_prefetch_start <= 1'b0;
+            perf_prefetch_weight_done <= 1'b0;
+            perf_prefetch_feed_done <= 1'b0;
+            perf_prefetch_hit <= 1'b0;
+            perf_prefetch_miss <= 1'b0;
+            perf_psumovl_start <= 1'b0;
+            perf_psumovl_hit <= 1'b0;
         end else begin
             done <= 1'b0;
             bias_load_start <= 1'b0;
@@ -120,6 +191,31 @@ module layer_scheduler_stream #(
             feeder_start <= 1'b0;
             compute_start <= 1'b0;
             psum_drain_start <= 1'b0;
+            perf_prefetch_start <= 1'b0;
+            perf_prefetch_weight_done <= 1'b0;
+            perf_prefetch_feed_done <= 1'b0;
+            perf_prefetch_hit <= 1'b0;
+            perf_prefetch_miss <= 1'b0;
+            perf_psumovl_start <= 1'b0;
+            perf_psumovl_hit <= 1'b0;
+
+            if (drain_started && psum_drain_packet_fire &&
+                drain_packet_count != 16'hffff)
+                drain_packet_count <= drain_packet_count + 1'b1;
+
+            if (prev_drain_pending && psum_drain_done)
+                prev_drain_pending <= 1'b0;
+
+            if (prefetch_started && weight_load_done &&
+                !prefetch_weight_done) begin
+                prefetch_weight_done <= 1'b1;
+                perf_prefetch_weight_done <= 1'b1;
+            end
+            if (prefetch_started && feeder_done &&
+                !prefetch_feed_done) begin
+                prefetch_feed_done <= 1'b1;
+                perf_prefetch_feed_done <= 1'b1;
+            end
 
             case (state)
                 ST_IDLE: begin
@@ -129,6 +225,18 @@ module layer_scheduler_stream #(
                         pass_base_k <= 14'd0;
                         cout_base <= 11'd0;
                         num_pixels_out <= num_pixels;
+                        compute_done_seen <= 1'b0;
+                        compute_started_seen <= 1'b0;
+                        feeder_done_seen <= 1'b0;
+                        drain_started <= 1'b0;
+                        drain_done_seen <= 1'b0;
+                        prefetch_started <= 1'b0;
+                        prefetch_weight_done <= 1'b0;
+                        prefetch_feed_done <= 1'b0;
+                        feeder_pass_base_k <= 14'd0;
+                        pass_bank <= 1'b0;
+                        prev_drain_pending <= 1'b0;
+                        drain_packet_count <= 16'd0;
                         state <= ST_BIAS_START;
                     end
                 end
@@ -155,6 +263,7 @@ module layer_scheduler_stream #(
 
                 ST_FEED_START: begin
                     feeder_start <= 1'b1;
+                    feeder_pass_base_k <= pass_base_k;
                     feeder_done_seen <= 1'b0;
                     state <= ST_FEED_WAIT;
                 end
@@ -169,37 +278,161 @@ module layer_scheduler_stream #(
                 ST_COMP_START: begin
                     compute_start <= 1'b1;
                     compute_done_seen <= 1'b0;
+                    compute_started_seen <= 1'b0;
+                    drain_started <= 1'b0;
+                    drain_done_seen <= 1'b0;
+                    drain_packet_count <= 16'd0;
+                    prefetch_started <= 1'b0;
+                    prefetch_weight_done <= 1'b0;
+                    prefetch_feed_done <= 1'b0;
                     state <= ST_COMP_WAIT;
                 end
 
                 ST_COMP_WAIT: begin
                     if (compute_done)
                         compute_done_seen <= 1'b1;
+                    if (compute_fire)
+                        compute_started_seen <= 1'b1;
                     if (feeder_done)
                         feeder_done_seen <= 1'b1;
-                    if ((compute_done || compute_done_seen) &&
-                        (!feeder_overlap_mode || feeder_done || feeder_done_seen))
-                        state <= ST_DRAIN_START;
+                    if (psum_drain_done && !prev_drain_pending)
+                        drain_done_seen <= 1'b1;
+
+                    if (prefetch_start_now) begin
+                        prefetch_started <= 1'b1;
+                        prefetch_weight_done <= 1'b0;
+                        prefetch_feed_done <= 1'b0;
+                        prefetch_pass_base_k <= next_k[13:0];
+                        feeder_pass_base_k <= next_k[13:0];
+                        weight_load_start <= 1'b1;
+                        feeder_start <= 1'b1;
+                        perf_prefetch_start <= 1'b1;
+                    end
+
+                    if (early_drain_enable && !drain_started && !prev_drain_pending &&
+                        compute_fire && psum_drain_data_ready) begin
+                        psum_drain_start <= 1'b1;
+                        drain_started <= 1'b1;
+                        drain_packet_count <= 16'd0;
+                    end
+
+                    if (!prefetch_start_now &&
+                        !prev_drain_pending &&
+                        (compute_done || compute_done_seen) &&
+                        (!feeder_overlap_mode || feeder_done || feeder_done_seen)) begin
+                        if (drain_started) begin
+                            if (psum_drain_done || drain_done_seen) begin
+                                if (!last_k) begin
+                                    if (prefetch_ready_now) begin
+                                        pass_base_k <= next_k[13:0];
+                                        pass_bank <= ~pass_bank;
+                                        perf_prefetch_hit <= 1'b1;
+                                        state <= ST_PREFETCH_COMMIT;
+                                    end else if (prefetch_started) begin
+                                        perf_prefetch_miss <= 1'b1;
+                                        state <= ST_PREFETCH_WAIT;
+                                    end else begin
+                                        pass_base_k <= next_k[13:0];
+                                        pass_bank <= ~pass_bank;
+                                        state <= ST_WGT_START;
+                                    end
+                                end else if (!last_cout) begin
+                                    cout_base <= cout_base + COUT_STEP;
+                                    pass_base_k <= 14'd0;
+                                    pass_bank <= 1'b0;
+                                    state <= ST_BIAS_START;
+                                end else begin
+                                    state <= ST_DONE;
+                                end
+                            end else begin
+                                state <= ST_DRAIN_WAIT;
+                            end
+                        end else begin
+                            state <= ST_DRAIN_START;
+                        end
+                    end else if (!prefetch_start_now && psum_overlap_ready_now &&
+                                 (compute_done || compute_done_seen) &&
+                                 (!feeder_overlap_mode || feeder_done || feeder_done_seen)) begin
+                        pass_base_k <= next_k[13:0];
+                        pass_bank <= ~pass_bank;
+                        prev_drain_pending <= !psum_drain_done;
+                        drain_started <= 1'b0;
+                        drain_done_seen <= 1'b0;
+                        perf_prefetch_hit <= 1'b1;
+                        perf_psumovl_start <= 1'b1;
+                        perf_psumovl_hit <= 1'b1;
+                        state <= ST_PREFETCH_COMMIT;
+                    end
                 end
 
                 ST_DRAIN_START: begin
                     psum_drain_start <= 1'b1;
+                    drain_started <= 1'b1;
+                    drain_packet_count <= 16'd0;
                     state <= ST_DRAIN_WAIT;
                 end
 
                 ST_DRAIN_WAIT: begin
-                    if (psum_drain_done) begin
+                    if (compute_fire)
+                        compute_started_seen <= 1'b1;
+                    if (prefetch_start_now) begin
+                        prefetch_started <= 1'b1;
+                        prefetch_weight_done <= 1'b0;
+                        prefetch_feed_done <= 1'b0;
+                        prefetch_pass_base_k <= next_k[13:0];
+                        feeder_pass_base_k <= next_k[13:0];
+                        weight_load_start <= 1'b1;
+                        feeder_start <= 1'b1;
+                        perf_prefetch_start <= 1'b1;
+                    end
+                    if (!prefetch_start_now && psum_overlap_ready_now) begin
+                        pass_base_k <= next_k[13:0];
+                        pass_bank <= ~pass_bank;
+                        prev_drain_pending <= !psum_drain_done;
+                        drain_started <= 1'b0;
+                        drain_done_seen <= 1'b0;
+                        perf_prefetch_hit <= 1'b1;
+                        perf_psumovl_start <= 1'b1;
+                        perf_psumovl_hit <= 1'b1;
+                        state <= ST_PREFETCH_COMMIT;
+                    end else if (!prefetch_start_now && psum_drain_done) begin
+                        drain_done_seen <= 1'b1;
                         if (!last_k) begin
-                            pass_base_k <= next_k[13:0];
-                            state <= ST_WGT_START;
+                            if (prefetch_ready_now) begin
+                                pass_base_k <= next_k[13:0];
+                                pass_bank <= ~pass_bank;
+                                perf_prefetch_hit <= 1'b1;
+                                state <= ST_PREFETCH_COMMIT;
+                            end else if (prefetch_started) begin
+                                perf_prefetch_miss <= 1'b1;
+                                state <= ST_PREFETCH_WAIT;
+                            end else begin
+                                pass_base_k <= next_k[13:0];
+                                pass_bank <= ~pass_bank;
+                                state <= ST_WGT_START;
+                            end
                         end else if (!last_cout) begin
                             cout_base <= cout_base + COUT_STEP;
                             pass_base_k <= 14'd0;
+                            pass_bank <= 1'b0;
                             state <= ST_BIAS_START;
                         end else begin
                             state <= ST_DONE;
                         end
                     end
+                end
+
+                ST_PREFETCH_WAIT: begin
+                    if (prefetch_ready_now) begin
+                        pass_base_k <= prefetch_pass_base_k;
+                        pass_bank <= ~pass_bank;
+                        perf_prefetch_hit <= 1'b1;
+                        state <= ST_PREFETCH_COMMIT;
+                    end
+                end
+
+                ST_PREFETCH_COMMIT: begin
+                    state <= ST_COMP_START;
                 end
 
                 ST_DONE: begin

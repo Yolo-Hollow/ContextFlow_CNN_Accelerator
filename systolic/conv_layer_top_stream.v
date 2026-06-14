@@ -59,6 +59,20 @@ module conv_layer_top_stream #(
     output [31:0] perf_tail_cycles_configured,
     output perf_drain_fifo_empty_wait,
     output perf_drain_fifo_empty_sticky,
+    output perf_drain_read_fire,
+    output perf_drain_packet_fire,
+    output perf_drain_ready_stall,
+    output perf_drain_internal_full_wait,
+    output perf_prefetch_start,
+    output perf_prefetch_weight_done,
+    output perf_prefetch_feed_done,
+    output perf_prefetch_hit,
+    output perf_prefetch_miss,
+    output perf_prefetch_stall,
+    output perf_psumovl_start,
+    output perf_psumovl_hit,
+    output perf_psumovl_wait_psum,
+    output perf_psumovl_underflow,
 
     input  [8:0] fm_h,
     input  [8:0] fm_w,
@@ -73,6 +87,9 @@ module conv_layer_top_stream #(
     input  [15:0] num_pixels,
     input  [15:0] tail_cycles_config,
     input  [15:0] raw_hwc_compute_start_level,
+    input         early_drain_enable,
+    input         pass_prefetch_enable,
+    input         psum_stream_overlap_enable,
     input  [8:0] tile_oy_base,
     input  [8:0] tile_ofm_h,
     input  [OFM_ADDR_W-1:0] tile_pixel_base,
@@ -83,6 +100,7 @@ module conv_layer_top_stream #(
     input  bias_load_done,
     output [10:0] current_cout_base,
     output [13:0] current_pass_base_k,
+    output [13:0] current_feeder_pass_base_k,
 
     input  [5:0]        bias_wr_addr,
     input  [PSUM_W-1:0] bias_wr_data,
@@ -143,11 +161,14 @@ module conv_layer_top_stream #(
     wire sched_final_pass;
     wire sched_use_ext_psum;
     wire sched_use_psum_stream;
+    wire sched_psum_wr_bank;
+    wire sched_psum_rd_bank;
     wire sched_bias_start;
     wire sched_weight_start;
     wire sched_feeder_start;
     wire sched_compute_start;
     wire sched_drain_start;
+    wire [13:0] sched_feeder_pass_base_k;
     wire sched_busy;
     wire sched_done;
     reg  sched_weight_done;
@@ -155,13 +176,22 @@ module conv_layer_top_stream #(
     wire feeder_compute_ready;
     wire feeder_overlap_mode = stream_raw_hwc_mode && (raw_hwc_compute_start_level != 16'd0);
     wire compute_done;
+    wire compute_fire;
     wire drain_done;
+    wire [31:0] psum_fifo_rd_en;
+    wire [COLS*PSUM_W*2-1:0] psum_fifo_rd_data;
+    wire [31:0] psum_fifo_empty;
+    wire [31:0] psum_col_mask = (32'h1 << COLS) - 1;
+    wire psum_drain_data_ready = ((psum_fifo_empty & psum_col_mask) == 32'd0);
     wire drain_packet_ready;
     wire drain_packet_valid;
     wire [PSUM_BUF_AW-1:0] drain_packet_addr;
     wire [COLS*2*PSUM_W-1:0] drain_packet_data;
     wire drain_packet_is_final;
     wire drain_packet_fire;
+    wire drain_read_fire;
+    wire drain_ready_stall;
+    wire drain_internal_full_wait;
     wire final_fifo_ready;
     wire final_fifo_valid;
     wire [PSUM_BUF_AW-1:0] final_fifo_addr;
@@ -181,6 +211,7 @@ module conv_layer_top_stream #(
 
     assign current_cout_base = sched_cout_base;
     assign current_pass_base_k = sched_pass_base_k;
+    assign current_feeder_pass_base_k = sched_feeder_pass_base_k;
     reg bias_req_r;
     assign bias_load_req = bias_req_r;
     wire ofm_wb_busy;
@@ -199,14 +230,31 @@ module conv_layer_top_stream #(
         .num_pixels_out(sched_num_pixels),
         .is_first_pass(sched_first_pass), .is_final_pass(sched_final_pass),
         .use_ext_psum(sched_use_ext_psum), .use_psum_stream(sched_use_psum_stream),
-        .psum_wr_bank(), .psum_rd_bank(),
+        .psum_wr_bank(sched_psum_wr_bank), .psum_rd_bank(sched_psum_rd_bank),
         .bias_load_start(sched_bias_start), .bias_load_done(bias_load_done),
         .weight_load_start(sched_weight_start), .weight_load_done(sched_weight_done),
         .feeder_start(sched_feeder_start), .feeder_done(feeder_done),
         .feeder_compute_ready(feeder_compute_ready),
         .feeder_overlap_mode(feeder_overlap_mode),
+        .raw_hwc_mode(stream_raw_hwc_mode),
+        .early_drain_enable(early_drain_enable),
+        .pass_prefetch_enable(pass_prefetch_enable),
+        .psum_stream_overlap_enable(psum_stream_overlap_enable),
+        .psum_drain_data_ready(psum_drain_data_ready),
+        .psum_drain_packet_fire(drain_packet_fire),
+        .compute_fire(compute_fire),
         .compute_start(sched_compute_start), .compute_done(compute_done),
         .psum_drain_start(sched_drain_start), .psum_drain_done(drain_done),
+        .feeder_pass_base_k(sched_feeder_pass_base_k),
+        .perf_prefetch_start(perf_prefetch_start),
+        .perf_prefetch_weight_done(perf_prefetch_weight_done),
+        .perf_prefetch_feed_done(perf_prefetch_feed_done),
+        .perf_prefetch_hit(perf_prefetch_hit),
+        .perf_prefetch_miss(perf_prefetch_miss),
+        .perf_prefetch_stall(perf_prefetch_stall),
+        .perf_psumovl_start(perf_psumovl_start),
+        .perf_psumovl_hit(perf_psumovl_hit),
+        .perf_psumovl_wait_psum(perf_psumovl_wait_psum),
         .perf_stage_bias(perf_stage_bias),
         .perf_stage_weight(perf_stage_weight),
         .perf_stage_feeder(perf_stage_feeder),
@@ -236,6 +284,7 @@ module conv_layer_top_stream #(
     end
 
     reg weight_req_r;
+    reg weight_start_pending;
     reg wgt_loader_start;
     wire wgt_loader_done;
     wire [ROWS-1:0] wgt_fifo_full;
@@ -247,6 +296,7 @@ module conv_layer_top_stream #(
         if (rst) begin
             bias_req_r <= 1'b0;
             weight_req_r <= 1'b0;
+            weight_start_pending <= 1'b0;
             wgt_loader_start <= 1'b0;
             sched_weight_done <= 1'b0;
         end else begin
@@ -256,11 +306,19 @@ module conv_layer_top_stream #(
                 bias_req_r <= 1'b1;
             if (bias_req_r && bias_load_done)
                 bias_req_r <= 1'b0;
-            if (sched_weight_start)
-                weight_req_r <= 1'b1;
+
+            if (sched_weight_start) begin
+                if (weight_req_r && weight_tile_ready)
+                    weight_start_pending <= 1'b1;
+                else
+                    weight_req_r <= 1'b1;
+            end
             if (weight_req_r && weight_tile_ready) begin
                 weight_req_r <= 1'b0;
                 wgt_loader_start <= 1'b1;
+            end else if (!weight_req_r && weight_start_pending) begin
+                weight_req_r <= 1'b1;
+                weight_start_pending <= 1'b0;
             end
             if (wgt_loader_done)
                 sched_weight_done <= 1'b1;
@@ -297,11 +355,10 @@ module conv_layer_top_stream #(
 
     wire [COLS*2*PSUM_W-1:0] psum_stream_data;
     wire psum_stream_valid;
-    wire compute_fire;
+    wire psum_stream_compute_ready;
+    wire psum_stream_underflow;
+    wire psum_stream_wait;
     assign perf_compute_fire = compute_fire;
-    wire [31:0] psum_fifo_rd_en;
-    wire [COLS*PSUM_W*2-1:0] psum_fifo_rd_data;
-    wire [31:0] psum_fifo_empty;
     wire [ROWS-1:0] ifm_fifo_full;
 
     wire pp_wr_en = drain_packet_fire && !drain_packet_is_final;
@@ -312,12 +369,51 @@ module conv_layer_top_stream #(
     wire [PSUM_BUF_AW-1:0] pp_rd_addr;
     wire [COLS*2*PSUM_W-1:0] pp_rd_data;
     wire pp_rd_valid;
+    reg active_drain_wr_bank;
+    reg [PSUM_BUF_AW:0] active_drain_num_pixels;
+    reg [PSUM_BUF_AW:0] psum_available_count0;
+    reg [PSUM_BUF_AW:0] psum_available_count1;
+    wire [PSUM_BUF_AW:0] psum_stream_available_count =
+        sched_psum_rd_bank ? psum_available_count1 : psum_available_count0;
+    wire [PSUM_BUF_AW:0] sched_num_pixels_ext =
+        {1'b0, sched_num_pixels[PSUM_BUF_AW-1:0]};
+
+    assign perf_psumovl_underflow = psum_stream_underflow;
+
+    always @(posedge clk) begin
+        if (rst) begin
+            active_drain_wr_bank <= 1'b0;
+            active_drain_num_pixels <= {(PSUM_BUF_AW+1){1'b0}};
+            psum_available_count0 <= {(PSUM_BUF_AW+1){1'b0}};
+            psum_available_count1 <= {(PSUM_BUF_AW+1){1'b0}};
+        end else begin
+            if (sched_drain_start) begin
+                active_drain_wr_bank <= sched_psum_wr_bank;
+                active_drain_num_pixels <= sched_num_pixels_ext;
+            end
+            if (sched_drain_start && !sched_final_pass) begin
+                if (sched_psum_wr_bank)
+                    psum_available_count1 <= {(PSUM_BUF_AW+1){1'b0}};
+                else
+                    psum_available_count0 <= {(PSUM_BUF_AW+1){1'b0}};
+            end
+            if (pp_wr_en) begin
+                if (active_drain_wr_bank) begin
+                    if (psum_available_count1 < active_drain_num_pixels)
+                        psum_available_count1 <= psum_available_count1 + 1'b1;
+                end else begin
+                    if (psum_available_count0 < active_drain_num_pixels)
+                        psum_available_count0 <= psum_available_count0 + 1'b1;
+                end
+            end
+        end
+    end
 
     psum_pingpong_buffer #(
         .DATA_W(COLS*2*PSUM_W), .DEPTH(PSUM_BUF_DEPTH), .AW(PSUM_BUF_AW)
     ) u_pp (
         .clk(clk), .rst(rst),
-        .wr_en(pp_wr_en), .wr_bank(1'b0), .wr_addr(pp_wr_addr), .wr_data(pp_wr_data),
+        .wr_en(pp_wr_en), .wr_bank(active_drain_wr_bank), .wr_addr(pp_wr_addr), .wr_data(pp_wr_data),
         .rd_en(pp_rd_en), .rd_bank(pp_rd_bank), .rd_addr(pp_rd_addr),
         .rd_data(pp_rd_data), .rd_valid(pp_rd_valid)
     );
@@ -326,9 +422,15 @@ module conv_layer_top_stream #(
         .clk(clk), .rst(rst), .start(sched_compute_start), .compute_fire(compute_fire),
         .is_first_pass(sched_first_pass), .use_ext_psum(sched_use_ext_psum),
         .bias_data({COLS*2*PSUM_W{1'b0}}),
-        .rd_bank(1'b0), .rd_en(pp_rd_en), .rd_bank_out(pp_rd_bank), .rd_addr(pp_rd_addr),
+        .rd_bank(sched_psum_rd_bank),
+        .overlap_guard_enable(psum_stream_overlap_enable),
+        .available_count(psum_stream_available_count),
+        .rd_en(pp_rd_en), .rd_bank_out(pp_rd_bank), .rd_addr(pp_rd_addr),
         .rd_data(pp_rd_data), .rd_valid(pp_rd_valid),
         .psum_top_data(psum_stream_data), .psum_top_valid(psum_stream_valid),
+        .psum_compute_ready(psum_stream_compute_ready),
+        .psum_underflow(psum_stream_underflow),
+        .psum_wait(psum_stream_wait),
         .pixel_addr()
     );
 
@@ -369,6 +471,7 @@ module conv_layer_top_stream #(
         .is_first_pass(sched_first_pass), .psum_top_ext({COLS*2*PSUM_W{1'b0}}),
         .use_ext_psum(sched_use_ext_psum),
         .psum_stream_data(psum_stream_data), .psum_stream_valid(psum_stream_valid),
+        .psum_stream_compute_ready(psum_stream_compute_ready),
         .use_psum_stream(sched_use_psum_stream),
         .wgt_fifo_wr_en(wgt_fifo_wr_en), .wgt_fifo_wr_data(wgt_fifo_wr_data),
         .wgt_fifo_full(wgt_fifo_full),
@@ -388,8 +491,17 @@ module conv_layer_top_stream #(
         .packet_addr(drain_packet_addr),
         .packet_data(drain_packet_data), .packet_is_final(drain_packet_is_final),
         .fifo_empty_wait(perf_drain_fifo_empty_wait),
-        .fifo_empty_wait_sticky(perf_drain_fifo_empty_sticky)
+        .fifo_empty_wait_sticky(perf_drain_fifo_empty_sticky),
+        .drain_read_fire(drain_read_fire),
+        .drain_packet_fire(drain_packet_fire),
+        .drain_ready_stall(drain_ready_stall),
+        .drain_internal_full_wait(drain_internal_full_wait)
     );
+
+    assign perf_drain_read_fire = drain_read_fire;
+    assign perf_drain_packet_fire = drain_packet_fire;
+    assign perf_drain_ready_stall = drain_ready_stall;
+    assign perf_drain_internal_full_wait = drain_internal_full_wait;
 
     assign final_valid = drain_packet_valid && drain_packet_is_final;
     assign final_addr = drain_packet_addr;
@@ -403,7 +515,6 @@ module conv_layer_top_stream #(
     endgenerate
 
     assign drain_packet_ready = !drain_packet_is_final || final_fifo_ready;
-    assign drain_packet_fire = drain_packet_valid && drain_packet_ready;
 
     psum_packet_fifo #(
         .DATA_W(COLS*2*PSUM_W), .MASK_W(COLS*2), .ADDR_W(PSUM_BUF_AW),

@@ -26,7 +26,7 @@ module tb_conv_accel_core;
 
     reg clk, rst;
     reg cfg_wr_en, cfg_rd_en;
-    reg [5:0] cfg_addr;
+    reg [6:0] cfg_addr;
     reg [31:0] cfg_wdata;
     wire [31:0] cfg_rdata;
     wire bias_load_req, weight_load_req;
@@ -121,7 +121,7 @@ module tb_conv_accel_core;
     endfunction
 
     task cfg_write;
-        input [5:0] addr;
+        input [6:0] addr;
         input [31:0] data;
         begin
             @(negedge clk);

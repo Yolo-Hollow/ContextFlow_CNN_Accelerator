@@ -49,7 +49,7 @@ module conv_accel_core #(
     input  rst,
 
     input         cfg_wr_en,
-    input  [5:0]  cfg_addr,
+    input  [6:0]  cfg_addr,
     input  [31:0] cfg_wdata,
     input         cfg_rd_en,
     output [31:0] cfg_rdata,
@@ -58,6 +58,7 @@ module conv_accel_core #(
     input  bias_load_done,
     output [10:0] current_cout_base,
     output [13:0] current_pass_base_k,
+    output [13:0] current_feeder_pass_base_k,
     output [10:0] configured_cout_total,
     output [13:0] configured_k_total,
     output [15:0] configured_num_pixels,
@@ -159,6 +160,20 @@ module conv_accel_core #(
     wire [31:0] perf_tail_cycles_configured;
     wire perf_drain_fifo_empty_wait;
     wire perf_drain_fifo_empty_sticky;
+    wire perf_drain_read_fire;
+    wire perf_drain_packet_fire;
+    wire perf_drain_ready_stall;
+    wire perf_drain_internal_full_wait;
+    wire perf_prefetch_start;
+    wire perf_prefetch_weight_done;
+    wire perf_prefetch_feed_done;
+    wire perf_prefetch_hit;
+    wire perf_prefetch_miss;
+    wire perf_prefetch_stall;
+    wire perf_psumovl_start;
+    wire perf_psumovl_hit;
+    wire perf_psumovl_wait_psum;
+    wire perf_psumovl_underflow;
     wire [31:0] layer_cfg_rdata;
     wire [8:0] fm_h;
     wire [8:0] fm_w;
@@ -180,6 +195,9 @@ module conv_accel_core #(
     wire [31:0] expected_bytes;
     wire stream_batch_mode;
     wire stream_raw_hwc_mode;
+    wire early_drain_enable;
+    wire pass_prefetch_enable;
+    wire psum_stream_overlap_enable;
     wire [31:0] stream_bias_packets;
     wire [31:0] stream_weight_packets;
     wire [31:0] stream_ifm_packets;
@@ -194,8 +212,8 @@ module conv_accel_core #(
     reg [7:0] cfg_lut_addr;
     reg [31:0] quant_shadow [0:COLS*2-1];
     reg [7:0] lut_shadow [0:255];
-    wire cfg_quant_wr_en = cfg_wr_en && (cfg_addr == 6'h21);
-    wire cfg_lut_wr_en = cfg_wr_en && (cfg_addr == 6'h23);
+    wire cfg_quant_wr_en = cfg_wr_en && (cfg_addr == 7'h21);
+    wire cfg_lut_wr_en = cfg_wr_en && (cfg_addr == 7'h23);
     wire merged_quant_wr_en = cfg_quant_wr_en || quant_wr_en;
     wire [5:0] merged_quant_wr_addr = cfg_quant_wr_en ? cfg_quant_addr : quant_wr_addr;
     wire [31:0] merged_quant_wr_data = cfg_quant_wr_en ? cfg_wdata : quant_wr_data;
@@ -229,10 +247,10 @@ module conv_accel_core #(
     assign configured_stream_reset = start_pulse;
     assign configured_config_error = config_error;
     assign quant_rd_data = quant_rd_data_int;
-    assign cfg_rdata = (cfg_addr == 6'h20) ? {26'd0, cfg_quant_addr} :
-                       (cfg_addr == 6'h21) ? quant_shadow[cfg_quant_addr] :
-                       (cfg_addr == 6'h22) ? {24'd0, cfg_lut_addr} :
-                       (cfg_addr == 6'h23) ? {24'd0, lut_shadow[cfg_lut_addr]} :
+    assign cfg_rdata = (cfg_addr == 7'h20) ? {26'd0, cfg_quant_addr} :
+                       (cfg_addr == 7'h21) ? quant_shadow[cfg_quant_addr] :
+                       (cfg_addr == 7'h22) ? {24'd0, cfg_lut_addr} :
+                       (cfg_addr == 7'h23) ? {24'd0, lut_shadow[cfg_lut_addr]} :
                        layer_cfg_rdata;
 
     always @(posedge clk) begin
@@ -244,9 +262,9 @@ module conv_accel_core #(
             for (lut_i = 0; lut_i < 256; lut_i = lut_i + 1)
                 lut_shadow[lut_i] <= lut_i[7:0];
         end else begin
-            if (cfg_wr_en && cfg_addr == 6'h20)
+            if (cfg_wr_en && cfg_addr == 7'h20)
                 cfg_quant_addr <= cfg_wdata[5:0];
-            if (cfg_wr_en && cfg_addr == 6'h22)
+            if (cfg_wr_en && cfg_addr == 7'h22)
                 cfg_lut_addr <= cfg_wdata[7:0];
             if (merged_quant_wr_en)
                 quant_shadow[merged_quant_wr_addr] <= merged_quant_wr_data;
@@ -290,6 +308,20 @@ module conv_accel_core #(
         .perf_tail_cycles_configured(perf_tail_cycles_configured),
         .perf_drain_fifo_empty_wait(perf_drain_fifo_empty_wait),
         .perf_drain_fifo_empty_sticky(perf_drain_fifo_empty_sticky),
+        .perf_drain_read_fire(perf_drain_read_fire),
+        .perf_drain_packet_fire(perf_drain_packet_fire),
+        .perf_drain_ready_stall(perf_drain_ready_stall),
+        .perf_drain_internal_full_wait(perf_drain_internal_full_wait),
+        .perf_prefetch_start(perf_prefetch_start),
+        .perf_prefetch_weight_done(perf_prefetch_weight_done),
+        .perf_prefetch_feed_done(perf_prefetch_feed_done),
+        .perf_prefetch_hit(perf_prefetch_hit),
+        .perf_prefetch_miss(perf_prefetch_miss),
+        .perf_prefetch_stall(perf_prefetch_stall),
+        .perf_psumovl_start(perf_psumovl_start),
+        .perf_psumovl_hit(perf_psumovl_hit),
+        .perf_psumovl_wait_psum(perf_psumovl_wait_psum),
+        .perf_psumovl_underflow(perf_psumovl_underflow),
         .stream_bias_completed(stream_bias_completed),
         .stream_weight_completed(stream_weight_completed),
         .stream_ifm_completed(stream_ifm_completed),
@@ -313,6 +345,9 @@ module conv_accel_core #(
         .expected_bytes(expected_bytes),
         .stream_batch_mode(stream_batch_mode),
         .stream_raw_hwc_mode(stream_raw_hwc_mode),
+        .early_drain_enable(early_drain_enable),
+        .pass_prefetch_enable(pass_prefetch_enable),
+        .psum_stream_overlap_enable(psum_stream_overlap_enable),
         .stream_bias_packets(stream_bias_packets),
         .stream_weight_packets(stream_weight_packets),
         .stream_ifm_packets(stream_ifm_packets),
@@ -361,17 +396,35 @@ module conv_accel_core #(
         .perf_tail_cycles_configured(perf_tail_cycles_configured),
         .perf_drain_fifo_empty_wait(perf_drain_fifo_empty_wait),
         .perf_drain_fifo_empty_sticky(perf_drain_fifo_empty_sticky),
+        .perf_drain_read_fire(perf_drain_read_fire),
+        .perf_drain_packet_fire(perf_drain_packet_fire),
+        .perf_drain_ready_stall(perf_drain_ready_stall),
+        .perf_drain_internal_full_wait(perf_drain_internal_full_wait),
+        .perf_prefetch_start(perf_prefetch_start),
+        .perf_prefetch_weight_done(perf_prefetch_weight_done),
+        .perf_prefetch_feed_done(perf_prefetch_feed_done),
+        .perf_prefetch_hit(perf_prefetch_hit),
+        .perf_prefetch_miss(perf_prefetch_miss),
+        .perf_prefetch_stall(perf_prefetch_stall),
+        .perf_psumovl_start(perf_psumovl_start),
+        .perf_psumovl_hit(perf_psumovl_hit),
+        .perf_psumovl_wait_psum(perf_psumovl_wait_psum),
+        .perf_psumovl_underflow(perf_psumovl_underflow),
         .fm_h(fm_h), .fm_w(fm_w), .ofm_h(ofm_h), .ofm_w(ofm_w),
         .conv_stride(conv_stride), .conv_pad(conv_pad), .kernel_1x1(kernel_1x1),
         .stream_raw_hwc_mode(stream_raw_hwc_mode),
         .k_total(k_total), .cout_total(cout_total), .num_pixels(num_pixels),
         .tail_cycles_config(tail_cycles_config),
         .raw_hwc_compute_start_level(raw_hwc_compute_start_level),
+        .early_drain_enable(early_drain_enable),
+        .pass_prefetch_enable(pass_prefetch_enable),
+        .psum_stream_overlap_enable(psum_stream_overlap_enable),
         .tile_oy_base(tile_oy_base), .tile_ofm_h(tile_ofm_h),
         .tile_pixel_base(tile_pixel_base_ext),
         .pool_enable(pool_enable), .pool_stride(pool_stride),
         .bias_load_req(bias_load_req), .bias_load_done(bias_load_done),
         .current_cout_base(current_cout_base), .current_pass_base_k(current_pass_base_k),
+        .current_feeder_pass_base_k(current_feeder_pass_base_k),
         .bias_wr_addr(bias_wr_addr), .bias_wr_data(bias_wr_data), .bias_wr_en(bias_wr_en),
         .weight_load_req(weight_load_req), .weight_tile_ready(weight_tile_ready),
         .wgt_tile_wr_en(wgt_tile_wr_en), .wgt_tile_wr_addr(wgt_tile_wr_addr),

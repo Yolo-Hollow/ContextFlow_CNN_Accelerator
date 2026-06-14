@@ -20,6 +20,12 @@ module tb_psum_drain_writer;
     wire [AW-1:0] packet_addr;
     wire [DATA_W-1:0] packet_data;
     wire packet_is_final;
+    wire fifo_empty_wait;
+    wire fifo_empty_wait_sticky;
+    wire drain_read_fire;
+    wire drain_packet_fire;
+    wire drain_ready_stall;
+    wire drain_internal_full_wait;
 
     psum_drain_writer #(.COLS(COLS), .PSUM_W(PSUM_W), .AW(AW)) dut (
         .clk(clk), .rst(rst), .start(start), .busy(busy), .done(done),
@@ -27,7 +33,13 @@ module tb_psum_drain_writer;
         .psum_fifo_rd_en(psum_fifo_rd_en), .psum_fifo_rd_data(psum_fifo_rd_data),
         .psum_fifo_empty(psum_fifo_empty),
         .packet_valid(packet_valid), .packet_ready(packet_ready), .packet_addr(packet_addr),
-        .packet_data(packet_data), .packet_is_final(packet_is_final)
+        .packet_data(packet_data), .packet_is_final(packet_is_final),
+        .fifo_empty_wait(fifo_empty_wait),
+        .fifo_empty_wait_sticky(fifo_empty_wait_sticky),
+        .drain_read_fire(drain_read_fire),
+        .drain_packet_fire(drain_packet_fire),
+        .drain_ready_stall(drain_ready_stall),
+        .drain_internal_full_wait(drain_internal_full_wait)
     );
 
     always #5 clk = ~clk;
@@ -38,6 +50,11 @@ module tb_psum_drain_writer;
     integer expected_pixels;
     integer expected_final;
     integer stall_active;
+    integer read_fire_count;
+    integer packet_fire_count;
+    integer ready_stall_count;
+    integer internal_full_count;
+    integer empty_wait_count;
     reg [AW-1:0] stall_addr;
     reg [DATA_W-1:0] stall_data;
     reg stall_final;
@@ -108,6 +125,11 @@ module tb_psum_drain_writer;
             pkt_count = 0;
             monitor_enable = 0;
             stall_active = 0;
+            read_fire_count = 0;
+            packet_fire_count = 0;
+            ready_stall_count = 0;
+            internal_full_count = 0;
+            empty_wait_count = 0;
             repeat (3) @(negedge clk);
             rst = 1'b0;
             repeat (2) @(negedge clk);
@@ -180,6 +202,12 @@ module tb_psum_drain_writer;
 
             check_equal(pkt_count, expected_pixels, "packet count");
             check_equal(rd_count, expected_pixels, "read count");
+            check_equal(read_fire_count, expected_pixels, "drain read fire count");
+            check_equal(packet_fire_count, expected_pixels, "drain packet fire count");
+            if (ready_mode != 0)
+                check_le(1, ready_stall_count, "ready stall seen");
+            if (gap_after_reads >= 0)
+                check_le(1, empty_wait_count, "empty wait seen");
             check_equal(busy, 0, "busy clear");
             if (throughput_limit > 0)
                 check_le(cycles, throughput_limit, name);
@@ -194,6 +222,27 @@ module tb_psum_drain_writer;
         end else if (psum_fifo_rd_en == COL_MASK) begin
             psum_fifo_rd_data <= source_pkt[rd_count];
             rd_count <= rd_count + 1;
+        end
+    end
+
+    always @(posedge clk) begin
+        if (rst || !monitor_enable) begin
+            read_fire_count <= 0;
+            packet_fire_count <= 0;
+            ready_stall_count <= 0;
+            internal_full_count <= 0;
+            empty_wait_count <= 0;
+        end else begin
+            if (drain_read_fire)
+                read_fire_count <= read_fire_count + 1;
+            if (drain_packet_fire)
+                packet_fire_count <= packet_fire_count + 1;
+            if (drain_ready_stall)
+                ready_stall_count <= ready_stall_count + 1;
+            if (drain_internal_full_wait)
+                internal_full_count <= internal_full_count + 1;
+            if (fifo_empty_wait)
+                empty_wait_count <= empty_wait_count + 1;
         end
     end
 
@@ -250,6 +299,11 @@ module tb_psum_drain_writer;
         pkt_count = 0;
         monitor_enable = 0;
         stall_active = 0;
+        read_fire_count = 0;
+        packet_fire_count = 0;
+        ready_stall_count = 0;
+        internal_full_count = 0;
+        empty_wait_count = 0;
 
         run_case(16'd8, 1, 0, -1, 0, 80, 14, "no backpressure throughput");
         run_case(16'd9, 1, 1, -1, 0, 160, 0, "deterministic backpressure");

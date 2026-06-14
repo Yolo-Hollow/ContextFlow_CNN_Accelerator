@@ -26,6 +26,9 @@ param(
     [switch]$RawHwcConv6,
     [switch]$RawHwcConv8,
     [switch]$RawHwc3x3All,
+    [switch]$EarlyDrain,
+    [switch]$PassPrefetch,
+    [switch]$PsumStreamOverlap,
     [switch]$RunDeterministic,
     [string]$BuildDirName = "build_system_xck26_kv260"
 )
@@ -170,6 +173,15 @@ function Get-RawHwcVariantElf($Mode) {
     }
     if ($RawHwcConv8 -or $RawHwc3x3All) {
         $variantTags += "conv8"
+    }
+    if ($EarlyDrain) {
+        $variantTags += "early_drain"
+    }
+    if ($PassPrefetch) {
+        $variantTags += "pass_prefetch"
+    }
+    if ($PsumStreamOverlap) {
+        $variantTags += "psum_stream_overlap"
     }
     if ($variantTags.Count -eq 0) {
         if ($Mode -eq "conv0_conv9_ddr_demo") {

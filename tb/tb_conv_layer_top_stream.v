@@ -76,16 +76,35 @@ module tb_conv_layer_top_stream;
         .OFM_ADDR_W(16)
     ) dut (
         .clk(clk), .rst(rst), .start(start), .busy(busy), .done(done),
+        .perf_compute_fire(),
+        .perf_stage_bias(), .perf_stage_weight(), .perf_stage_feeder(),
+        .perf_stage_compute(), .perf_stage_drain(), .perf_stage_ofm_post(),
+        .perf_feed_fill_wait(), .perf_feed_push(), .perf_feed_fifo_stall(),
+        .perf_feed_win_not_ready(),
+        .perf_comp_wload(), .perf_comp_active(), .perf_comp_ifm_stall(),
+        .perf_comp_tail(), .perf_tail_cycles_configured(),
+        .perf_drain_fifo_empty_wait(), .perf_drain_fifo_empty_sticky(),
+        .perf_drain_read_fire(), .perf_drain_packet_fire(),
+        .perf_drain_ready_stall(), .perf_drain_internal_full_wait(),
+        .perf_prefetch_start(), .perf_prefetch_weight_done(),
+        .perf_prefetch_feed_done(), .perf_prefetch_hit(),
+        .perf_prefetch_miss(), .perf_prefetch_stall(),
+        .perf_psumovl_start(), .perf_psumovl_hit(),
+        .perf_psumovl_wait_psum(), .perf_psumovl_underflow(),
         .fm_h(9'd5), .fm_w(9'd5), .ofm_h(9'd3), .ofm_w(9'd3),
         .conv_stride(2'd1), .conv_pad(2'd0), .kernel_1x1(1'b0),
         .stream_raw_hwc_mode(1'b0),
         .tail_cycles_config(16'd0),
         .raw_hwc_compute_start_level(16'd0),
+        .early_drain_enable(1'b0),
+        .pass_prefetch_enable(1'b0),
+        .psum_stream_overlap_enable(1'b0),
         .k_total(K_TOTAL[13:0]), .cout_total(COUT_TOTAL[10:0]), .num_pixels(16'd9),
         .tile_oy_base(9'd0), .tile_ofm_h(9'd0), .tile_pixel_base(16'd0),
         .pool_enable(1'b0), .pool_stride(2'd0),
         .bias_load_req(bias_load_req), .bias_load_done(bias_load_done),
         .current_cout_base(current_cout_base), .current_pass_base_k(current_pass_base_k),
+        .current_feeder_pass_base_k(),
         .bias_wr_addr(bias_wr_addr), .bias_wr_data(bias_wr_data), .bias_wr_en(bias_wr_en),
         .weight_load_req(weight_load_req), .weight_tile_ready(weight_tile_ready),
         .wgt_tile_wr_en(wgt_tile_wr_en), .wgt_tile_wr_addr(wgt_tile_wr_addr), .wgt_tile_wr_data(wgt_tile_wr_data),
@@ -262,7 +281,7 @@ module tb_conv_layer_top_stream;
             compute_fire_count <= compute_fire_count + 1;
         if (!rst && dut.u_top.u_core.psum_fifo_wr_en[0])
             psum_wr_count <= psum_wr_count + 1;
-        if (!rst && dut.u_drain.state == 2'd3)
+        if (!rst && dut.drain_packet_fire)
             drain_capture_count <= drain_capture_count + 1;
     end
 
@@ -386,11 +405,11 @@ module tb_conv_layer_top_stream;
 
     initial begin
         repeat (12000) @(negedge clk);
-        $display("[FAIL] timeout done=%0d busy=%0d final_count=%0d ofm_count=%0d ifm_wr=%0d fire=%0d psum_wr=%0d bias_req=%0d wgt_req=%0d fill_req=%0d cout=%0d k=%0d sched_state=%0d feeder_done=%0d compute_done=%0d drain_done=%0d drain_state=%0d psum_empty=%h rd_en=%h wptr0=%0d rptr0=%0d empty0=%0d",
+        $display("[FAIL] timeout done=%0d busy=%0d final_count=%0d ofm_count=%0d ifm_wr=%0d fire=%0d psum_wr=%0d bias_req=%0d wgt_req=%0d fill_req=%0d cout=%0d k=%0d sched_state=%0d feeder_done=%0d compute_done=%0d drain_done=%0d drain_busy=%0d psum_empty=%h rd_en=%h wptr0=%0d rptr0=%0d empty0=%0d",
             done, busy, final_count, ofm_count, ifm_write_count, compute_fire_count, psum_wr_count,
             bias_load_req, weight_load_req, feeder_fill_req,
             current_cout_base, current_pass_base_k, dut.u_sched.state, dut.feeder_done, dut.compute_done, dut.drain_done,
-            dut.u_drain.state, dut.psum_fifo_empty, dut.psum_fifo_rd_en,
+            dut.u_drain.busy, dut.psum_fifo_empty, dut.psum_fifo_rd_en,
             dut.u_top.u_core.psum_fifo_gen[0].u_psum_fifo.wptr,
             dut.u_top.u_core.psum_fifo_gen[0].u_psum_fifo.rptr,
             dut.u_top.u_core.psum_fifo_gen[0].u_psum_fifo.empty);

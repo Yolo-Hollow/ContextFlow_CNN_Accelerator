@@ -120,6 +120,14 @@ def main():
             "replay_active=5 replay_wait_ready=0 compute_wait_ifm=0\n"
             "RAWSTAT layer=conv1 load_active=13 load_unpack=14 "
             "replay_active=15 replay_wait_ready=1 compute_wait_ifm=2\n"
+            "DRAINPERF layer=conv0 read_fire=10 packet_fire=9 "
+            "ready_stall=1 internal_full=2 empty_wait=0 version=1\n"
+            "DRAINPERF layer=conv1 read_fire=20 packet_fire=19 "
+            "ready_stall=3 internal_full=4 empty_wait=2 version=1\n"
+            "PSUMOVLPERF layer=conv0 start=0 hit=0 wait_psum=0 "
+            "underflow=0 version=1\n"
+            "PSUMOVLPERF layer=conv1 start=10 hit=9 wait_psum=12 "
+            "underflow=0 version=1\n"
         )
         assert summary["layer_count"] == 2
         assert summary["total_microseconds"] == 300
@@ -165,6 +173,19 @@ def main():
         assert summary["rawstat"]["replay_active_cycles"] == 20
         assert summary["rawstat"]["replay_wait_ready_cycles"] == 1
         assert summary["rawstat"]["compute_wait_ifm_cycles"] == 2
+        assert summary["drainperf"]["read_fire_cycles"] == 30
+        assert summary["drainperf"]["packet_fire_cycles"] == 28
+        assert summary["drainperf"]["ready_stall_cycles"] == 4
+        assert summary["drainperf"]["internal_full_cycles"] == 6
+        assert summary["drainperf"]["empty_wait_cycles"] == 2
+        assert summary["drainperf"]["version"] == 1
+        assert summary["drainperf"]["drain_residual_cycles"] == 160
+        assert summary["psumovlperf"]["start_cycles"] == 10
+        assert summary["psumovlperf"]["hit_cycles"] == 9
+        assert summary["psumovlperf"]["wait_psum_cycles"] == 12
+        assert summary["psumovlperf"]["underflow_cycles"] == 0
+        assert summary["psumovlperf"]["hit_percent"] == 90.0
+        assert summary["psumovlperf"]["version"] == 1
 
     print("PASS: KV260 runtime image package and visualization tests")
 

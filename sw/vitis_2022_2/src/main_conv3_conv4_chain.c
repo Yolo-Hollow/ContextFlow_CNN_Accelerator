@@ -264,6 +264,23 @@ typedef struct {
     uint64_t hw_tail_elapsed_cycles;
     uint64_t hw_drain_empty_wait_cycles;
     uint64_t hw_drain_empty_sticky;
+    uint64_t hw_drain_read_fire_cycles;
+    uint64_t hw_drain_packet_fire_cycles;
+    uint64_t hw_drain_ready_stall_cycles;
+    uint64_t hw_drain_internal_full_cycles;
+    uint64_t hw_drainperf_version;
+    uint64_t hw_prefetch_start_cycles;
+    uint64_t hw_prefetch_weight_done_cycles;
+    uint64_t hw_prefetch_feed_done_cycles;
+    uint64_t hw_prefetch_hit_cycles;
+    uint64_t hw_prefetch_miss_cycles;
+    uint64_t hw_prefetch_stall_cycles;
+    uint64_t hw_prefetchperf_version;
+    uint64_t hw_psumovl_start_cycles;
+    uint64_t hw_psumovl_hit_cycles;
+    uint64_t hw_psumovl_wait_psum_cycles;
+    uint64_t hw_psumovl_underflow_cycles;
+    uint64_t hw_psumovlperf_version;
     uint64_t vector_packets;
     uint64_t vector_pixels;
     uint64_t vector_beats;
@@ -1417,6 +1434,36 @@ static void print_layer_perf(const chain_layer_t *layer)
         (unsigned long long)layer_perf.hw_drain_empty_wait_cycles,
         (unsigned long long)layer_perf.hw_drain_empty_sticky);
     xil_printf(
+        "DRAINPERF layer=%s read_fire=%llu packet_fire=%llu "
+        "ready_stall=%llu internal_full=%llu empty_wait=%llu version=%llu\r\n",
+        layer->name,
+        (unsigned long long)layer_perf.hw_drain_read_fire_cycles,
+        (unsigned long long)layer_perf.hw_drain_packet_fire_cycles,
+        (unsigned long long)layer_perf.hw_drain_ready_stall_cycles,
+        (unsigned long long)layer_perf.hw_drain_internal_full_cycles,
+        (unsigned long long)layer_perf.hw_drain_empty_wait_cycles,
+        (unsigned long long)layer_perf.hw_drainperf_version);
+    xil_printf(
+        "PREFETCHPERF layer=%s start=%llu weight_done=%llu feed_done=%llu "
+        "hit=%llu miss=%llu stall=%llu version=%llu\r\n",
+        layer->name,
+        (unsigned long long)layer_perf.hw_prefetch_start_cycles,
+        (unsigned long long)layer_perf.hw_prefetch_weight_done_cycles,
+        (unsigned long long)layer_perf.hw_prefetch_feed_done_cycles,
+        (unsigned long long)layer_perf.hw_prefetch_hit_cycles,
+        (unsigned long long)layer_perf.hw_prefetch_miss_cycles,
+        (unsigned long long)layer_perf.hw_prefetch_stall_cycles,
+        (unsigned long long)layer_perf.hw_prefetchperf_version);
+    xil_printf(
+        "PSUMOVLPERF layer=%s start=%llu hit=%llu wait_psum=%llu "
+        "underflow=%llu version=%llu\r\n",
+        layer->name,
+        (unsigned long long)layer_perf.hw_psumovl_start_cycles,
+        (unsigned long long)layer_perf.hw_psumovl_hit_cycles,
+        (unsigned long long)layer_perf.hw_psumovl_wait_psum_cycles,
+        (unsigned long long)layer_perf.hw_psumovl_underflow_cycles,
+        (unsigned long long)layer_perf.hw_psumovlperf_version);
+    xil_printf(
         "DMASTAT layer=%s bias_starts=%lu weight_starts=%lu ifm_starts=%lu ofm_starts=%lu\r\n",
         layer->name,
         (unsigned long)layer_perf.dma_bias_starts,
@@ -1676,6 +1723,23 @@ static int run_one_tile(const chain_layer_t *layer, const chain_tile_t *tile, ui
     uint32_t tile_tail_elapsed = rd32(ACCEL_BASE_ADDR, ACCEL_TAIL_ELAPSED);
     uint32_t tile_drain_empty_wait = rd32(ACCEL_BASE_ADDR, ACCEL_DRAIN_EMPTY_WAIT);
     uint32_t tile_drain_empty_sticky = rd32(ACCEL_BASE_ADDR, ACCEL_DRAIN_EMPTY_STICKY);
+    uint32_t tile_drain_read_fire = rd32(ACCEL_BASE_ADDR, ACCEL_DRAIN_READ_FIRE);
+    uint32_t tile_drain_packet_fire = rd32(ACCEL_BASE_ADDR, ACCEL_DRAIN_PACKET_FIRE);
+    uint32_t tile_drain_ready_stall = rd32(ACCEL_BASE_ADDR, ACCEL_DRAIN_READY_STALL);
+    uint32_t tile_drain_internal_full = rd32(ACCEL_BASE_ADDR, ACCEL_DRAIN_INTERNAL_FULL);
+    uint32_t tile_drainperf_version = rd32(ACCEL_BASE_ADDR, ACCEL_DRAINPERF_VERSION);
+    uint32_t tile_prefetch_start = rd32(ACCEL_BASE_ADDR, ACCEL_PREFETCH_START);
+    uint32_t tile_prefetch_weight_done = rd32(ACCEL_BASE_ADDR, ACCEL_PREFETCH_WEIGHT_DONE);
+    uint32_t tile_prefetch_feed_done = rd32(ACCEL_BASE_ADDR, ACCEL_PREFETCH_FEED_DONE);
+    uint32_t tile_prefetch_hit = rd32(ACCEL_BASE_ADDR, ACCEL_PREFETCH_HIT);
+    uint32_t tile_prefetch_miss = rd32(ACCEL_BASE_ADDR, ACCEL_PREFETCH_MISS);
+    uint32_t tile_prefetch_stall = rd32(ACCEL_BASE_ADDR, ACCEL_PREFETCH_STALL);
+    uint32_t tile_prefetchperf_version = rd32(ACCEL_BASE_ADDR, ACCEL_PREFETCHPERF_VERSION);
+    uint32_t tile_psumovl_start = rd32(ACCEL_BASE_ADDR, ACCEL_PSUMOVL_START);
+    uint32_t tile_psumovl_hit = rd32(ACCEL_BASE_ADDR, ACCEL_PSUMOVL_HIT);
+    uint32_t tile_psumovl_wait_psum = rd32(ACCEL_BASE_ADDR, ACCEL_PSUMOVL_WAIT_PSUM);
+    uint32_t tile_psumovl_underflow = rd32(ACCEL_BASE_ADDR, ACCEL_PSUMOVL_UNDERFLOW);
+    uint32_t tile_psumovlperf_version = rd32(ACCEL_BASE_ADDR, ACCEL_PSUMOVLPERF_VERSION);
     uint32_t tile_vector_packets = rd32(ACCEL_BASE_ADDR, ACCEL_VECTOR_PACKETS);
     uint32_t tile_vector_pixels = rd32(ACCEL_BASE_ADDR, ACCEL_VECTOR_PIXELS);
     uint32_t tile_vector_beats = rd32(ACCEL_BASE_ADDR, ACCEL_VECTOR_BEATS);
@@ -1695,6 +1759,8 @@ static int run_one_tile(const chain_layer_t *layer, const chain_tile_t *tile, ui
         "comp_wload=%lu comp_active=%lu comp_fire=%lu comp_ifm_stall=%lu comp_tail=%lu "
         "tail_cfg=%lu raw_start_level=%lu tail_elapsed=%lu "
         "drain_empty_wait=%lu drain_empty_sticky=%lu "
+        "drain_read_fire=%lu drain_packet_fire=%lu drain_ready_stall=%lu "
+        "drain_internal_full=%lu drainperf_version=%lu "
         "vector_packets=%lu vector_pixels=%lu vector_beats=%lu vector_stalls=%lu "
         "raw_load_active=%lu raw_load_unpack=%lu raw_replay_active=%lu "
         "raw_replay_wait_ready=%lu "
@@ -1734,6 +1800,11 @@ static int run_one_tile(const chain_layer_t *layer, const chain_tile_t *tile, ui
         (unsigned long)tile_tail_elapsed,
         (unsigned long)tile_drain_empty_wait,
         (unsigned long)tile_drain_empty_sticky,
+        (unsigned long)tile_drain_read_fire,
+        (unsigned long)tile_drain_packet_fire,
+        (unsigned long)tile_drain_ready_stall,
+        (unsigned long)tile_drain_internal_full,
+        (unsigned long)tile_drainperf_version,
         (unsigned long)tile_vector_packets,
         (unsigned long)tile_vector_pixels,
         (unsigned long)tile_vector_beats,
@@ -1773,6 +1844,23 @@ static int run_one_tile(const chain_layer_t *layer, const chain_tile_t *tile, ui
     layer_perf.hw_tail_elapsed_cycles += tile_tail_elapsed;
     layer_perf.hw_drain_empty_wait_cycles += tile_drain_empty_wait;
     layer_perf.hw_drain_empty_sticky |= tile_drain_empty_sticky;
+    layer_perf.hw_drain_read_fire_cycles += tile_drain_read_fire;
+    layer_perf.hw_drain_packet_fire_cycles += tile_drain_packet_fire;
+    layer_perf.hw_drain_ready_stall_cycles += tile_drain_ready_stall;
+    layer_perf.hw_drain_internal_full_cycles += tile_drain_internal_full;
+    layer_perf.hw_drainperf_version = tile_drainperf_version;
+    layer_perf.hw_prefetch_start_cycles += tile_prefetch_start;
+    layer_perf.hw_prefetch_weight_done_cycles += tile_prefetch_weight_done;
+    layer_perf.hw_prefetch_feed_done_cycles += tile_prefetch_feed_done;
+    layer_perf.hw_prefetch_hit_cycles += tile_prefetch_hit;
+    layer_perf.hw_prefetch_miss_cycles += tile_prefetch_miss;
+    layer_perf.hw_prefetch_stall_cycles += tile_prefetch_stall;
+    layer_perf.hw_prefetchperf_version = tile_prefetchperf_version;
+    layer_perf.hw_psumovl_start_cycles += tile_psumovl_start;
+    layer_perf.hw_psumovl_hit_cycles += tile_psumovl_hit;
+    layer_perf.hw_psumovl_wait_psum_cycles += tile_psumovl_wait_psum;
+    layer_perf.hw_psumovl_underflow_cycles += tile_psumovl_underflow;
+    layer_perf.hw_psumovlperf_version = tile_psumovlperf_version;
     layer_perf.vector_packets += tile_vector_packets;
     layer_perf.vector_pixels += tile_vector_pixels;
     layer_perf.vector_beats += tile_vector_beats;
@@ -2015,6 +2103,23 @@ static int run_one_tile_batch(
     uint32_t tile_tail_elapsed = rd32(ACCEL_BASE_ADDR, ACCEL_TAIL_ELAPSED);
     uint32_t tile_drain_empty_wait = rd32(ACCEL_BASE_ADDR, ACCEL_DRAIN_EMPTY_WAIT);
     uint32_t tile_drain_empty_sticky = rd32(ACCEL_BASE_ADDR, ACCEL_DRAIN_EMPTY_STICKY);
+    uint32_t tile_drain_read_fire = rd32(ACCEL_BASE_ADDR, ACCEL_DRAIN_READ_FIRE);
+    uint32_t tile_drain_packet_fire = rd32(ACCEL_BASE_ADDR, ACCEL_DRAIN_PACKET_FIRE);
+    uint32_t tile_drain_ready_stall = rd32(ACCEL_BASE_ADDR, ACCEL_DRAIN_READY_STALL);
+    uint32_t tile_drain_internal_full = rd32(ACCEL_BASE_ADDR, ACCEL_DRAIN_INTERNAL_FULL);
+    uint32_t tile_drainperf_version = rd32(ACCEL_BASE_ADDR, ACCEL_DRAINPERF_VERSION);
+    uint32_t tile_prefetch_start = rd32(ACCEL_BASE_ADDR, ACCEL_PREFETCH_START);
+    uint32_t tile_prefetch_weight_done = rd32(ACCEL_BASE_ADDR, ACCEL_PREFETCH_WEIGHT_DONE);
+    uint32_t tile_prefetch_feed_done = rd32(ACCEL_BASE_ADDR, ACCEL_PREFETCH_FEED_DONE);
+    uint32_t tile_prefetch_hit = rd32(ACCEL_BASE_ADDR, ACCEL_PREFETCH_HIT);
+    uint32_t tile_prefetch_miss = rd32(ACCEL_BASE_ADDR, ACCEL_PREFETCH_MISS);
+    uint32_t tile_prefetch_stall = rd32(ACCEL_BASE_ADDR, ACCEL_PREFETCH_STALL);
+    uint32_t tile_prefetchperf_version = rd32(ACCEL_BASE_ADDR, ACCEL_PREFETCHPERF_VERSION);
+    uint32_t tile_psumovl_start = rd32(ACCEL_BASE_ADDR, ACCEL_PSUMOVL_START);
+    uint32_t tile_psumovl_hit = rd32(ACCEL_BASE_ADDR, ACCEL_PSUMOVL_HIT);
+    uint32_t tile_psumovl_wait_psum = rd32(ACCEL_BASE_ADDR, ACCEL_PSUMOVL_WAIT_PSUM);
+    uint32_t tile_psumovl_underflow = rd32(ACCEL_BASE_ADDR, ACCEL_PSUMOVL_UNDERFLOW);
+    uint32_t tile_psumovlperf_version = rd32(ACCEL_BASE_ADDR, ACCEL_PSUMOVLPERF_VERSION);
     uint32_t tile_vector_packets = rd32(ACCEL_BASE_ADDR, ACCEL_VECTOR_PACKETS);
     uint32_t tile_vector_pixels = rd32(ACCEL_BASE_ADDR, ACCEL_VECTOR_PIXELS);
     uint32_t tile_vector_beats = rd32(ACCEL_BASE_ADDR, ACCEL_VECTOR_BEATS);
@@ -2034,6 +2139,8 @@ static int run_one_tile_batch(
         "comp_wload=%lu comp_active=%lu comp_fire=%lu comp_ifm_stall=%lu comp_tail=%lu "
         "tail_cfg=%lu raw_start_level=%lu tail_elapsed=%lu "
         "drain_empty_wait=%lu drain_empty_sticky=%lu "
+        "drain_read_fire=%lu drain_packet_fire=%lu drain_ready_stall=%lu "
+        "drain_internal_full=%lu drainperf_version=%lu "
         "vector_packets=%lu vector_pixels=%lu vector_beats=%lu vector_stalls=%lu "
         "raw_load_active=%lu raw_load_unpack=%lu raw_replay_active=%lu "
         "raw_replay_wait_ready=%lu "
@@ -2073,6 +2180,11 @@ static int run_one_tile_batch(
         (unsigned long)tile_tail_elapsed,
         (unsigned long)tile_drain_empty_wait,
         (unsigned long)tile_drain_empty_sticky,
+        (unsigned long)tile_drain_read_fire,
+        (unsigned long)tile_drain_packet_fire,
+        (unsigned long)tile_drain_ready_stall,
+        (unsigned long)tile_drain_internal_full,
+        (unsigned long)tile_drainperf_version,
         (unsigned long)tile_vector_packets,
         (unsigned long)tile_vector_pixels,
         (unsigned long)tile_vector_beats,
@@ -2112,6 +2224,23 @@ static int run_one_tile_batch(
     layer_perf.hw_tail_elapsed_cycles += tile_tail_elapsed;
     layer_perf.hw_drain_empty_wait_cycles += tile_drain_empty_wait;
     layer_perf.hw_drain_empty_sticky |= tile_drain_empty_sticky;
+    layer_perf.hw_drain_read_fire_cycles += tile_drain_read_fire;
+    layer_perf.hw_drain_packet_fire_cycles += tile_drain_packet_fire;
+    layer_perf.hw_drain_ready_stall_cycles += tile_drain_ready_stall;
+    layer_perf.hw_drain_internal_full_cycles += tile_drain_internal_full;
+    layer_perf.hw_drainperf_version = tile_drainperf_version;
+    layer_perf.hw_prefetch_start_cycles += tile_prefetch_start;
+    layer_perf.hw_prefetch_weight_done_cycles += tile_prefetch_weight_done;
+    layer_perf.hw_prefetch_feed_done_cycles += tile_prefetch_feed_done;
+    layer_perf.hw_prefetch_hit_cycles += tile_prefetch_hit;
+    layer_perf.hw_prefetch_miss_cycles += tile_prefetch_miss;
+    layer_perf.hw_prefetch_stall_cycles += tile_prefetch_stall;
+    layer_perf.hw_prefetchperf_version = tile_prefetchperf_version;
+    layer_perf.hw_psumovl_start_cycles += tile_psumovl_start;
+    layer_perf.hw_psumovl_hit_cycles += tile_psumovl_hit;
+    layer_perf.hw_psumovl_wait_psum_cycles += tile_psumovl_wait_psum;
+    layer_perf.hw_psumovl_underflow_cycles += tile_psumovl_underflow;
+    layer_perf.hw_psumovlperf_version = tile_psumovlperf_version;
     layer_perf.vector_packets += tile_vector_packets;
     layer_perf.vector_pixels += tile_vector_pixels;
     layer_perf.vector_beats += tile_vector_beats;
@@ -2169,7 +2298,12 @@ static int configure_layer(const chain_layer_t *layer)
         ACCEL_BATCH_STREAM ?
             (ACCEL_STREAM_CFG_BATCH |
              (layer_uses_raw_hwc(layer) ?
-              ACCEL_STREAM_CFG_RAW_HWC : 0U)) :
+              ACCEL_STREAM_CFG_RAW_HWC : 0U) |
+             (ACCEL_EARLY_DRAIN ? ACCEL_STREAM_CFG_EARLY_DRAIN : 0U) |
+             ((ACCEL_PASS_PREFETCH && layer_uses_raw_hwc(layer)) ?
+              ACCEL_STREAM_CFG_PASS_PREFETCH : 0U) |
+             ((ACCEL_PSUM_STREAM_OVERLAP && layer_uses_raw_hwc(layer)) ?
+              ACCEL_STREAM_CFG_PSUM_STREAM_OVERLAP : 0U)) :
             0U);
     if (program_quant_tile(layer) != 0) {
         return -1;

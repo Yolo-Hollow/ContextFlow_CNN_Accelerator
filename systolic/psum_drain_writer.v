@@ -28,7 +28,11 @@ module psum_drain_writer #(
     output reg [COLS*PSUM_W*2-1:0] packet_data,
     output reg packet_is_final,
     output fifo_empty_wait,
-    output reg fifo_empty_wait_sticky
+    output reg fifo_empty_wait_sticky,
+    output drain_read_fire,
+    output drain_packet_fire,
+    output drain_ready_stall,
+    output drain_internal_full_wait
 );
     localparam [31:0] COL_MASK = (32'h1 << COLS) - 1;
 
@@ -47,13 +51,17 @@ module psum_drain_writer #(
     wire [1:0] stored_after_pop = stored_count - {1'b0, packet_pop};
     wire [1:0] stored_after_return = stored_after_pop + {1'b0, read_pending};
     wire can_accept_future_return = (stored_after_return < 2'd2);
-    wire want_read = busy && (rd_count < pixels_to_drain) &&
-                     can_accept_future_return;
-    wire issue_read = busy && (rd_count < pixels_to_drain) &&
+    wire read_needed = busy && (rd_count < pixels_to_drain);
+    wire want_read = read_needed && can_accept_future_return;
+    wire issue_read = read_needed &&
                       fifos_ready && can_accept_future_return;
 
     assign psum_fifo_rd_en = issue_read ? COL_MASK : 32'd0;
     assign fifo_empty_wait = want_read && !fifos_ready;
+    assign drain_read_fire = issue_read;
+    assign drain_packet_fire = packet_pop;
+    assign drain_ready_stall = busy && packet_valid && !packet_ready;
+    assign drain_internal_full_wait = read_needed && fifos_ready && !can_accept_future_return;
 
     always @(posedge clk) begin
         if (rst) begin

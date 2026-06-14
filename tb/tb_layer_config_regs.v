@@ -3,7 +3,7 @@
 module tb_layer_config_regs;
     reg clk, rst;
     reg cfg_wr_en;
-    reg [5:0] cfg_addr;
+    reg [6:0] cfg_addr;
     reg [31:0] cfg_wdata;
     reg cfg_rd_en;
     wire [31:0] cfg_rdata;
@@ -16,6 +16,10 @@ module tb_layer_config_regs;
     reg perf_feed_win_not_ready;
     reg perf_comp_wload, perf_comp_active, perf_comp_ifm_stall, perf_comp_tail;
     reg perf_drain_fifo_empty_wait, perf_drain_fifo_empty_sticky;
+    reg perf_drain_read_fire, perf_drain_packet_fire;
+    reg perf_drain_ready_stall, perf_drain_internal_full_wait;
+    reg perf_prefetch_start, perf_prefetch_weight_done, perf_prefetch_feed_done;
+    reg perf_prefetch_hit, perf_prefetch_miss, perf_prefetch_stall;
     reg [31:0] stream_bias_completed;
     reg [31:0] stream_weight_completed;
     reg [31:0] stream_ifm_completed;
@@ -43,6 +47,8 @@ module tb_layer_config_regs;
     wire [31:0] expected_bytes;
     wire stream_batch_mode;
     wire stream_raw_hwc_mode;
+    wire early_drain_enable;
+    wire pass_prefetch_enable;
     wire [31:0] stream_bias_packets;
     wire [31:0] stream_weight_packets;
     wire [31:0] stream_ifm_packets;
@@ -82,6 +88,16 @@ module tb_layer_config_regs;
         .perf_tail_cycles_configured(tail_cycles_selected),
         .perf_drain_fifo_empty_wait(perf_drain_fifo_empty_wait),
         .perf_drain_fifo_empty_sticky(perf_drain_fifo_empty_sticky),
+        .perf_drain_read_fire(perf_drain_read_fire),
+        .perf_drain_packet_fire(perf_drain_packet_fire),
+        .perf_drain_ready_stall(perf_drain_ready_stall),
+        .perf_drain_internal_full_wait(perf_drain_internal_full_wait),
+        .perf_prefetch_start(perf_prefetch_start),
+        .perf_prefetch_weight_done(perf_prefetch_weight_done),
+        .perf_prefetch_feed_done(perf_prefetch_feed_done),
+        .perf_prefetch_hit(perf_prefetch_hit),
+        .perf_prefetch_miss(perf_prefetch_miss),
+        .perf_prefetch_stall(perf_prefetch_stall),
         .stream_bias_completed(stream_bias_completed),
         .stream_weight_completed(stream_weight_completed),
         .stream_ifm_completed(stream_ifm_completed),
@@ -105,6 +121,8 @@ module tb_layer_config_regs;
         .expected_bytes(expected_bytes),
         .stream_batch_mode(stream_batch_mode),
         .stream_raw_hwc_mode(stream_raw_hwc_mode),
+        .early_drain_enable(early_drain_enable),
+        .pass_prefetch_enable(pass_prefetch_enable),
         .stream_bias_packets(stream_bias_packets),
         .stream_weight_packets(stream_weight_packets),
         .stream_ifm_packets(stream_ifm_packets),
@@ -126,7 +144,7 @@ module tb_layer_config_regs;
     end
 
     task write_reg;
-        input [5:0] addr;
+        input [6:0] addr;
         input [31:0] data;
         begin
             @(negedge clk);
@@ -180,6 +198,16 @@ module tb_layer_config_regs;
         perf_comp_tail = 0;
         perf_drain_fifo_empty_wait = 0;
         perf_drain_fifo_empty_sticky = 0;
+        perf_drain_read_fire = 0;
+        perf_drain_packet_fire = 0;
+        perf_drain_ready_stall = 0;
+        perf_drain_internal_full_wait = 0;
+        perf_prefetch_start = 0;
+        perf_prefetch_weight_done = 0;
+        perf_prefetch_feed_done = 0;
+        perf_prefetch_hit = 0;
+        perf_prefetch_miss = 0;
+        perf_prefetch_stall = 0;
         stream_bias_completed = 32'd7;
         stream_weight_completed = 32'd11;
         stream_ifm_completed = 32'd13;
@@ -209,7 +237,7 @@ module tb_layer_config_regs;
         write_reg(6'h09, 32'd6);
         write_reg(6'h0f, 32'd36);
         write_reg(6'h10, {28'd0, 2'd2, 1'b0, 1'b1});
-        write_reg(6'h19, 32'd3);
+        write_reg(6'h19, 32'd15);
         write_reg(6'h1a, 32'd7);
         write_reg(6'h1b, 32'd11);
         write_reg(6'h1c, 32'd13);
@@ -233,6 +261,8 @@ module tb_layer_config_regs;
         check_value(pool_stride, 2, "pool_stride");
         check_value(stream_batch_mode, 1, "stream batch mode");
         check_value(stream_raw_hwc_mode, 1, "stream raw hwc mode");
+        check_value(early_drain_enable, 1, "early drain enable");
+        check_value(pass_prefetch_enable, 1, "pass prefetch enable");
         check_value(stream_bias_packets, 7, "stream bias packets");
         check_value(stream_weight_packets, 11, "stream weight packets");
         check_value(stream_ifm_packets, 13, "stream ifm packets");
@@ -325,6 +355,16 @@ module tb_layer_config_regs;
         perf_comp_tail = 1'b1;
         perf_drain_fifo_empty_wait = 1'b1;
         perf_drain_fifo_empty_sticky = 1'b1;
+        perf_drain_read_fire = 1'b1;
+        perf_drain_packet_fire = 1'b1;
+        perf_drain_ready_stall = 1'b1;
+        perf_drain_internal_full_wait = 1'b1;
+        perf_prefetch_start = 1'b1;
+        perf_prefetch_weight_done = 1'b1;
+        perf_prefetch_feed_done = 1'b1;
+        perf_prefetch_hit = 1'b1;
+        perf_prefetch_miss = 1'b1;
+        perf_prefetch_stall = 1'b1;
         repeat (2) @(posedge clk);
         @(negedge clk);
         layer_busy = 1'b0;
@@ -335,6 +375,16 @@ module tb_layer_config_regs;
         perf_comp_tail = 1'b0;
         perf_drain_fifo_empty_wait = 1'b0;
         perf_drain_fifo_empty_sticky = 1'b0;
+        perf_drain_read_fire = 1'b0;
+        perf_drain_packet_fire = 1'b0;
+        perf_drain_ready_stall = 1'b0;
+        perf_drain_internal_full_wait = 1'b0;
+        perf_prefetch_start = 1'b0;
+        perf_prefetch_weight_done = 1'b0;
+        perf_prefetch_feed_done = 1'b0;
+        perf_prefetch_hit = 1'b0;
+        perf_prefetch_miss = 1'b0;
+        perf_prefetch_stall = 1'b0;
         cfg_addr = 6'h12;
         #1;
         check_value(cfg_rdata, 5, "perf busy cycles");
@@ -401,6 +451,42 @@ module tb_layer_config_regs;
         cfg_addr = 6'h3b;
         #1;
         check_value(cfg_rdata, 1, "drain empty sticky");
+        cfg_addr = 7'h40;
+        #1;
+        check_value(cfg_rdata, 2, "drain read fire cycles");
+        cfg_addr = 7'h41;
+        #1;
+        check_value(cfg_rdata, 2, "drain packet fire cycles");
+        cfg_addr = 7'h42;
+        #1;
+        check_value(cfg_rdata, 2, "drain ready stall cycles");
+        cfg_addr = 7'h43;
+        #1;
+        check_value(cfg_rdata, 2, "drain internal full cycles");
+        cfg_addr = 7'h44;
+        #1;
+        check_value(cfg_rdata, 1, "drainperf version");
+        cfg_addr = 7'h45;
+        #1;
+        check_value(cfg_rdata, 2, "prefetch start cycles");
+        cfg_addr = 7'h46;
+        #1;
+        check_value(cfg_rdata, 2, "prefetch weight done cycles");
+        cfg_addr = 7'h47;
+        #1;
+        check_value(cfg_rdata, 2, "prefetch feed done cycles");
+        cfg_addr = 7'h48;
+        #1;
+        check_value(cfg_rdata, 2, "prefetch hit cycles");
+        cfg_addr = 7'h49;
+        #1;
+        check_value(cfg_rdata, 2, "prefetch miss cycles");
+        cfg_addr = 7'h4a;
+        #1;
+        check_value(cfg_rdata, 2, "prefetch stall cycles");
+        cfg_addr = 7'h4b;
+        #1;
+        check_value(cfg_rdata, 1, "prefetchperf version");
 
         @(negedge clk);
         layer_done = 1'b1;
@@ -446,6 +532,8 @@ module tb_layer_config_regs;
         check_value(pool_stride, 2, "busy freeze pool stride");
         check_value(stream_batch_mode, 1, "busy freeze stream mode");
         check_value(stream_raw_hwc_mode, 1, "busy freeze raw hwc mode");
+        check_value(early_drain_enable, 1, "busy freeze early drain mode");
+        check_value(pass_prefetch_enable, 1, "busy freeze pass prefetch mode");
         check_value(stream_bias_packets, 7, "busy freeze bias packets");
         check_value(stream_weight_packets, 11, "busy freeze weight packets");
         check_value(stream_ifm_packets, 13, "busy freeze ifm packets");
@@ -469,6 +557,12 @@ module tb_layer_config_regs;
         cfg_addr = 6'h2f;
         #1;
         check_value(cfg_rdata, 0, "start clears subperf counters");
+        cfg_addr = 7'h40;
+        #1;
+        check_value(cfg_rdata, 0, "start clears drain subperf counters");
+        cfg_addr = 7'h45;
+        #1;
+        check_value(cfg_rdata, 0, "start clears prefetch counters");
 
         write_reg(6'h00, 32'd2);
         write_reg(6'h03, {15'd0, 1'b1, 6'd0, 2'd0, 6'd0, 2'd1});

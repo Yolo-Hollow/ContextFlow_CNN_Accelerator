@@ -45,7 +45,7 @@ module conv_accel_core_axi_lite_full_stream #(
     input  clk,
     input  rst,
 
-    input  [7:0]  s_axi_awaddr,
+    input  [8:0]  s_axi_awaddr,
     input         s_axi_awvalid,
     output        s_axi_awready,
     input  [31:0] s_axi_wdata,
@@ -55,7 +55,7 @@ module conv_accel_core_axi_lite_full_stream #(
     output [1:0]  s_axi_bresp,
     output        s_axi_bvalid,
     input         s_axi_bready,
-    input  [7:0]  s_axi_araddr,
+    input  [8:0]  s_axi_araddr,
     input         s_axi_arvalid,
     output        s_axi_arready,
     output [31:0] s_axi_rdata,
@@ -113,6 +113,7 @@ module conv_accel_core_axi_lite_full_stream #(
     wire ofm_stream_full;
     wire ofm_stream_almost_full;
     wire [7:0] configured_input_zero_point;
+    wire [13:0] unused_current_feeder_pass_base_k;
 
     assign ofm_mem_wr_en = ofm_m_valid && ofm_m_ready;
     assign ofm_mem_wr_addr = ofm_m_addr;
@@ -150,6 +151,7 @@ module conv_accel_core_axi_lite_full_stream #(
         .s_axi_rvalid(s_axi_rvalid), .s_axi_rready(s_axi_rready),
         .bias_load_req(bias_load_req), .weight_load_req(weight_load_req),
         .current_cout_base(current_cout_base), .current_pass_base_k(current_pass_base_k),
+        .current_feeder_pass_base_k(unused_current_feeder_pass_base_k),
         .configured_input_zero_point(configured_input_zero_point),
         .bias_s_ready(bias_s_ready), .bias_s_valid(bias_s_valid), .bias_s_data(bias_s_data),
         .weight_s_ready(weight_s_ready), .weight_s_valid(weight_s_valid), .weight_s_data(weight_s_data),

@@ -3,7 +3,7 @@
 module tb_axi_lite_cfg_bridge;
     reg clk, rst;
 
-    reg  [7:0]  awaddr;
+    reg  [8:0]  awaddr;
     reg         awvalid;
     wire        awready;
     reg  [31:0] wdata;
@@ -13,7 +13,7 @@ module tb_axi_lite_cfg_bridge;
     wire [1:0]  bresp;
     wire        bvalid;
     reg         bready;
-    reg  [7:0]  araddr;
+    reg  [8:0]  araddr;
     reg         arvalid;
     wire        arready;
     wire [31:0] rdata;
@@ -22,7 +22,7 @@ module tb_axi_lite_cfg_bridge;
     reg         rready;
 
     wire        cfg_wr_en;
-    wire [5:0]  cfg_addr;
+    wire [6:0]  cfg_addr;
     wire [31:0] cfg_wdata;
     wire [31:0] cfg_rdata;
     wire        cfg_rd_en;
@@ -43,6 +43,8 @@ module tb_axi_lite_cfg_bridge;
     wire [31:0] expected_bytes;
     wire stream_batch_mode;
     wire stream_raw_hwc_mode;
+    wire early_drain_enable;
+    wire pass_prefetch_enable;
     wire [31:0] stream_bias_packets;
     wire [31:0] stream_weight_packets;
     wire [31:0] stream_ifm_packets;
@@ -88,6 +90,16 @@ module tb_axi_lite_cfg_bridge;
         .perf_tail_cycles_configured(32'd138),
         .perf_drain_fifo_empty_wait(1'b0),
         .perf_drain_fifo_empty_sticky(1'b0),
+        .perf_drain_read_fire(1'b0),
+        .perf_drain_packet_fire(1'b0),
+        .perf_drain_ready_stall(1'b0),
+        .perf_drain_internal_full_wait(1'b0),
+        .perf_prefetch_start(1'b0),
+        .perf_prefetch_weight_done(1'b0),
+        .perf_prefetch_feed_done(1'b0),
+        .perf_prefetch_hit(1'b0),
+        .perf_prefetch_miss(1'b0),
+        .perf_prefetch_stall(1'b0),
         .stream_bias_completed(32'd7),
         .stream_weight_completed(32'd11),
         .stream_ifm_completed(32'd13),
@@ -112,6 +124,8 @@ module tb_axi_lite_cfg_bridge;
         .expected_bytes(expected_bytes),
         .stream_batch_mode(stream_batch_mode),
         .stream_raw_hwc_mode(stream_raw_hwc_mode),
+        .early_drain_enable(early_drain_enable),
+        .pass_prefetch_enable(pass_prefetch_enable),
         .stream_bias_packets(stream_bias_packets),
         .stream_weight_packets(stream_weight_packets),
         .stream_ifm_packets(stream_ifm_packets),
@@ -135,7 +149,7 @@ module tb_axi_lite_cfg_bridge;
     end
 
     task axi_write;
-        input [7:0] addr;
+        input [8:0] addr;
         input [31:0] data;
         input [3:0] strb;
         begin
@@ -159,7 +173,7 @@ module tb_axi_lite_cfg_bridge;
     endtask
 
     task axi_write_split;
-        input [7:0] addr;
+        input [8:0] addr;
         input [31:0] data;
         begin
             @(negedge clk);
@@ -185,7 +199,7 @@ module tb_axi_lite_cfg_bridge;
     endtask
 
     task axi_write_split_wfirst;
-        input [7:0] addr;
+        input [8:0] addr;
         input [31:0] data;
         begin
             @(negedge clk);
@@ -211,7 +225,7 @@ module tb_axi_lite_cfg_bridge;
     endtask
 
     task axi_read;
-        input [7:0] addr;
+        input [8:0] addr;
         output [31:0] data;
         begin
             @(negedge clk);
@@ -292,14 +306,16 @@ module tb_axi_lite_cfg_bridge;
         axi_write(8'h24, 32'd6, 4'hf);
         axi_write(8'h3c, 32'd36, 4'hf);
         axi_write(8'h40, {28'd0, 2'd2, 1'b0, 1'b1}, 4'hf);
-        axi_write(8'h64, 32'd3, 4'hf);
+        axi_write(8'h64, 32'd15, 4'hf);
         axi_write(8'h68, 32'd7, 4'hf);
         axi_write(8'h6c, 32'd11, 4'hf);
         axi_write(8'h70, 32'd13, 4'hf);
         axi_read(8'h64, rd);
-        check_eq(rd, 32'd3, "stream cfg read");
+        check_eq(rd, 32'd15, "stream cfg read");
         check_eq({31'd0, stream_batch_mode}, 32'd1, "stream batch output");
         check_eq({31'd0, stream_raw_hwc_mode}, 32'd1, "stream raw hwc output");
+        check_eq({31'd0, early_drain_enable}, 32'd1, "early drain output");
+        check_eq({31'd0, pass_prefetch_enable}, 32'd1, "pass prefetch output");
         axi_read(8'h74, rd);
         check_eq(rd, 32'd7, "stream bias completed read");
         axi_read(8'h78, rd);
@@ -314,6 +330,8 @@ module tb_axi_lite_cfg_bridge;
         check_eq(rd, 32'd0, "comp fire counter read");
         axi_read(8'hdc, rd);
         check_eq(rd, 32'd2, "subperf version read");
+        axi_read(9'h110, rd);
+        check_eq(rd, 32'd1, "drainperf version read");
         axi_read(8'he0, rd);
         check_eq(rd, {16'd0, 16'd138}, "tail config read");
         axi_read(8'h3c, rd);

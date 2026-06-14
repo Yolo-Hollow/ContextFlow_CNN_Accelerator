@@ -73,6 +73,7 @@ module systolic_top_feeder #(
     input                       use_ext_psum,
     input  [COLS*2*PSUM_W-1:0]  psum_stream_data,
     input                       psum_stream_valid,
+    input                       psum_stream_compute_ready,
     input                       use_psum_stream,
 
     input  [ROWS-1:0]            wgt_fifo_wr_en,
@@ -236,6 +237,7 @@ module systolic_top_feeder #(
         .use_ext_psum(use_ext_psum),
         .psum_stream_data(psum_stream_data),
         .psum_stream_valid(psum_stream_valid),
+        .psum_stream_compute_ready(psum_stream_compute_ready),
         .use_psum_stream(use_psum_stream),
         .wgt_fifo_wr_en(wgt_fifo_wr_en),
         .wgt_fifo_wr_data(wgt_fifo_wr_data),

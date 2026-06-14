@@ -11,6 +11,9 @@ STAGEPERF_PREFIX = "STAGEPERF "
 SUBPERF_PREFIX = "SUBPERF "
 TAILSTAT_PREFIX = "TAILSTAT "
 RAWSTAT_PREFIX = "RAWSTAT "
+DRAINPERF_PREFIX = "DRAINPERF "
+PREFETCHPERF_PREFIX = "PREFETCHPERF "
+PSUMOVLPERF_PREFIX = "PSUMOVLPERF "
 
 
 def parse_metric_line(line, prefix):
@@ -245,6 +248,71 @@ def summarize_perf(log_text):
             ),
         }
 
+    drainperf_layers = [
+        parse_metric_line(line.strip(), DRAINPERF_PREFIX)
+        for line in log_text.splitlines()
+        if line.strip().startswith(DRAINPERF_PREFIX)
+    ]
+    drainperf = None
+    if drainperf_layers:
+        drainperf = {
+            "layers": drainperf_layers,
+            "read_fire_cycles": sum(layer["read_fire"] for layer in drainperf_layers),
+            "packet_fire_cycles": sum(layer["packet_fire"] for layer in drainperf_layers),
+            "ready_stall_cycles": sum(layer["ready_stall"] for layer in drainperf_layers),
+            "internal_full_cycles": sum(layer["internal_full"] for layer in drainperf_layers),
+            "empty_wait_cycles": sum(layer["empty_wait"] for layer in drainperf_layers),
+            "version": max(layer.get("version", 0) for layer in drainperf_layers),
+        }
+        if stage:
+            explained = (
+                drainperf["packet_fire_cycles"]
+                + drainperf["ready_stall_cycles"]
+                + drainperf["internal_full_cycles"]
+                + drainperf["empty_wait_cycles"]
+            )
+            drainperf["drain_residual_cycles"] = stage["drain_cycles"] - explained
+
+    prefetch_layers = [
+        parse_metric_line(line.strip(), PREFETCHPERF_PREFIX)
+        for line in log_text.splitlines()
+        if line.strip().startswith(PREFETCHPERF_PREFIX)
+    ]
+    prefetchperf = None
+    if prefetch_layers:
+        hits = sum(layer["hit"] for layer in prefetch_layers)
+        misses = sum(layer["miss"] for layer in prefetch_layers)
+        prefetchperf = {
+            "layers": prefetch_layers,
+            "start_cycles": sum(layer["start"] for layer in prefetch_layers),
+            "weight_done_cycles": sum(layer["weight_done"] for layer in prefetch_layers),
+            "feed_done_cycles": sum(layer["feed_done"] for layer in prefetch_layers),
+            "hit_cycles": hits,
+            "miss_cycles": misses,
+            "stall_cycles": sum(layer["stall"] for layer in prefetch_layers),
+            "hit_percent": hits * 100.0 / (hits + misses) if (hits + misses) else 0.0,
+            "version": max(layer.get("version", 0) for layer in prefetch_layers),
+        }
+
+    psumovl_layers = [
+        parse_metric_line(line.strip(), PSUMOVLPERF_PREFIX)
+        for line in log_text.splitlines()
+        if line.strip().startswith(PSUMOVLPERF_PREFIX)
+    ]
+    psumovlperf = None
+    if psumovl_layers:
+        starts = sum(layer["start"] for layer in psumovl_layers)
+        hits = sum(layer["hit"] for layer in psumovl_layers)
+        psumovlperf = {
+            "layers": psumovl_layers,
+            "start_cycles": starts,
+            "hit_cycles": hits,
+            "wait_psum_cycles": sum(layer["wait_psum"] for layer in psumovl_layers),
+            "underflow_cycles": sum(layer["underflow"] for layer in psumovl_layers),
+            "hit_percent": hits * 100.0 / starts if starts else 0.0,
+            "version": max(layer.get("version", 0) for layer in psumovl_layers),
+        }
+
     return {
         "layer_count": len(layers),
         "total_microseconds": total_us,
@@ -258,6 +326,9 @@ def summarize_perf(log_text):
         "subperf": subperf,
         "tailstat": tailstat,
         "rawstat": rawstat,
+        "drainperf": drainperf,
+        "prefetchperf": prefetchperf,
+        "psumovlperf": psumovlperf,
     }
 
 
@@ -348,6 +419,44 @@ def print_summary(summary):
             f"replay_active={rawstat['replay_active_cycles']} "
             f"replay_wait_ready={rawstat['replay_wait_ready_cycles']} "
             f"compute_wait_ifm={rawstat['compute_wait_ifm_cycles']}"
+        )
+    if summary["drainperf"]:
+        drainperf = summary["drainperf"]
+        residual = ""
+        if "drain_residual_cycles" in drainperf:
+            residual = f" residual={drainperf['drain_residual_cycles']}"
+        print(
+            "DRAINPERF summary: "
+            f"version={drainperf['version']} "
+            f"read_fire={drainperf['read_fire_cycles']} "
+            f"packet_fire={drainperf['packet_fire_cycles']} "
+            f"ready_stall={drainperf['ready_stall_cycles']} "
+            f"internal_full={drainperf['internal_full_cycles']} "
+            f"empty_wait={drainperf['empty_wait_cycles']}{residual}"
+        )
+    if summary["prefetchperf"]:
+        prefetchperf = summary["prefetchperf"]
+        print(
+            "PREFETCHPERF summary: "
+            f"version={prefetchperf['version']} "
+            f"start={prefetchperf['start_cycles']} "
+            f"weight_done={prefetchperf['weight_done_cycles']} "
+            f"feed_done={prefetchperf['feed_done_cycles']} "
+            f"hit={prefetchperf['hit_cycles']} "
+            f"miss={prefetchperf['miss_cycles']} "
+            f"stall={prefetchperf['stall_cycles']} "
+            f"hit_percent={prefetchperf['hit_percent']:.2f}%"
+        )
+    if summary["psumovlperf"]:
+        psumovlperf = summary["psumovlperf"]
+        print(
+            "PSUMOVLPERF summary: "
+            f"version={psumovlperf['version']} "
+            f"start={psumovlperf['start_cycles']} "
+            f"hit={psumovlperf['hit_cycles']} "
+            f"wait_psum={psumovlperf['wait_psum_cycles']} "
+            f"underflow={psumovlperf['underflow_cycles']} "
+            f"hit_percent={psumovlperf['hit_percent']:.2f}%"
         )
 
 

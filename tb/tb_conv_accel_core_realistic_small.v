@@ -112,6 +112,15 @@
 `ifndef TB_RAW_HWC_COMPUTE_START_LEVEL_OVERRIDE
 `define TB_RAW_HWC_COMPUTE_START_LEVEL_OVERRIDE 0
 `endif
+`ifndef TB_EARLY_DRAIN_OVERRIDE
+`define TB_EARLY_DRAIN_OVERRIDE 0
+`endif
+`ifndef TB_PASS_PREFETCH_OVERRIDE
+`define TB_PASS_PREFETCH_OVERRIDE 0
+`endif
+`ifndef TB_PSUM_STREAM_OVERLAP_OVERRIDE
+`define TB_PSUM_STREAM_OVERLAP_OVERRIDE 0
+`endif
 `ifndef TB_CONV_ACCEL_CORE_TILE_OY_BASE
 `define TB_CONV_ACCEL_CORE_TILE_OY_BASE 0
 `endif
@@ -253,12 +262,12 @@ module `TB_CONV_ACCEL_CORE_MODULE;
 
     reg clk, rst;
     reg cfg_wr_en, cfg_rd_en;
-    reg [5:0] cfg_addr;
+    reg [6:0] cfg_addr;
     reg [31:0] cfg_wdata;
     wire [31:0] cfg_rdata;
     reg [31:0] cfg_read_data;
 `ifdef TB_CONV_ACCEL_CORE_USE_AXI_LITE
-    reg [7:0] axi_awaddr;
+    reg [8:0] axi_awaddr;
     reg axi_awvalid;
     wire axi_awready;
     reg [31:0] axi_wdata;
@@ -268,7 +277,7 @@ module `TB_CONV_ACCEL_CORE_MODULE;
     wire [1:0] axi_bresp;
     wire axi_bvalid;
     reg axi_bready;
-    reg [7:0] axi_araddr;
+    reg [8:0] axi_araddr;
     reg axi_arvalid;
     wire axi_arready;
     wire [31:0] axi_rdata;
@@ -474,6 +483,9 @@ module `TB_CONV_ACCEL_CORE_MODULE;
     integer ps_tile_start_count, ps_done_seen_count, ps_done_clear_count;
     integer tail_cycles_override;
     integer raw_hwc_compute_start_level_override;
+    integer early_drain_override;
+    integer pass_prefetch_override;
+    integer psum_stream_overlap_override;
     integer layer_done_pulse_count;
     integer ps_bias_service_count, ps_weight_service_count, ps_line_fill_count;
 `ifdef TB_CONV_ACCEL_CORE_CHECK_VECTOR_IFM
@@ -700,7 +712,7 @@ module `TB_CONV_ACCEL_CORE_MODULE;
     endfunction
 
     task cfg_write;
-        input [5:0] addr;
+        input [6:0] addr;
         input [31:0] data;
         begin
 `ifdef TB_CONV_ACCEL_CORE_USE_AXI_LITE
@@ -735,7 +747,7 @@ module `TB_CONV_ACCEL_CORE_MODULE;
     endtask
 
     task cfg_read;
-        input [5:0] addr;
+        input [6:0] addr;
         output [31:0] data;
         begin
 `ifdef TB_CONV_ACCEL_CORE_USE_AXI_LITE
@@ -1123,8 +1135,15 @@ module `TB_CONV_ACCEL_CORE_MODULE;
         reg [63:0] axis_word;
         begin
             ps_weight_service_count = ps_weight_service_count + 1;
+`ifdef TB_CONV_ACCEL_CORE_USE_AXIS_STREAM
+            co_base = (((ps_weight_service_count - 1) %
+                       (COUT_BLOCKS * K_PASSES)) / K_PASSES) * COUT_TILE;
+            k_base = (((ps_weight_service_count - 1) %
+                      (COUT_BLOCKS * K_PASSES)) % K_PASSES) * ROWS;
+`else
             co_base = current_cout_base;
             k_base = current_pass_base_k;
+`endif
 `ifdef TB_CONV_ACCEL_CORE_USE_AXIS_STREAM
             wait(weight_axis_tready);
             axis_lane = 0;
@@ -1254,9 +1273,14 @@ module `TB_CONV_ACCEL_CORE_MODULE;
 `endif
             batch_ifm_tile_end_count = ps_line_fill_count + batch_ifm_tile_packets;
 `ifdef TB_CONV_ACCEL_CORE_RAW_HWC_IFM
-            cfg_write(6'h19, 32'd3);
+            cfg_write(6'h19, 32'd3 |
+                (early_drain_override ? 32'd4 : 32'd0) |
+                (pass_prefetch_override ? 32'd8 : 32'd0) |
+                (psum_stream_overlap_override ? 32'd16 : 32'd0));
 `else
-            cfg_write(6'h19, 32'd1);
+            cfg_write(6'h19, 32'd1 |
+                (early_drain_override ? 32'd4 : 32'd0) |
+                (psum_stream_overlap_override ? 32'd16 : 32'd0));
 `endif
             cfg_write(6'h1a, COUT_BLOCKS);
             cfg_write(6'h1b, COUT_BLOCKS * K_PASSES);
@@ -1606,7 +1630,7 @@ module `TB_CONV_ACCEL_CORE_MODULE;
 `ifdef TB_CONV_ACCEL_CORE_PROGRESS_PRINT
     task print_progress;
         begin
-            $display("[PROGRESS] t=%0t ofm_wr=%0d/%0d delta=%0d axis_tlast=%0d cout=%0d k=%0d sched_state=%0d busy=%0d done_pending=%0d fill_req=%0d feeder_done=%0d compute_done=%0d drain_done=%0d compute_fire=%0d delta_fire=%0d psum_wr=%0d vector_valid=%0d vector_ready=%0d vector_done=%0d raw_loaded=%0d raw_replay=%0d raw_pixel=%0d raw_completed_packets=%0d raw_completed_pixels=%0d raw_beats=%0d raw_stalls=%0d final_valid=%0d final_full=%0d rq_valid=%0d rq_full=%0d rq_level=%0d act_valid=%0d act_fifo_valid=%0d act_full=%0d act_level=%0d wb_busy=%0d wb_full=%0d wb_level=%0d ofm_packet_full=%0d ofm_valid=%0d ofm_stream_valid=%0d ofm_stream_ready=%0d ofm_stream_full=%0d ofm_stream_level=%0d",
+            $display("[PROGRESS] t=%0t ofm_wr=%0d/%0d delta=%0d axis_tlast=%0d cout=%0d k=%0d feed_k=%0d sched_state=%0d busy=%0d done_pending=%0d prefetch_started=%0d prefetch_w=%0d prefetch_f=%0d prefetch_pass=%0d weight_req=%0d wgt_start=%0d wgt_done=%0d vector_fill=%0d vector_push=%0d fill_req=%0d feeder_done=%0d compute_done=%0d drain_done=%0d compute_fire=%0d delta_fire=%0d psum_wr=%0d vector_valid=%0d vector_ready=%0d vector_done=%0d raw_loaded=%0d raw_replay=%0d raw_pixel=%0d raw_completed_packets=%0d raw_completed_pixels=%0d raw_beats=%0d raw_stalls=%0d final_valid=%0d final_full=%0d rq_valid=%0d rq_full=%0d rq_level=%0d act_valid=%0d act_fifo_valid=%0d act_full=%0d act_level=%0d wb_busy=%0d wb_full=%0d wb_level=%0d ofm_packet_full=%0d ofm_valid=%0d ofm_stream_valid=%0d ofm_stream_ready=%0d ofm_stream_full=%0d ofm_stream_level=%0d",
                 $time,
                 ofm_mem_wr_count, EXPECTED_OFM_WRITES,
                 ofm_mem_wr_count - progress_last_ofm_wr_count,
@@ -1616,7 +1640,17 @@ module `TB_CONV_ACCEL_CORE_MODULE;
                 0,
 `endif
                 current_cout_base, current_pass_base_k,
+                `TB_DUT_LAYER.current_feeder_pass_base_k,
                 `TB_DUT_LAYER.u_sched.state, `TB_DUT_LAYER.busy, `TB_DUT_LAYER.done_pending,
+                `TB_DUT_LAYER.u_sched.prefetch_started,
+                `TB_DUT_LAYER.u_sched.prefetch_weight_done,
+                `TB_DUT_LAYER.u_sched.prefetch_feed_done,
+                `TB_DUT_LAYER.u_sched.prefetch_pass_base_k,
+                `TB_DUT_LAYER.weight_req_r,
+                `TB_DUT_LAYER.wgt_loader_start,
+                `TB_DUT_LAYER.wgt_loader_done,
+                `TB_DUT_LAYER.u_top.vector_fill_req,
+                `TB_DUT_LAYER.u_top.vector_push_count,
                 feeder_fill_req, `TB_DUT_LAYER.feeder_done, `TB_DUT_LAYER.compute_done,
                 `TB_DUT_LAYER.drain_done, compute_fire_count,
                 compute_fire_count - progress_last_compute_fire_count,
@@ -1710,12 +1744,24 @@ module `TB_CONV_ACCEL_CORE_MODULE;
         ps_done_clear_count = 0;
         tail_cycles_override = `TB_TAIL_CYCLES_OVERRIDE;
         raw_hwc_compute_start_level_override = `TB_RAW_HWC_COMPUTE_START_LEVEL_OVERRIDE;
+        early_drain_override = `TB_EARLY_DRAIN_OVERRIDE;
+        pass_prefetch_override = `TB_PASS_PREFETCH_OVERRIDE;
+        psum_stream_overlap_override = `TB_PSUM_STREAM_OVERLAP_OVERRIDE;
         if (tail_cycles_override != 0) begin
             $display("[INFO] tail_cycles override=%0d", tail_cycles_override);
         end
         if (raw_hwc_compute_start_level_override != 0) begin
             $display("[INFO] raw_hwc_compute_start_level override=%0d",
                 raw_hwc_compute_start_level_override);
+        end
+        if (early_drain_override != 0) begin
+            $display("[INFO] early_drain override=%0d", early_drain_override);
+        end
+        if (pass_prefetch_override != 0) begin
+            $display("[INFO] pass_prefetch override=%0d", pass_prefetch_override);
+        end
+        if (psum_stream_overlap_override != 0) begin
+            $display("[INFO] psum_stream_overlap override=%0d", psum_stream_overlap_override);
         end
         layer_done_pulse_count = 0;
         ps_bias_service_count = 0;

@@ -40,7 +40,7 @@ module conv_accel_core_axi_lite_stream #(
     input  clk,
     input  rst,
 
-    input  [7:0]  s_axi_awaddr,
+    input  [8:0]  s_axi_awaddr,
     input         s_axi_awvalid,
     output        s_axi_awready,
     input  [31:0] s_axi_wdata,
@@ -50,7 +50,7 @@ module conv_accel_core_axi_lite_stream #(
     output [1:0]  s_axi_bresp,
     output        s_axi_bvalid,
     input         s_axi_bready,
-    input  [7:0]  s_axi_araddr,
+    input  [8:0]  s_axi_araddr,
     input         s_axi_arvalid,
     output        s_axi_arready,
     output [31:0] s_axi_rdata,
@@ -62,6 +62,7 @@ module conv_accel_core_axi_lite_stream #(
     output weight_load_req,
     output [10:0] current_cout_base,
     output [13:0] current_pass_base_k,
+    output [13:0] current_feeder_pass_base_k,
     output [7:0]  configured_input_zero_point,
 
     output              bias_s_ready,
@@ -148,6 +149,7 @@ module conv_accel_core_axi_lite_stream #(
         .s_axi_rvalid(s_axi_rvalid), .s_axi_rready(s_axi_rready),
         .bias_load_req(bias_load_req), .bias_load_done(bias_load_done),
         .current_cout_base(current_cout_base), .current_pass_base_k(current_pass_base_k),
+        .current_feeder_pass_base_k(current_feeder_pass_base_k),
         .configured_cout_total(unused_configured_cout_total),
         .configured_num_pixels(unused_configured_num_pixels),
         .configured_input_zero_point(configured_input_zero_point),

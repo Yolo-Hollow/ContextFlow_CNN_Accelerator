@@ -41,7 +41,7 @@ module conv_accel_core_axi_lite #(
     input  clk,
     input  rst,
 
-    input  [7:0]  s_axi_awaddr,
+    input  [8:0]  s_axi_awaddr,
     input         s_axi_awvalid,
     output        s_axi_awready,
     input  [31:0] s_axi_wdata,
@@ -51,7 +51,7 @@ module conv_accel_core_axi_lite #(
     output [1:0]  s_axi_bresp,
     output        s_axi_bvalid,
     input         s_axi_bready,
-    input  [7:0]  s_axi_araddr,
+    input  [8:0]  s_axi_araddr,
     input         s_axi_arvalid,
     output        s_axi_arready,
     output [31:0] s_axi_rdata,
@@ -63,6 +63,7 @@ module conv_accel_core_axi_lite #(
     input  bias_load_done,
     output [10:0] current_cout_base,
     output [13:0] current_pass_base_k,
+    output [13:0] current_feeder_pass_base_k,
     output [10:0] configured_cout_total,
     output [13:0] configured_k_total,
     output [15:0] configured_num_pixels,
@@ -144,7 +145,7 @@ module conv_accel_core_axi_lite #(
     output                      ofm_packet_full
 );
     wire cfg_wr_en;
-    wire [5:0] cfg_addr;
+    wire [6:0] cfg_addr;
     wire [31:0] cfg_wdata;
     wire [31:0] cfg_rdata;
     wire cfg_rd_en;
@@ -193,6 +194,7 @@ module conv_accel_core_axi_lite #(
         .cfg_rd_en(cfg_rd_en), .cfg_rdata(cfg_rdata),
         .bias_load_req(bias_load_req), .bias_load_done(bias_load_done),
         .current_cout_base(current_cout_base), .current_pass_base_k(current_pass_base_k),
+        .current_feeder_pass_base_k(current_feeder_pass_base_k),
         .configured_cout_total(configured_cout_total),
         .configured_k_total(configured_k_total),
         .configured_num_pixels(configured_num_pixels),

@@ -9,12 +9,17 @@ module tb_psum_stream_feeder;
     reg is_first_pass, use_ext_psum;
     reg [DATA_W-1:0] bias_data;
     reg rd_bank;
+    reg overlap_guard_enable;
+    reg [AW:0] available_count;
     wire rd_en, rd_bank_out;
     wire [AW-1:0] rd_addr;
     wire [DATA_W-1:0] pp_rd_data;
     wire pp_rd_valid;
     wire [DATA_W-1:0] psum_top_data;
     wire psum_top_valid;
+    wire psum_compute_ready;
+    wire psum_underflow;
+    wire psum_wait;
     wire [AW-1:0] pixel_addr;
 
     reg pp_wr_en, pp_wr_bank;
@@ -31,9 +36,14 @@ module tb_psum_stream_feeder;
     psum_stream_feeder #(.DATA_W(DATA_W), .AW(AW)) dut (
         .clk(clk), .rst(rst), .start(start), .compute_fire(compute_fire),
         .is_first_pass(is_first_pass), .use_ext_psum(use_ext_psum), .bias_data(bias_data),
-        .rd_bank(rd_bank), .rd_en(rd_en), .rd_bank_out(rd_bank_out), .rd_addr(rd_addr),
+        .rd_bank(rd_bank), .overlap_guard_enable(overlap_guard_enable),
+        .available_count(available_count),
+        .rd_en(rd_en), .rd_bank_out(rd_bank_out), .rd_addr(rd_addr),
         .rd_data(pp_rd_data), .rd_valid(pp_rd_valid),
         .psum_top_data(psum_top_data), .psum_top_valid(psum_top_valid),
+        .psum_compute_ready(psum_compute_ready),
+        .psum_underflow(psum_underflow),
+        .psum_wait(psum_wait),
         .pixel_addr(pixel_addr)
     );
 
@@ -58,6 +68,45 @@ module tb_psum_stream_feeder;
             start = 1'b1;
             @(negedge clk);
             start = 1'b0;
+        end
+    endtask
+
+    task check_overlap_guard;
+        begin
+            start_pass();
+            is_first_pass = 1'b0;
+            use_ext_psum = 1'b1;
+            rd_bank = 1'b0;
+            overlap_guard_enable = 1'b1;
+            available_count = 0;
+            #1;
+            if (psum_compute_ready !== 1'b0 || psum_wait !== 1'b1) begin
+                $display("[FAIL] guard empty ready=%0d wait=%0d",
+                    psum_compute_ready, psum_wait);
+                fail = fail + 1;
+            end else begin
+                pass = pass + 1;
+            end
+            compute_fire = 1'b1;
+            #1;
+            if (rd_en !== 1'b0 || psum_underflow !== 1'b1) begin
+                $display("[FAIL] guard underflow rd_en=%0d underflow=%0d",
+                    rd_en, psum_underflow);
+                fail = fail + 1;
+            end else begin
+                pass = pass + 1;
+            end
+            compute_fire = 1'b0;
+            available_count = 1;
+            #1;
+            if (psum_compute_ready !== 1'b1 || psum_wait !== 1'b0) begin
+                $display("[FAIL] guard available ready=%0d wait=%0d",
+                    psum_compute_ready, psum_wait);
+                fail = fail + 1;
+            end else begin
+                pass = pass + 1;
+            end
+            overlap_guard_enable = 1'b0;
         end
     endtask
 
@@ -148,6 +197,8 @@ module tb_psum_stream_feeder;
         use_ext_psum = 1'b0;
         bias_data = make_pkt(5000);
         rd_bank = 0;
+        overlap_guard_enable = 1'b0;
+        available_count = 0;
         pp_wr_en = 0;
         pp_wr_bank = 0;
         pp_wr_addr = 0;
@@ -165,6 +216,7 @@ module tb_psum_stream_feeder;
         load_bank0();
         check_bias_stream();
         check_partial_stream();
+        check_overlap_guard();
 
         $display("=== tb_psum_stream_feeder: %0d pass, %0d fail ===", pass, fail);
         if (fail != 0) $fatal(1);

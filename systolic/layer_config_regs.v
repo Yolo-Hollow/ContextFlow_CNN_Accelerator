@@ -29,7 +29,10 @@
 //   0x17 PERF_WAIT_OFM: busy cycles with OFM backpressure asserted
 //   0x18 PERF_COMPUTE:  cycles where the systolic array accepts a pixel
 //   0x19 STREAM_CFG:     bit0 enables one-DMA-per-tile batch streams,
-//                        bit1 enables experimental raw-HWC IFM tile cache
+//                        bit1 enables experimental raw-HWC IFM tile cache,
+//                        bit2 enables experimental early PSUM drain,
+//                        bit3 enables experimental next-pass prefetch,
+//                        bit4 enables experimental partial-PSUM overlap
 //   0x1a BIAS_PACKETS:   expected bias packets for the current tile
 //   0x1b WEIGHT_PACKETS: expected weight packets for the current tile
 //   0x1c IFM_PACKETS:    expected IFM line packets for the current tile
@@ -65,6 +68,23 @@
 //   0x3d RAW_LOAD_UNPACK: raw-HWC cache beat-unpack cycles
 //   0x3e RAW_REPLAY_ACTIVE: raw-HWC cache replay active cycles
 //   0x3f RAW_REPLAY_WAIT_READY: raw-HWC replay cycles stalled by IFM FIFO ready
+//   0x40 DRAIN_READ_FIRE: PSUM drain FIFO read handshakes
+//   0x41 DRAIN_PACKET_FIRE: packets accepted by drain downstream
+//   0x42 DRAIN_READY_STALL: drain cycles stalled by downstream backpressure
+//   0x43 DRAIN_INTERNAL_FULL: drain cycles blocked by its output/skid registers
+//   0x44 DRAINPERF_VERSION: fixed drain sub-stage counter map version
+//   0x45 PREFETCH_START: next-pass prefetch starts
+//   0x46 PREFETCH_WEIGHT_DONE: prefetched weight tile completions
+//   0x47 PREFETCH_FEED_DONE: prefetched IFM replay completions
+//   0x48 PREFETCH_HIT: next pass skipped weight/feed using prefetched data
+//   0x49 PREFETCH_MISS: current pass completed before prefetch was ready
+//   0x4a PREFETCH_STALL: cycles waiting for incomplete prefetch
+//   0x4b PREFETCHPERF_VERSION: fixed prefetch counter map version
+//   0x4c PSUMOVL_START: partial-PSUM overlap starts
+//   0x4d PSUMOVL_HIT: overlap starts that reached next compute
+//   0x4e PSUMOVL_WAIT_PSUM: cycles waiting for partial-PSUM lead
+//   0x4f PSUMOVL_UNDERFLOW: illegal partial-PSUM read attempts
+//   0x50 PSUMOVL_VERSION: fixed partial-PSUM overlap counter map version
 module layer_config_regs #(
     parameter IFM_FIFO_DEPTH = 1024,
     parameter [15:0] RAW_HWC_COMPUTE_START_LEVEL = 16'd0
@@ -73,7 +93,7 @@ module layer_config_regs #(
     input  rst,
 
     input         cfg_wr_en,
-    input  [5:0]  cfg_addr,
+    input  [6:0]  cfg_addr,
     input  [31:0] cfg_wdata,
     input         cfg_rd_en,
     output reg [31:0] cfg_rdata,
@@ -107,6 +127,20 @@ module layer_config_regs #(
     input  [31:0] perf_tail_cycles_configured,
     input         perf_drain_fifo_empty_wait,
     input         perf_drain_fifo_empty_sticky,
+    input         perf_drain_read_fire,
+    input         perf_drain_packet_fire,
+    input         perf_drain_ready_stall,
+    input         perf_drain_internal_full_wait,
+    input         perf_prefetch_start,
+    input         perf_prefetch_weight_done,
+    input         perf_prefetch_feed_done,
+    input         perf_prefetch_hit,
+    input         perf_prefetch_miss,
+    input         perf_prefetch_stall,
+    input         perf_psumovl_start,
+    input         perf_psumovl_hit,
+    input         perf_psumovl_wait_psum,
+    input         perf_psumovl_underflow,
     input  [31:0] stream_bias_completed,
     input  [31:0] stream_weight_completed,
     input  [31:0] stream_ifm_completed,
@@ -140,6 +174,9 @@ module layer_config_regs #(
     output reg [31:0] expected_bytes,
     output reg        stream_batch_mode,
     output reg        stream_raw_hwc_mode,
+    output reg        early_drain_enable,
+    output reg        pass_prefetch_enable,
+    output reg        psum_stream_overlap_enable,
     output reg [31:0] stream_bias_packets,
     output reg [31:0] stream_weight_packets,
     output reg [31:0] stream_ifm_packets,
@@ -171,6 +208,20 @@ module layer_config_regs #(
     reg [31:0] perf_comp_tail_cycles;
     reg [31:0] perf_drain_fifo_empty_wait_cycles;
     reg        perf_drain_fifo_empty_sticky_latched;
+    reg [31:0] perf_drain_read_fire_cycles;
+    reg [31:0] perf_drain_packet_fire_cycles;
+    reg [31:0] perf_drain_ready_stall_cycles;
+    reg [31:0] perf_drain_internal_full_cycles;
+    reg [31:0] perf_prefetch_start_cycles;
+    reg [31:0] perf_prefetch_weight_done_cycles;
+    reg [31:0] perf_prefetch_feed_done_cycles;
+    reg [31:0] perf_prefetch_hit_cycles;
+    reg [31:0] perf_prefetch_miss_cycles;
+    reg [31:0] perf_prefetch_stall_cycles;
+    reg [31:0] perf_psumovl_start_cycles;
+    reg [31:0] perf_psumovl_hit_cycles;
+    reg [31:0] perf_psumovl_wait_psum_cycles;
+    reg [31:0] perf_psumovl_underflow_cycles;
     wire cfg_idle = !layer_busy;
     wire perf_wait_any = perf_wait_bias || perf_wait_weight ||
                          perf_wait_ifm || perf_wait_ofm;
@@ -203,6 +254,9 @@ module layer_config_regs #(
             expected_bytes <= 32'd0;
             stream_batch_mode <= 1'b0;
             stream_raw_hwc_mode <= 1'b0;
+            early_drain_enable <= 1'b0;
+            pass_prefetch_enable <= 1'b0;
+            psum_stream_overlap_enable <= 1'b0;
             stream_bias_packets <= 32'd0;
             stream_weight_packets <= 32'd0;
             stream_ifm_packets <= 32'd0;
@@ -232,6 +286,20 @@ module layer_config_regs #(
             perf_comp_tail_cycles <= 32'd0;
             perf_drain_fifo_empty_wait_cycles <= 32'd0;
             perf_drain_fifo_empty_sticky_latched <= 1'b0;
+            perf_drain_read_fire_cycles <= 32'd0;
+            perf_drain_packet_fire_cycles <= 32'd0;
+            perf_drain_ready_stall_cycles <= 32'd0;
+            perf_drain_internal_full_cycles <= 32'd0;
+            perf_prefetch_start_cycles <= 32'd0;
+            perf_prefetch_weight_done_cycles <= 32'd0;
+            perf_prefetch_feed_done_cycles <= 32'd0;
+            perf_prefetch_hit_cycles <= 32'd0;
+            perf_prefetch_miss_cycles <= 32'd0;
+            perf_prefetch_stall_cycles <= 32'd0;
+            perf_psumovl_start_cycles <= 32'd0;
+            perf_psumovl_hit_cycles <= 32'd0;
+            perf_psumovl_wait_psum_cycles <= 32'd0;
+            perf_psumovl_underflow_cycles <= 32'd0;
         end else begin
             start_pulse <= 1'b0;
             if (layer_done)
@@ -283,11 +351,39 @@ module layer_config_regs #(
                     perf_drain_fifo_empty_wait_cycles <= perf_drain_fifo_empty_wait_cycles + 1'b1;
                 if (perf_drain_fifo_empty_sticky)
                     perf_drain_fifo_empty_sticky_latched <= 1'b1;
+                if (perf_drain_read_fire)
+                    perf_drain_read_fire_cycles <= perf_drain_read_fire_cycles + 1'b1;
+                if (perf_drain_packet_fire)
+                    perf_drain_packet_fire_cycles <= perf_drain_packet_fire_cycles + 1'b1;
+                if (perf_drain_ready_stall)
+                    perf_drain_ready_stall_cycles <= perf_drain_ready_stall_cycles + 1'b1;
+                if (perf_drain_internal_full_wait)
+                    perf_drain_internal_full_cycles <= perf_drain_internal_full_cycles + 1'b1;
+                if (perf_prefetch_start)
+                    perf_prefetch_start_cycles <= perf_prefetch_start_cycles + 1'b1;
+                if (perf_prefetch_weight_done)
+                    perf_prefetch_weight_done_cycles <= perf_prefetch_weight_done_cycles + 1'b1;
+                if (perf_prefetch_feed_done)
+                    perf_prefetch_feed_done_cycles <= perf_prefetch_feed_done_cycles + 1'b1;
+                if (perf_prefetch_hit)
+                    perf_prefetch_hit_cycles <= perf_prefetch_hit_cycles + 1'b1;
+                if (perf_prefetch_miss)
+                    perf_prefetch_miss_cycles <= perf_prefetch_miss_cycles + 1'b1;
+                if (perf_prefetch_stall)
+                    perf_prefetch_stall_cycles <= perf_prefetch_stall_cycles + 1'b1;
+                if (perf_psumovl_start)
+                    perf_psumovl_start_cycles <= perf_psumovl_start_cycles + 1'b1;
+                if (perf_psumovl_hit)
+                    perf_psumovl_hit_cycles <= perf_psumovl_hit_cycles + 1'b1;
+                if (perf_psumovl_wait_psum)
+                    perf_psumovl_wait_psum_cycles <= perf_psumovl_wait_psum_cycles + 1'b1;
+                if (perf_psumovl_underflow)
+                    perf_psumovl_underflow_cycles <= perf_psumovl_underflow_cycles + 1'b1;
             end
 
             if (cfg_wr_en) begin
                 case (cfg_addr)
-                    6'h00: begin
+                    7'h00: begin
                         if (cfg_wdata[0] && cfg_idle) begin
                             done_sticky <= 1'b0;
                             config_error <= invalid_1x1_config;
@@ -316,6 +412,20 @@ module layer_config_regs #(
                                 perf_comp_tail_cycles <= 32'd0;
                                 perf_drain_fifo_empty_wait_cycles <= 32'd0;
                                 perf_drain_fifo_empty_sticky_latched <= 1'b0;
+                                perf_drain_read_fire_cycles <= 32'd0;
+                                perf_drain_packet_fire_cycles <= 32'd0;
+                                perf_drain_ready_stall_cycles <= 32'd0;
+                                perf_drain_internal_full_cycles <= 32'd0;
+                                perf_prefetch_start_cycles <= 32'd0;
+                                perf_prefetch_weight_done_cycles <= 32'd0;
+                                perf_prefetch_feed_done_cycles <= 32'd0;
+                                perf_prefetch_hit_cycles <= 32'd0;
+                                perf_prefetch_miss_cycles <= 32'd0;
+                                perf_prefetch_stall_cycles <= 32'd0;
+                                perf_psumovl_start_cycles <= 32'd0;
+                                perf_psumovl_hit_cycles <= 32'd0;
+                                perf_psumovl_wait_psum_cycles <= 32'd0;
+                                perf_psumovl_underflow_cycles <= 32'd0;
                             end
                         end
                         if (cfg_wdata[1]) begin
@@ -324,54 +434,57 @@ module layer_config_regs #(
                             perf_drain_fifo_empty_sticky_latched <= 1'b0;
                         end
                     end
-                    6'h01: begin
+                    7'h01: begin
                         if (cfg_idle) begin
                             fm_h <= cfg_wdata[8:0];
                             fm_w <= cfg_wdata[24:16];
                         end
                     end
-                    6'h02: begin
+                    7'h02: begin
                         if (cfg_idle) begin
                             ofm_h <= cfg_wdata[8:0];
                             ofm_w <= cfg_wdata[24:16];
                         end
                     end
-                    6'h03: begin
+                    7'h03: begin
                         if (cfg_idle) begin
                             conv_stride <= cfg_wdata[1:0];
                             conv_pad <= cfg_wdata[9:8];
                             kernel_1x1 <= cfg_wdata[16];
                         end
                     end
-                    6'h04: if (cfg_idle) k_total <= cfg_wdata[13:0];
-                    6'h05: if (cfg_idle) cout_total <= cfg_wdata[10:0];
-                    6'h06: if (cfg_idle) num_pixels <= cfg_wdata[15:0];
-                    6'h07: if (cfg_idle) activation_mode <= cfg_wdata[1:0];
-                    6'h08: begin
+                    7'h04: if (cfg_idle) k_total <= cfg_wdata[13:0];
+                    7'h05: if (cfg_idle) cout_total <= cfg_wdata[10:0];
+                    7'h06: if (cfg_idle) num_pixels <= cfg_wdata[15:0];
+                    7'h07: if (cfg_idle) activation_mode <= cfg_wdata[1:0];
+                    7'h08: begin
                         if (cfg_idle) begin
                             tile_oy_base <= cfg_wdata[8:0];
                             tile_ofm_h <= cfg_wdata[24:16];
                         end
                     end
-                    6'h09: if (cfg_idle) tile_pixel_base <= cfg_wdata[23:0];
-                    6'h0f: if (cfg_idle) input_zero_point <= cfg_wdata[7:0];
-                    6'h10: begin
+                    7'h09: if (cfg_idle) tile_pixel_base <= cfg_wdata[23:0];
+                    7'h0f: if (cfg_idle) input_zero_point <= cfg_wdata[7:0];
+                    7'h10: begin
                         if (cfg_idle) begin
                             pool_enable <= cfg_wdata[0];
                             pool_stride <= cfg_wdata[3:2];
                         end
                     end
-                    6'h11: if (cfg_idle) expected_bytes <= cfg_wdata;
-                    6'h19: begin
+                    7'h11: if (cfg_idle) expected_bytes <= cfg_wdata;
+                    7'h19: begin
                         if (cfg_idle) begin
                             stream_batch_mode <= cfg_wdata[0];
                             stream_raw_hwc_mode <= cfg_wdata[1];
+                            early_drain_enable <= cfg_wdata[2];
+                            pass_prefetch_enable <= cfg_wdata[3];
+                            psum_stream_overlap_enable <= cfg_wdata[4];
                         end
                     end
-                    6'h1a: if (cfg_idle) stream_bias_packets <= cfg_wdata;
-                    6'h1b: if (cfg_idle) stream_weight_packets <= cfg_wdata;
-                    6'h1c: if (cfg_idle) stream_ifm_packets <= cfg_wdata;
-                    6'h38: if (cfg_idle) begin
+                    7'h1a: if (cfg_idle) stream_bias_packets <= cfg_wdata;
+                    7'h1b: if (cfg_idle) stream_weight_packets <= cfg_wdata;
+                    7'h1c: if (cfg_idle) stream_ifm_packets <= cfg_wdata;
+                    7'h38: if (cfg_idle) begin
                         tail_cycles_config <= cfg_wdata[15:0];
                         raw_hwc_compute_start_level <= cfg_wdata[31:16];
                     end
@@ -383,66 +496,85 @@ module layer_config_regs #(
 
     always @(*) begin
         case (cfg_addr)
-            6'h00: cfg_rdata = {29'd0, config_error, done_sticky, layer_busy};
-            6'h01: cfg_rdata = {7'd0, fm_w, 7'd0, fm_h};
-            6'h02: cfg_rdata = {7'd0, ofm_w, 7'd0, ofm_h};
-            6'h03: cfg_rdata = {15'd0, kernel_1x1, 6'd0, conv_pad, 6'd0, conv_stride};
-            6'h04: cfg_rdata = {18'd0, k_total};
-            6'h05: cfg_rdata = {21'd0, cout_total};
-            6'h06: cfg_rdata = {16'd0, num_pixels};
-            6'h07: cfg_rdata = {30'd0, activation_mode};
-            6'h08: cfg_rdata = {7'd0, tile_ofm_h, 7'd0, tile_oy_base};
-            6'h09: cfg_rdata = {8'd0, tile_pixel_base};
-            6'h0a: cfg_rdata = dbg_expected_bytes;
-            6'h0b: cfg_rdata = dbg_core_wr_count;
-            6'h0c: cfg_rdata = dbg_axis_wr_count;
-            6'h0d: cfg_rdata = dbg_tlast_count;
-            6'h0e: cfg_rdata = dbg_last_tlast_index;
-            6'h0f: cfg_rdata = {24'd0, input_zero_point};
-            6'h10: cfg_rdata = {28'd0, pool_stride, 1'b0, pool_enable};
-            6'h11: cfg_rdata = expected_bytes;
-            6'h12: cfg_rdata = perf_busy_cycles;
-            6'h13: cfg_rdata = perf_wait_any_cycles;
-            6'h14: cfg_rdata = perf_wait_bias_cycles;
-            6'h15: cfg_rdata = perf_wait_weight_cycles;
-            6'h16: cfg_rdata = perf_wait_ifm_cycles;
-            6'h17: cfg_rdata = perf_wait_ofm_cycles;
-            6'h18: cfg_rdata = perf_compute_cycles;
-            6'h19: cfg_rdata = {30'd0, stream_raw_hwc_mode, stream_batch_mode};
-            6'h1a: cfg_rdata = stream_bias_packets;
-            6'h1b: cfg_rdata = stream_weight_packets;
-            6'h1c: cfg_rdata = stream_ifm_packets;
-            6'h1d: cfg_rdata = stream_bias_completed;
-            6'h1e: cfg_rdata = stream_weight_completed;
-            6'h1f: cfg_rdata = stream_ifm_completed;
-            6'h24: cfg_rdata = vector_completed_packets;
-            6'h25: cfg_rdata = vector_completed_pixels;
-            6'h26: cfg_rdata = vector_accepted_beats;
-            6'h27: cfg_rdata = vector_fifo_stall_cycles;
-            6'h28: cfg_rdata = perf_stage_bias_cycles;
-            6'h29: cfg_rdata = perf_stage_weight_cycles;
-            6'h2a: cfg_rdata = perf_stage_feeder_cycles;
-            6'h2b: cfg_rdata = perf_stage_compute_cycles;
-            6'h2c: cfg_rdata = perf_stage_drain_cycles;
-            6'h2d: cfg_rdata = perf_stage_ofm_post_cycles;
-            6'h2e: cfg_rdata = perf_feed_fill_wait_cycles;
-            6'h2f: cfg_rdata = perf_feed_push_cycles;
-            6'h30: cfg_rdata = perf_feed_fifo_stall_cycles;
-            6'h31: cfg_rdata = perf_feed_win_not_ready_cycles;
-            6'h32: cfg_rdata = perf_comp_wload_cycles;
-            6'h33: cfg_rdata = perf_comp_active_cycles;
-            6'h34: cfg_rdata = perf_compute_cycles;
-            6'h35: cfg_rdata = perf_comp_ifm_stall_cycles;
-            6'h36: cfg_rdata = perf_comp_tail_cycles;
-            6'h37: cfg_rdata = 32'd2;
-            6'h38: cfg_rdata = {raw_hwc_compute_start_level, perf_tail_cycles_configured[15:0]};
-            6'h39: cfg_rdata = perf_comp_tail_cycles;
-            6'h3a: cfg_rdata = perf_drain_fifo_empty_wait_cycles;
-            6'h3b: cfg_rdata = {31'd0, perf_drain_fifo_empty_sticky_latched};
-            6'h3c: cfg_rdata = raw_hwc_load_active_cycles;
-            6'h3d: cfg_rdata = raw_hwc_load_unpack_cycles;
-            6'h3e: cfg_rdata = raw_hwc_replay_active_cycles;
-            6'h3f: cfg_rdata = raw_hwc_replay_wait_ready_cycles;
+            7'h00: cfg_rdata = {29'd0, config_error, done_sticky, layer_busy};
+            7'h01: cfg_rdata = {7'd0, fm_w, 7'd0, fm_h};
+            7'h02: cfg_rdata = {7'd0, ofm_w, 7'd0, ofm_h};
+            7'h03: cfg_rdata = {15'd0, kernel_1x1, 6'd0, conv_pad, 6'd0, conv_stride};
+            7'h04: cfg_rdata = {18'd0, k_total};
+            7'h05: cfg_rdata = {21'd0, cout_total};
+            7'h06: cfg_rdata = {16'd0, num_pixels};
+            7'h07: cfg_rdata = {30'd0, activation_mode};
+            7'h08: cfg_rdata = {7'd0, tile_ofm_h, 7'd0, tile_oy_base};
+            7'h09: cfg_rdata = {8'd0, tile_pixel_base};
+            7'h0a: cfg_rdata = dbg_expected_bytes;
+            7'h0b: cfg_rdata = dbg_core_wr_count;
+            7'h0c: cfg_rdata = dbg_axis_wr_count;
+            7'h0d: cfg_rdata = dbg_tlast_count;
+            7'h0e: cfg_rdata = dbg_last_tlast_index;
+            7'h0f: cfg_rdata = {24'd0, input_zero_point};
+            7'h10: cfg_rdata = {28'd0, pool_stride, 1'b0, pool_enable};
+            7'h11: cfg_rdata = expected_bytes;
+            7'h12: cfg_rdata = perf_busy_cycles;
+            7'h13: cfg_rdata = perf_wait_any_cycles;
+            7'h14: cfg_rdata = perf_wait_bias_cycles;
+            7'h15: cfg_rdata = perf_wait_weight_cycles;
+            7'h16: cfg_rdata = perf_wait_ifm_cycles;
+            7'h17: cfg_rdata = perf_wait_ofm_cycles;
+            7'h18: cfg_rdata = perf_compute_cycles;
+            7'h19: cfg_rdata = {27'd0, psum_stream_overlap_enable,
+                                pass_prefetch_enable, early_drain_enable,
+                                stream_raw_hwc_mode, stream_batch_mode};
+            7'h1a: cfg_rdata = stream_bias_packets;
+            7'h1b: cfg_rdata = stream_weight_packets;
+            7'h1c: cfg_rdata = stream_ifm_packets;
+            7'h1d: cfg_rdata = stream_bias_completed;
+            7'h1e: cfg_rdata = stream_weight_completed;
+            7'h1f: cfg_rdata = stream_ifm_completed;
+            7'h24: cfg_rdata = vector_completed_packets;
+            7'h25: cfg_rdata = vector_completed_pixels;
+            7'h26: cfg_rdata = vector_accepted_beats;
+            7'h27: cfg_rdata = vector_fifo_stall_cycles;
+            7'h28: cfg_rdata = perf_stage_bias_cycles;
+            7'h29: cfg_rdata = perf_stage_weight_cycles;
+            7'h2a: cfg_rdata = perf_stage_feeder_cycles;
+            7'h2b: cfg_rdata = perf_stage_compute_cycles;
+            7'h2c: cfg_rdata = perf_stage_drain_cycles;
+            7'h2d: cfg_rdata = perf_stage_ofm_post_cycles;
+            7'h2e: cfg_rdata = perf_feed_fill_wait_cycles;
+            7'h2f: cfg_rdata = perf_feed_push_cycles;
+            7'h30: cfg_rdata = perf_feed_fifo_stall_cycles;
+            7'h31: cfg_rdata = perf_feed_win_not_ready_cycles;
+            7'h32: cfg_rdata = perf_comp_wload_cycles;
+            7'h33: cfg_rdata = perf_comp_active_cycles;
+            7'h34: cfg_rdata = perf_compute_cycles;
+            7'h35: cfg_rdata = perf_comp_ifm_stall_cycles;
+            7'h36: cfg_rdata = perf_comp_tail_cycles;
+            7'h37: cfg_rdata = 32'd2;
+            7'h38: cfg_rdata = {raw_hwc_compute_start_level, perf_tail_cycles_configured[15:0]};
+            7'h39: cfg_rdata = perf_comp_tail_cycles;
+            7'h3a: cfg_rdata = perf_drain_fifo_empty_wait_cycles;
+            7'h3b: cfg_rdata = {31'd0, perf_drain_fifo_empty_sticky_latched};
+            7'h3c: cfg_rdata = raw_hwc_load_active_cycles;
+            7'h3d: cfg_rdata = raw_hwc_load_unpack_cycles;
+            7'h3e: cfg_rdata = raw_hwc_replay_active_cycles;
+            7'h3f: cfg_rdata = raw_hwc_replay_wait_ready_cycles;
+            7'h40: cfg_rdata = perf_drain_read_fire_cycles;
+            7'h41: cfg_rdata = perf_drain_packet_fire_cycles;
+            7'h42: cfg_rdata = perf_drain_ready_stall_cycles;
+            7'h43: cfg_rdata = perf_drain_internal_full_cycles;
+            7'h44: cfg_rdata = 32'd1;
+            7'h45: cfg_rdata = perf_prefetch_start_cycles;
+            7'h46: cfg_rdata = perf_prefetch_weight_done_cycles;
+            7'h47: cfg_rdata = perf_prefetch_feed_done_cycles;
+            7'h48: cfg_rdata = perf_prefetch_hit_cycles;
+            7'h49: cfg_rdata = perf_prefetch_miss_cycles;
+            7'h4a: cfg_rdata = perf_prefetch_stall_cycles;
+            7'h4b: cfg_rdata = 32'd1;
+            7'h4c: cfg_rdata = perf_psumovl_start_cycles;
+            7'h4d: cfg_rdata = perf_psumovl_hit_cycles;
+            7'h4e: cfg_rdata = perf_psumovl_wait_psum_cycles;
+            7'h4f: cfg_rdata = perf_psumovl_underflow_cycles;
+            7'h50: cfg_rdata = 32'd1;
             default: cfg_rdata = 32'd0;
         endcase
     end

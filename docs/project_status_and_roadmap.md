@@ -505,3 +505,223 @@ D:/MPSoC/python_prj
 - Board validation with the credit-fix bitstream passed for `Conv5/6/8 raw-HWC` on the fixed `maksssksksss0` DDR package. Full programming with `RawHwcComputeStartLevel=64` completed without the previous Conv5 tile0 timeout; log `D:/MPSoC/b_ovcred_22/board_smoke_logs/20260613_221152_conv0_conv9_ddr_demo_COM8.log`. The detection stayed `with_mask` score `0.357321`, `compute_wait_ifm=0`, `RAWSTAT replay_wait_ready=0`, and the ten-layer total was `542.448 ms`.
 - Control run on the same bitstream with `RawHwcComputeStartLevel=0` also passed; log `D:/MPSoC/b_ovcred_22/board_smoke_logs/20260613_221401_conv0_conv9_ddr_demo_COM8.log`. Total was `544.415 ms`, so overlap64 is functionally safe after the latch fix but only improves this image by about `1.97 ms` (`0.36%`). The final generated raw-HWC Conv5/6/8 DDR-demo ELF alias was rebuilt with `RawHwcComputeStartLevel=64`.
 - Current conclusion: the latch fix resolves the observed deadlock and makes nonzero overlap board-safe for this backend raw-HWC set. The performance gain is too small to make this the next major optimization path by itself; follow-up should inspect why `drain_empty_wait` remains large and whether a stronger replay/compute/drain overlap or PSUM/OFM scheduling change can reduce the dominant drain-side bubbles.
+
+## 20. 2026-06-13 PSUM drain sub-performance counters
+
+- Raw-HWC replay/compute overlap is no longer the immediate optimization focus.
+  The useful backend configuration remains `Conv5/6/8 raw-HWC`; the
+  credit-fixed `RawHwcComputeStartLevel=64` path is functional, but the fixed
+  image gain is only about `1.97 ms`.
+- Added a drain observability pass without changing PSUM, OFM, DMA, AXIS, or
+  quantization semantics. `psum_drain_writer` now exports FIFO read fire,
+  downstream packet fire, downstream ready stall, and internal output/skid-full
+  wait pulses. The existing `DRAIN_EMPTY_WAIT` counter remains the FIFO-empty
+  component.
+- The AXI-Lite config address path was widened from 8-bit byte addresses to
+  9-bit byte addresses so the register map can extend past `0xff`. The bridge
+  now maps AXI byte address `[8:2]` to internal `cfg_addr[6:0]`. A normal
+  Vivado/BD rebuild is required before board use.
+- New read-only byte offsets:
+
+```text
+0x100 DRAIN_READ_FIRE
+0x104 DRAIN_PACKET_FIRE
+0x108 DRAIN_READY_STALL
+0x10c DRAIN_INTERNAL_FULL
+0x110 DRAINPERF_VERSION
+```
+
+- Vitis runtime prints one `DRAINPERF` line per layer and accumulates the same
+  fields in `TILEPERF`. `tools/demo/summarize_uart_perf.py` parses the new
+  line and reports:
+
+```text
+drain_residual = STAGE_DRAIN
+               - packet_fire
+               - ready_stall
+               - internal_full
+               - empty_wait
+```
+
+- Local validation completed so far: `tb_layer_config_regs`,
+  `tb_axi_lite_cfg_bridge`, `tb_psum_drain_writer`, and
+  `tb_layer_scheduler_overlap` pass under Icarus; Python tests pass for batch
+  stream packing, single-scale header generation, and UART performance parsing;
+  the `conv0_conv9_ddr_demo` ELF rebuild passes; Vivado/xsim `2022.2` passes
+  `tb_conv_accel_core_axi_lite_quant_lut` and
+  `tb_conv_accel_core_axi_lite_axis_stream_conv5_3x3_raw_hwc_overlap64_ext_tile0_cout16`
+  (`854/0`).
+- Known diagnostic caveat: some older direct-core/top Icarus benches still have
+  legacy expectation mismatches unrelated to the new drain counters. The next
+  hardware step is a 2022.2 rebuild and board run to capture real `DRAINPERF`
+  lines on the current `Conv5/6/8 raw-HWC` baseline.
+- A dedicated Vivado `2022.2` implementation for this counter build completed
+  in the short external directory `D:/MPSoC/b_drainperf_22` with
+  `HWC_CACHE_AW=14`, `HWC_CACHE_DEPTH=13312`, `HWC_CACHE_STRIPES=4`,
+  `HWC_CACHE_USE_URAM=1`, and `TAIL_CYCLES_CONFIG=1`. Timing closes with
+  `WNS=+0.271 ns`, `TNS=0`, `WHS=+0.010 ns`, and `THS=0`; route status reports
+  `90284` fully routed nets and `0` routing errors. Final resources are
+  `54476 LUT`, `47194 FF`, `45.5 BRAM`, `8 URAM`, and `183 DSP`.
+- Drainperf artifact hashes: XSA
+  `BDEDEF2226F57FC047B8F0931DA51ADD56EEE31DA879093FDD5C4721A523960D`; bitstream
+  `67C8BFD169DF83FF346963BC1BE20E60D31CEF57ED75816EFAEBE55784DB1147`.
+- Board validation passed on `COM8` with full programming of the drainperf
+  bitstream and `Conv5/6/8 raw-HWC`, `RawHwcComputeStartLevel=64`. Fixed-image
+  DDR demo log:
+  `D:/MPSoC/b_drainperf_22/board_smoke_logs/20260613_231413_conv0_conv9_ddr_demo_COM8.log`.
+  The dynamic inference run completed successfully with total
+  `PERF total_us=543.006 ms`.
+- A fast-run `conv0->conv9` batch-chain on the same programmed bitstream also
+  passed RTL-golden bit-exact and YOLO decode comparison. Log:
+  `D:/MPSoC/b_drainperf_22/board_smoke_logs/20260613_231623_conv0_conv9_batch_chain_COM8.log`.
+- The new board counters explain the backend drain cost. For the DDR demo,
+  total `STAGE_DRAIN=16073864` cycles and `DRAINPERF` reports
+  `read_fire=7432282`, `packet_fire=7432282`, `ready_stall=489216`,
+  `internal_full=483756`, `empty_wait=7601606`, and residual `67004` cycles.
+  For the raw-HWC backend layers specifically, Conv5/Conv6/Conv8 have
+  `ready_stall=0` and `internal_full=0`; their drain bubbles are dominated by
+  `empty_wait` (`1208320`, `4833280`, and `1208320` cycles). This points away
+  from OFM downstream backpressure and toward PSUM availability / drain-start
+  scheduling as the next optimization target.
+
+## 21. 2026-06-14 experimental early PSUM drain
+
+- Added an opt-in early-drain scheduler mode under `STREAM_CFG[2]`. The default
+  remains `0`, preserving the board-validated serialized behavior. Vitis build
+  scripts expose this as `-EarlyDrain`, which defines `ACCEL_EARLY_DRAIN=1` and
+  sets the stream config bit only for experimental ELF variants.
+- The scheduler can now start `psum_drain_writer` while compute is still in
+  progress once the current pass has begun producing PSUM data. It still waits
+  for feeder completion, compute completion, and drain completion before moving
+  to the next K/COUT block, so early drain never crosses a pass boundary.
+- Local validation: Icarus passes `tb_layer_config_regs`,
+  `tb_axi_lite_cfg_bridge`, `tb_layer_scheduler_early_drain`,
+  `tb_layer_scheduler_overlap`, and `tb_psum_drain_writer`. Vivado/xsim
+  `2022.2` passes Conv5/Conv6/Conv8 raw-HWC tile0 with
+  `RawHwcComputeStartLevel=64` and early drain enabled; each reports
+  `854 pass, 0 fail`.
+- The 2022.2 implementation is in `D:/MPSoC/b_earlydrain_22` using
+  `HWC_CACHE_AW=14`, `HWC_CACHE_DEPTH=13312`, `HWC_CACHE_STRIPES=4`,
+  `HWC_CACHE_USE_URAM=1`, and `TAIL_CYCLES_CONFIG=1`. Timing closes with
+  `WNS=+0.181 ns`, `TNS=0`, `WHS=+0.010 ns`, and `THS=0`. Final resources are
+  `54437 LUT`, `47179 FF`, `45.5 BRAM`, `8 URAM`, and `183 DSP`.
+- Artifact hashes: XSA
+  `5765F4A5E962FC0BBB86B57CFD06A7B6FB6BC06E210F275172ABD7D1F9D5AF2B`; bitstream
+  `00E2C5DC49005C83D4DB0514BF93B67D9264A973F007B8AC3F2C8F8A42BA2FFE`.
+- Board validation passed on `COM8`. Full-programming DDR demo for
+  `maksssksksss0` passed with unchanged `with_mask` detection and total
+  `PERF total_us=520.446 ms`; log
+  `D:/MPSoC/b_earlydrain_22/board_smoke_logs/20260614_000915_conv0_conv9_ddr_demo_COM8.log`.
+  A second-image FastRun DDR demo for `maksssksksss1` passed at
+  `520.505 ms`; log
+  `D:/MPSoC/b_earlydrain_22/board_smoke_logs/20260614_001239_conv0_conv9_ddr_demo_COM8.log`.
+  The batch-chain FastRun also passed RTL golden and YOLO decode comparison;
+  log `D:/MPSoC/b_earlydrain_22/board_smoke_logs/20260614_001057_conv0_conv9_batch_chain_COM8.log`.
+- Compared with the `b_drainperf_22` baseline (`543.006 ms`), early drain saves
+  about `22.6 ms` on the fixed image. Per-layer Conv5/6/8 `DRAINPERF empty_wait`
+  remains `1208320/4833280/1208320` cycles, so this optimization mainly hides
+  part of the drain wait under compute rather than making PSUM production faster.
+  The remaining bottleneck is still feeder/compute/drain serialization around
+  PSUM availability.
+
+## 22. 2026-06-14 experimental K-pass prefetch
+
+- Added an opt-in next-K prefetch mode under `STREAM_CFG[3]`. Default remains
+  `0`; the board-validated early-drain path is unchanged unless software builds
+  an experimental ELF with `-PassPrefetch`.
+- The first implementation targets the current useful backend path only:
+  `Conv5/6/8 raw-HWC`, `RawHwcComputeStartLevel=64`, and `-EarlyDrain`.
+  It does not change DMA packet formats, raw-HWC tile layout, OFM packet order,
+  quantization, or layer schedule.
+- The scheduler now has separate execution and feeder pass indices. Compute,
+  PSUM, final-pass decisions, and debug current-pass reporting still use the
+  current execution K pass, while raw-HWC replay can use `feeder_pass_base_k`
+  for the next K pass. Prefetch never crosses a COUT-block boundary and never
+  starts next-pass compute before the current pass drain has completed.
+- Correctness fix: `systolic_top` now reads exactly one weight vector per
+  compute start plus `COLS-1` additional load cycles. This prevents the array
+  from accidentally consuming the first prefetched weight word as the tail of
+  the current pass, while also avoiding the earlier under-read case.
+- Added read-only `PREFETCHPERF` counters at byte offsets `0x114..0x12c`:
+  start, weight_done, feed_done, hit, miss, stall, and version. The Vitis
+  runtime prints `PREFETCHPERF layer=...`, and the UART summarizer parses these
+  counters.
+- Local validation completed with Vivado/xsim `2022.2`: Conv5, Conv6, and Conv8
+  raw-HWC tile0 pass with `RawHwcComputeStartLevel=64`, `-EarlyDrain`, and
+  `-PassPrefetch` enabled; each reports `854 pass, 0 fail`. The same Conv5
+  top test also passes with prefetch disabled, preserving the control path.
+  Icarus passes `tb_layer_config_regs`, `tb_axi_lite_cfg_bridge`, and
+  `tb_layer_scheduler_pass_prefetch`; `tb/test_kv260_image_demo.py` also passes.
+- Experimental Vitis ELFs were rebuilt for the intended backend set
+  `Conv5/6/8 raw-HWC + EarlyDrain + PassPrefetch`; the generated aliases are
+  `conv_accel_conv0_conv9_batch_chain_raw_hwc_conv5_conv6_conv8_early_drain_pass_prefetch_smoke.elf`
+  and
+  `conv_accel_conv0_conv9_ddr_demo_raw_hwc_conv5_conv6_conv8_early_drain_pass_prefetch_smoke.elf`.
+- A full Vivado `2022.2` implementation completed in `D:/MPSoC/b_passprefetch_22`
+  with `HWC_CACHE_AW=14`, `HWC_CACHE_DEPTH=13312`, `HWC_CACHE_STRIPES=4`,
+  `HWC_CACHE_USE_URAM=1`, and `TAIL_CYCLES_CONFIG=1`. Timing closes with
+  `WNS=+0.280 ns`, `TNS=0`, `WHS=+0.011 ns`, and `THS=0`; route status reports
+  `90913` fully routed nets and `0` routing errors. Final resources are
+  `54547 LUT`, `47416 FF`, `45.5 BRAM`, `8 URAM`, and `183 DSP`.
+- Pass-prefetch artifact hashes: XSA
+  `FDF43E9679CD46DB7DE64B9EFF0E6626002D541B67A61F292F4F28B1D3AD5E7C`; bitstream
+  `7439BDAEDAD63F1F0628400EFD1989A4A937CE64796E09E42902647B877CC14A`.
+  Board validation passed on `COM8`.
+- Full-programming batch-chain validation passed with unchanged RTL-golden and
+  YOLO decode result. Log:
+  `D:/MPSoC/b_passprefetch_22/board_smoke_logs/20260615_000328_conv0_conv9_batch_chain_COM8.log`.
+- Fixed-image DDR demo validation passed for two images:
+
+  ```text
+  maksssksksss0  PASS  total=386.649 ms  log=20260615_000527_conv0_conv9_ddr_demo_COM8.log
+  maksssksksss1  PASS  total=386.637 ms  log=20260615_000700_conv0_conv9_ddr_demo_COM8.log
+  ```
+
+  Detections remain stable (`with_mask` on both images). `PREFETCHPERF` reports
+  `start=97792`, `weight_done=97792`, `feed_done=97792`, `hit=97792`,
+  `miss=0`, and `stall=0` for the full ten-layer run, meaning every enabled
+  backend prefetch was ready at the pass boundary.
+- Compared with the previous `b_earlydrain_22` fixed-image baseline
+  (`520.446 ms`), pass prefetch saves about `133.8 ms`. Compared with
+  `b_drainperf_22` (`543.006 ms`), the total saving is about `156.4 ms`.
+  The current ten-layer hardware busy total is about `34.76M cycles`, with
+  `compute_fire=7.43M cycles` (`21.38%` of busy).
+- Current limitation: the safe prefetch trigger is conservative and starts
+  after the current compute pass completes, so it overlaps mainly the drain /
+  pass-boundary window rather than the whole compute-active interval. Even with
+  this conservative trigger, the measured gain is large enough to keep this
+  direction. The next question is whether to start prefetch earlier during
+  compute, or to move to larger overlap such as double PSUM buffering /
+  COUT-block-level pipeline.
+
+## 23. 2026-06-15 experimental partial-PSUM stream overlap
+
+- Added opt-in `STREAM_CFG[4] = psum_stream_overlap_enable`; reset/default
+  remains `0`. Vitis exposes the experiment through `-PsumStreamOverlap`.
+- The first implementation targets Conv5/6/8 raw-HWC with overlap64, early
+  drain, and pass prefetch. It does not change DMA streams, raw-HWC layout,
+  OFM packet order, quantization, or the software layer schedule.
+- Partial PSUM storage now uses explicit ping-pong banks. For non-final K
+  passes, the next compute may begin after the preceding drain has produced a
+  conservative lead. Per-bank available counters stop the PSUM feeder before
+  it can overtake the writer.
+- Scheduler robustness was tightened so a previous drain's one-cycle done
+  pulse is latched in every FSM state, including prefetch commit and compute
+  start. The overlap unit test deliberately places a done pulse in that
+  transition and passes.
+- Added `PSUMOVLPERF` counters at byte offsets `0x130..0x140`: start, hit,
+  wait_psum, underflow, and version. UART printing and
+  `tools/demo/summarize_uart_perf.py` parsing are implemented.
+- Local validation:
+
+  ```text
+  Icarus: scheduler overlap/prefetch/early-drain tests PASS
+  xsim 2022.2: Conv5/Conv6/Conv8 raw-HWC tile0 PASS, 854/0 each
+  Python: UART performance parser test PASS
+  Vitis 2022.2: batch-chain and DDR-demo experimental ELFs build
+  ```
+
+- This stage is not yet synthesized or board-tested. The current board
+  performance baseline remains `b_passprefetch_22` at about `386.64 ms`.
+  Next acceptance step is a 2022.2 implementation followed by full-programming
+  batch-chain and two-image DDR-demo validation.
