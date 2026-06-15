@@ -46,6 +46,13 @@ module layer_scheduler_stream #(
     input      early_drain_enable,
     input      pass_prefetch_enable,
     input      psum_stream_overlap_enable,
+    input      continuous_psum_enable,
+    input      collector_ctx_ready,
+    input      collector_partial_credit,
+    input      collector_context_active,
+    input      collector_context_wr_bank,
+    input      collector_context_is_final,
+    input      collector_final_done,
     input      psum_drain_data_ready,
     input      psum_drain_packet_fire,
     input      compute_fire,
@@ -98,6 +105,7 @@ module layer_scheduler_stream #(
     reg pass_bank;
     reg prev_drain_pending;
     reg [15:0] drain_packet_count;
+    reg collector_final_done_seen;
 
     localparam [14:0] K_STEP_EXT = K_TILE;
     localparam [10:0] COUT_STEP = COUT_TILE;
@@ -128,6 +136,12 @@ module layer_scheduler_stream #(
     wire psum_overlap_ready_now =
         psum_overlap_enable_current && prefetch_ready_now && drain_started &&
         !prev_drain_pending && (drain_packet_count >= PSUM_OVERLAP_LEAD);
+    wire next_wr_bank = ~pass_bank;
+    wire collector_next_bank_safe =
+        !continuous_psum_enable ||
+        !collector_context_active ||
+        collector_context_is_final ||
+        (collector_context_wr_bank != next_wr_bank);
 
     assign perf_stage_bias =
         busy && (state == ST_BIAS_START || state == ST_BIAS_WAIT);
@@ -135,10 +149,16 @@ module layer_scheduler_stream #(
         busy && (state == ST_WGT_START || state == ST_WGT_WAIT);
     assign perf_stage_feeder =
         busy && (state == ST_FEED_START || state == ST_FEED_WAIT);
+    wire continuous_final_collect_wait =
+        continuous_psum_enable && (state == ST_COMP_WAIT) && last_k &&
+        (compute_done_seen || compute_done) &&
+        !(collector_final_done_seen || collector_final_done);
     assign perf_stage_compute =
-        busy && (state == ST_COMP_START || state == ST_COMP_WAIT);
+        busy && (state == ST_COMP_START ||
+                 (state == ST_COMP_WAIT && !continuous_final_collect_wait));
     assign perf_stage_drain =
-        busy && (state == ST_DRAIN_START || state == ST_DRAIN_WAIT);
+        busy && (state == ST_DRAIN_START || state == ST_DRAIN_WAIT ||
+                 continuous_final_collect_wait);
     assign perf_prefetch_stall = busy && (state == ST_PREFETCH_WAIT);
     assign perf_psumovl_wait_psum =
         busy && psum_overlap_enable_current && prefetch_ready_now && drain_started &&
@@ -180,6 +200,7 @@ module layer_scheduler_stream #(
             pass_bank <= 1'b0;
             prev_drain_pending <= 1'b0;
             drain_packet_count <= 16'd0;
+            collector_final_done_seen <= 1'b0;
             perf_prefetch_start <= 1'b0;
             perf_prefetch_weight_done <= 1'b0;
             perf_prefetch_feed_done <= 1'b0;
@@ -208,6 +229,8 @@ module layer_scheduler_stream #(
 
             if (prev_drain_pending && psum_drain_done)
                 prev_drain_pending <= 1'b0;
+            if (continuous_psum_enable && collector_final_done)
+                collector_final_done_seen <= 1'b1;
 
             if (prefetch_started && weight_load_done &&
                 !prefetch_weight_done) begin
@@ -240,6 +263,7 @@ module layer_scheduler_stream #(
                         pass_bank <= 1'b0;
                         prev_drain_pending <= 1'b0;
                         drain_packet_count <= 16'd0;
+                        collector_final_done_seen <= 1'b0;
                         state <= ST_BIAS_START;
                     end
                 end
@@ -279,16 +303,19 @@ module layer_scheduler_stream #(
                 end
 
                 ST_COMP_START: begin
-                    compute_start <= 1'b1;
-                    compute_done_seen <= 1'b0;
-                    compute_started_seen <= 1'b0;
-                    drain_started <= 1'b0;
-                    drain_done_seen <= 1'b0;
-                    drain_packet_count <= 16'd0;
-                    prefetch_started <= 1'b0;
-                    prefetch_weight_done <= 1'b0;
-                    prefetch_feed_done <= 1'b0;
-                    state <= ST_COMP_WAIT;
+                    if (!continuous_psum_enable || collector_ctx_ready) begin
+                        compute_start <= 1'b1;
+                        compute_done_seen <= 1'b0;
+                        compute_started_seen <= 1'b0;
+                        drain_started <= 1'b0;
+                        drain_done_seen <= 1'b0;
+                        drain_packet_count <= 16'd0;
+                        collector_final_done_seen <= 1'b0;
+                        prefetch_started <= 1'b0;
+                        prefetch_weight_done <= 1'b0;
+                        prefetch_feed_done <= 1'b0;
+                        state <= ST_COMP_WAIT;
+                    end
                 end
 
                 ST_COMP_WAIT: begin
@@ -313,13 +340,45 @@ module layer_scheduler_stream #(
                     end
 
                     if (early_drain_enable && !drain_started && !prev_drain_pending &&
+                        !continuous_psum_enable &&
                         compute_fire && psum_drain_data_ready) begin
                         psum_drain_start <= 1'b1;
                         drain_started <= 1'b1;
                         drain_packet_count <= 16'd0;
                     end
 
-                    if (!prefetch_start_now &&
+                    if (continuous_psum_enable) begin
+                        if (!prefetch_start_now &&
+                            (compute_done || compute_done_seen) &&
+                            (!feeder_overlap_mode || feeder_done || feeder_done_seen)) begin
+                            if (!last_k) begin
+                                if (prefetch_ready_now && collector_partial_credit &&
+                                    collector_next_bank_safe) begin
+                                    pass_base_k <= next_k[13:0];
+                                    pass_bank <= ~pass_bank;
+                                    perf_prefetch_hit <= 1'b1;
+                                    perf_psumovl_start <= 1'b1;
+                                    perf_psumovl_hit <= 1'b1;
+                                    state <= ST_PREFETCH_COMMIT;
+                                end else if (!prefetch_started &&
+                                             collector_next_bank_safe) begin
+                                    pass_base_k <= next_k[13:0];
+                                    pass_bank <= ~pass_bank;
+                                    state <= ST_WGT_START;
+                                end
+                            end else if (collector_final_done ||
+                                         collector_final_done_seen) begin
+                                if (!last_cout) begin
+                                    cout_base <= cout_base + COUT_STEP;
+                                    pass_base_k <= 14'd0;
+                                    pass_bank <= 1'b0;
+                                    state <= ST_BIAS_START;
+                                end else begin
+                                    state <= ST_DONE;
+                                end
+                            end
+                        end
+                    end else if (!prefetch_start_now &&
                         !prev_drain_pending &&
                         (compute_done || compute_done_seen) &&
                         (!feeder_overlap_mode || feeder_done || feeder_done_seen)) begin

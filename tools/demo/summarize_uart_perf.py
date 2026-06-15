@@ -14,6 +14,7 @@ RAWSTAT_PREFIX = "RAWSTAT "
 DRAINPERF_PREFIX = "DRAINPERF "
 PREFETCHPERF_PREFIX = "PREFETCHPERF "
 PSUMOVLPERF_PREFIX = "PSUMOVLPERF "
+COLLECTPERF_PREFIX = "COLLECTPERF "
 
 
 def parse_metric_line(line, prefix):
@@ -313,6 +314,29 @@ def summarize_perf(log_text):
             "version": max(layer.get("version", 0) for layer in psumovl_layers),
         }
 
+    collect_layers = [
+        parse_metric_line(line.strip(), COLLECTPERF_PREFIX)
+        for line in log_text.splitlines()
+        if line.strip().startswith(COLLECTPERF_PREFIX)
+    ]
+    collectperf = None
+    if collect_layers:
+        collectperf = {
+            "layers": collect_layers,
+            "packet_fire_cycles": sum(layer["packet_fire"] for layer in collect_layers),
+            "partial_write_cycles": sum(layer["partial_write"] for layer in collect_layers),
+            "final_write_cycles": sum(layer["final_write"] for layer in collect_layers),
+            "context_push_cycles": sum(layer["context_push"] for layer in collect_layers),
+            "context_pop_cycles": sum(layer["context_pop"] for layer in collect_layers),
+            "context_full_stall_cycles": sum(
+                layer["context_full_stall"] for layer in collect_layers
+            ),
+            "column_empty_wait_cycles": sum(
+                layer["column_empty_wait"] for layer in collect_layers
+            ),
+            "version": max(layer.get("version", 0) for layer in collect_layers),
+        }
+
     return {
         "layer_count": len(layers),
         "total_microseconds": total_us,
@@ -329,6 +353,7 @@ def summarize_perf(log_text):
         "drainperf": drainperf,
         "prefetchperf": prefetchperf,
         "psumovlperf": psumovlperf,
+        "collectperf": collectperf,
     }
 
 
@@ -457,6 +482,19 @@ def print_summary(summary):
             f"wait_psum={psumovlperf['wait_psum_cycles']} "
             f"underflow={psumovlperf['underflow_cycles']} "
             f"hit_percent={psumovlperf['hit_percent']:.2f}%"
+        )
+    if summary["collectperf"]:
+        collectperf = summary["collectperf"]
+        print(
+            "COLLECTPERF summary: "
+            f"version={collectperf['version']} "
+            f"packet_fire={collectperf['packet_fire_cycles']} "
+            f"partial_write={collectperf['partial_write_cycles']} "
+            f"final_write={collectperf['final_write_cycles']} "
+            f"context_push={collectperf['context_push_cycles']} "
+            f"context_pop={collectperf['context_pop_cycles']} "
+            f"context_full_stall={collectperf['context_full_stall_cycles']} "
+            f"column_empty_wait={collectperf['column_empty_wait_cycles']}"
         )
 
 

@@ -453,7 +453,7 @@ kernel_1x1=1 时必须满足：
 
 | Byte offset | Name | R/W | Bit field | 作用 |
 |---:|---|---|---|---|
-| `0x64` | `STREAM_CFG` | R/W | `bit0=batch_mode`, `bit1=raw_hwc_mode`, `bit2=early_drain_enable`, `bit3=pass_prefetch_enable`, `bit4=psum_stream_overlap_enable` | Select batch stream, raw-HWC cache, early drain, next-K prefetch, and experimental partial-PSUM overlap |
+| `0x64` | `STREAM_CFG` | R/W | `bit0=batch_mode`, `bit1=raw_hwc_mode`, `bit2=early_drain_enable`, `bit3=pass_prefetch_enable`, `bit4=psum_stream_overlap_enable`, `bit5=continuous_psum_enable` | Select batch stream, raw-HWC cache, early drain, next-K prefetch, experimental partial-PSUM overlap, and experimental continuous PSUM collector |
 | `0x68` | `BIAS_PACKETS` | R/W | `[31:0]` | 当前 tile 期望 bias packet 数 |
 | `0x6c` | `WEIGHT_PACKETS` | R/W | `[31:0]` | 当前 tile 期望 weight packet 数 |
 | `0x70` | `IFM_PACKETS` | R/W | `[31:0]` | 当前 tile 期望 IFM packet 数 |
@@ -703,3 +703,72 @@ concurrent PSUM ping-pong memory currently maps to about `23616` LUTs rather
 than the previous `14 BRAM` storage, increasing total LUT use to `78900`.
 Board validation remains pending, and a later revision should restore explicit
 BRAM mapping if the measured overlap gain does not justify this resource cost.
+
+## 19. 2026-06-15 continuous PSUM collector addendum
+
+`STREAM_CFG[5]` enables the experimental continuous PSUM collector. Reset and
+normal software builds keep this bit clear. Vitis exposes the experiment with
+`-ContinuousPsum`.
+
+In this mode, the scheduler submits one pass context before compute starts.
+`psum_output_collector` consumes the per-column PSUM FIFOs, groups a full
+`COLS*2` packet per pixel, and keeps the collector active across consecutive
+pass contexts. Non-final packets write directly into the selected partial-PSUM
+ping-pong bank; final packets continue into the existing requant, activation,
+pool, and OFM writeback path.
+
+The external AXIS/DMA formats, raw-HWC tile layout, OFM packet format,
+quantization semantics, and layer schedule are unchanged. The mode currently
+targets the same backend set as the previous overlap experiments:
+Conv5/Conv6/Conv8 raw-HWC with overlap64, early drain, pass prefetch, and
+partial-PSUM overlap.
+
+Additional read-only collector counters:
+
+| Byte offset | Name | R/W | Meaning |
+|---:|---|---|---|
+| `0x144` | `COLLECT_PACKET_FIRE` | R | Collector packets accepted downstream |
+| `0x148` | `COLLECT_PARTIAL_WRITE` | R | Non-final packets written to partial PSUM RAM |
+| `0x14c` | `COLLECT_FINAL_WRITE` | R | Final packets sent to OFM post-processing |
+| `0x150` | `COLLECT_CONTEXT_PUSH` | R | Pass contexts accepted by the collector FIFO |
+| `0x154` | `COLLECT_CONTEXT_POP` | R | Completed pass contexts |
+| `0x158` | `COLLECT_CONTEXT_FULL_STALL` | R | Cycles with scheduler context valid but collector FIFO full |
+| `0x15c` | `COLLECT_COLUMN_EMPTY_WAIT` | R | Cycles waiting for one or more PSUM column FIFOs |
+| `0x160` | `COLLECTPERF_VERSION` | R | Current fixed value: `1` |
+
+Runtime software prints these fields as:
+
+```text
+COLLECTPERF layer=... packet_fire=... partial_write=... final_write=...
+            context_push=... context_pop=... context_full_stall=...
+            column_empty_wait=... version=...
+```
+
+Local validation has passed under Icarus and Vivado/xsim `2022.2`, including
+Conv5, Conv6, and Conv8 raw-HWC tile0/tile3 external-golden tests with
+continuous PSUM enabled. The first board build exposed a Conv5 tail-tile
+mismatch caused by stale per-bank partial-PSUM availability credit when a
+ping-pong bank was reused. The fix clears the selected bank credit on each
+non-final continuous collector compute start.
+
+The fixed `D:/MPSoC/b_psumcollector_fix3_22` Vivado `2022.2` implementation is
+complete: `WNS=+0.165 ns`, `TNS=0`, `WHS=+0.010 ns`, `THS=0`, `0` routing
+errors, `56442 LUT`, `49000 FF`, `63 BRAM`, `8 URAM`, and `183 DSP`. The
+bitstream hash is
+`1E0255EA61AEBF28C01DC72386B398ABAE000193EA840C217CAAD5BC6437248D`, and the
+XSA hash is
+`40424070EDC08B05BDA56FE2295A2D5F3520E4F425559E2693F9B49185E1562A`.
+
+Board validation passes:
+
+```text
+batch-chain: PASS, 20260615_081758_conv0_conv9_batch_chain_COM8.log
+DDR image0:  PASS, 0.371271 s, 20260615_082040_conv0_conv9_ddr_demo_COM8.log
+DDR image1:  PASS, 0.371314 s, 20260615_082302_conv0_conv9_ddr_demo_COM8.log
+```
+
+`COLLECTPERF context_full_stall=0`, `PSUMOVLPERF underflow=0`, and
+`PREFETCHPERF` hit rate is `100%` on the continuous-collector backend layers.
+The measured gain over the previous `b_psumovl_credit1_22` baseline is small
+but positive; the dominant remaining cycles are still compute-stage and
+feeder/replay activity.

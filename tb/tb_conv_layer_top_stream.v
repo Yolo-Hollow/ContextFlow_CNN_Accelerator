@@ -99,6 +99,7 @@ module tb_conv_layer_top_stream;
         .early_drain_enable(1'b0),
         .pass_prefetch_enable(1'b0),
         .psum_stream_overlap_enable(1'b0),
+        .continuous_psum_enable(1'b0),
         .k_total(K_TOTAL[13:0]), .cout_total(COUT_TOTAL[10:0]), .num_pixels(16'd9),
         .tile_oy_base(9'd0), .tile_ofm_h(9'd0), .tile_pixel_base(16'd0),
         .pool_enable(1'b0), .pool_stride(2'd0),
@@ -159,7 +160,7 @@ module tb_conv_layer_top_stream;
             dma_wr_fy = 0;
             dma_line_advance = 0;
             for (b = 0; b < 5; b = b + 1) dma_wr_data[b] = 0;
-            quant_mult_flat = {COLS*2{16'd1}};
+            quant_mult_flat = {COLS*2{16'd32768}};
             quant_shift_flat = {COLS*2{4'd0}};
             quant_zp_flat = {COLS*2{8'd0}};
             activation_mode = 2'd0;

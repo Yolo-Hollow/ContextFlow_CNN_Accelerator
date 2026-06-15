@@ -244,7 +244,7 @@ per-request mode remains available at compile time.
 The batch control registers are:
 
 ```text
-0x64 STREAM_CFG       bit0 = batch mode, bit1 = experimental raw-HWC IFM cache, bit2 = experimental early PSUM drain, bit3 = experimental K-pass prefetch, bit4 = experimental partial-PSUM overlap
+0x64 STREAM_CFG       bit0 = batch mode, bit1 = experimental raw-HWC IFM cache, bit2 = experimental early PSUM drain, bit3 = experimental K-pass prefetch, bit4 = experimental partial-PSUM overlap, bit5 = experimental continuous PSUM collector
 0x68 BIAS_PACKETS     expected packet count
 0x6c WEIGHT_PACKETS   expected packet count
 0x70 IFM_PACKETS      expected packet count
@@ -1147,3 +1147,108 @@ xsa SHA256 4482BA0C2C932DD6F52E8856157C23DA4195C38B794BFADA42FEC04EE4C9F8EB
 ```
 
 Board validation has not yet been performed.
+
+## 2026-06-15 experimental continuous PSUM collector
+
+`-ContinuousPsum` defines `ACCEL_CONTINUOUS_PSUM=1` and sets
+`STREAM_CFG[5]` for selected raw-HWC layers. Default ELFs leave the bit clear.
+
+The mode replaces non-final pass drain with a continuous collector. The
+collector receives one pass context before compute starts, groups the per-column
+PSUM FIFO outputs into pixel packets, writes non-final packets directly to the
+selected ping-pong PSUM bank, and forwards final packets to the existing
+requant / activation / OFM path. DMA streams, raw-HWC tile layout, OFM packet
+format, and quantization are unchanged.
+
+Build the experimental DDR demo with:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/manual_build_accel_smoke.ps1 `
+  -Mode conv0_conv9_ddr_demo `
+  -RawHwcConv5 -RawHwcConv6 -RawHwcConv8 `
+  -RawHwcComputeStartLevel 64 `
+  -EarlyDrain -PassPrefetch -PsumStreamOverlap -ContinuousPsum `
+  -TailCyclesOverride 1
+```
+
+The batch-chain mode accepts the same switches with
+`-Mode conv0_conv9_batch_chain`.
+
+Runtime output adds:
+
+```text
+COLLECTPERF layer=... packet_fire=... partial_write=... final_write=...
+            context_push=... context_pop=... context_full_stall=...
+            column_empty_wait=... version=...
+```
+
+Read-only byte offsets are:
+
+```text
+0x144 COLLECT_PACKET_FIRE
+0x148 COLLECT_PARTIAL_WRITE
+0x14c COLLECT_FINAL_WRITE
+0x150 COLLECT_CONTEXT_PUSH
+0x154 COLLECT_CONTEXT_POP
+0x158 COLLECT_CONTEXT_FULL_STALL
+0x15c COLLECT_COLUMN_EMPTY_WAIT
+0x160 COLLECTPERF_VERSION
+```
+
+Local validation completed so far:
+
+```text
+Icarus selected regression PASS
+xsim 2022.2 module-level collector / BRAM / scheduler / config tests PASS
+xsim 2022.2 Conv5/Conv6/Conv8 raw-HWC tile0 continuous PSUM PASS, 854/0 each
+Vitis 2022.2 batch-chain and DDR-demo experimental ELFs build
+```
+
+Vivado `2022.2` implementation completed in `D:/MPSoC/b_psumcollector_22`.
+Final timing/resource summary:
+
+```text
+WNS=+0.212 ns, TNS=0, WHS=+0.010 ns, THS=0
+routing errors=0
+LUT=56618, FF=48993, BRAM=63, URAM=8, DSP=183
+LUT as Memory=16570
+bit SHA256=9E27106EA86106164C522A1F9AE3FAB646D9041D90D59C4E2DF4071C8F939186
+XSA SHA256=973E7C98E137589D5C53FAE40DE2450F6F26E4BF4B77B220489F9494C4799B66
+```
+
+The first `b_psumcollector_22` board run failed on Conv5 tail tile 3. The fix
+clears stale per-bank partial-PSUM availability credit when a non-final
+continuous-collector pass starts writing a reused ping-pong bank. After the
+fix, the validated hardware build is:
+
+```text
+build dir: D:/MPSoC/b_psumcollector_fix3_22
+WNS=+0.165 ns, TNS=0, WHS=+0.010 ns, THS=0
+routing errors=0
+LUT=56442, FF=49000, BRAM=63, URAM=8, DSP=183
+LUT as Memory=16530
+bit SHA256=1E0255EA61AEBF28C01DC72386B398ABAE000193EA840C217CAAD5BC6437248D
+XSA SHA256=40424070EDC08B05BDA56FE2295A2D5F3520E4F425559E2693F9B49185E1562A
+```
+
+Board validation:
+
+```text
+20260615_081758_conv0_conv9_batch_chain_COM8.log PASS
+20260615_082040_conv0_conv9_ddr_demo_COM8.log   PASS, total=0.371271 s
+20260615_082302_conv0_conv9_ddr_demo_COM8.log   PASS, total=0.371314 s
+```
+
+The two DDR demo detections remain stable:
+
+```text
+maksssksksss0: with_mask score=0.357321
+maksssksksss1: with_mask score=0.295050
+```
+
+`COLLECTPERF context_full_stall=0`, `PSUMOVLPERF underflow=0`, and the
+prefetch/psum-overlap hit rates are `100%` on the continuous-collector layers.
+The measured gain over the previous `b_psumovl_credit1_22` baseline
+(`~374.36 ms`) is small but positive; the main value of this step is that the
+partial-PSUM RAM now maps cleanly into BRAM and the continuous collector is
+board-proven.

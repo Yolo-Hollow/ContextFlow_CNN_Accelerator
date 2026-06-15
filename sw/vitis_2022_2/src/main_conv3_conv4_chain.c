@@ -281,6 +281,14 @@ typedef struct {
     uint64_t hw_psumovl_wait_psum_cycles;
     uint64_t hw_psumovl_underflow_cycles;
     uint64_t hw_psumovlperf_version;
+    uint64_t hw_collect_packet_fire_cycles;
+    uint64_t hw_collect_partial_write_cycles;
+    uint64_t hw_collect_final_write_cycles;
+    uint64_t hw_collect_context_push_cycles;
+    uint64_t hw_collect_context_pop_cycles;
+    uint64_t hw_collect_context_full_stall_cycles;
+    uint64_t hw_collect_column_empty_wait_cycles;
+    uint64_t hw_collectperf_version;
     uint64_t vector_packets;
     uint64_t vector_pixels;
     uint64_t vector_beats;
@@ -1464,6 +1472,19 @@ static void print_layer_perf(const chain_layer_t *layer)
         (unsigned long long)layer_perf.hw_psumovl_underflow_cycles,
         (unsigned long long)layer_perf.hw_psumovlperf_version);
     xil_printf(
+        "COLLECTPERF layer=%s packet_fire=%llu partial_write=%llu "
+        "final_write=%llu context_push=%llu context_pop=%llu "
+        "context_full_stall=%llu column_empty_wait=%llu version=%llu\r\n",
+        layer->name,
+        (unsigned long long)layer_perf.hw_collect_packet_fire_cycles,
+        (unsigned long long)layer_perf.hw_collect_partial_write_cycles,
+        (unsigned long long)layer_perf.hw_collect_final_write_cycles,
+        (unsigned long long)layer_perf.hw_collect_context_push_cycles,
+        (unsigned long long)layer_perf.hw_collect_context_pop_cycles,
+        (unsigned long long)layer_perf.hw_collect_context_full_stall_cycles,
+        (unsigned long long)layer_perf.hw_collect_column_empty_wait_cycles,
+        (unsigned long long)layer_perf.hw_collectperf_version);
+    xil_printf(
         "DMASTAT layer=%s bias_starts=%lu weight_starts=%lu ifm_starts=%lu ofm_starts=%lu\r\n",
         layer->name,
         (unsigned long)layer_perf.dma_bias_starts,
@@ -1740,6 +1761,14 @@ static int run_one_tile(const chain_layer_t *layer, const chain_tile_t *tile, ui
     uint32_t tile_psumovl_wait_psum = rd32(ACCEL_BASE_ADDR, ACCEL_PSUMOVL_WAIT_PSUM);
     uint32_t tile_psumovl_underflow = rd32(ACCEL_BASE_ADDR, ACCEL_PSUMOVL_UNDERFLOW);
     uint32_t tile_psumovlperf_version = rd32(ACCEL_BASE_ADDR, ACCEL_PSUMOVLPERF_VERSION);
+    uint32_t tile_collect_packet_fire = rd32(ACCEL_BASE_ADDR, ACCEL_COLLECT_PACKET_FIRE);
+    uint32_t tile_collect_partial_write = rd32(ACCEL_BASE_ADDR, ACCEL_COLLECT_PARTIAL_WRITE);
+    uint32_t tile_collect_final_write = rd32(ACCEL_BASE_ADDR, ACCEL_COLLECT_FINAL_WRITE);
+    uint32_t tile_collect_context_push = rd32(ACCEL_BASE_ADDR, ACCEL_COLLECT_CONTEXT_PUSH);
+    uint32_t tile_collect_context_pop = rd32(ACCEL_BASE_ADDR, ACCEL_COLLECT_CONTEXT_POP);
+    uint32_t tile_collect_context_full_stall = rd32(ACCEL_BASE_ADDR, ACCEL_COLLECT_CONTEXT_FULL_STALL);
+    uint32_t tile_collect_column_empty_wait = rd32(ACCEL_BASE_ADDR, ACCEL_COLLECT_COLUMN_EMPTY_WAIT);
+    uint32_t tile_collectperf_version = rd32(ACCEL_BASE_ADDR, ACCEL_COLLECTPERF_VERSION);
     uint32_t tile_vector_packets = rd32(ACCEL_BASE_ADDR, ACCEL_VECTOR_PACKETS);
     uint32_t tile_vector_pixels = rd32(ACCEL_BASE_ADDR, ACCEL_VECTOR_PIXELS);
     uint32_t tile_vector_beats = rd32(ACCEL_BASE_ADDR, ACCEL_VECTOR_BEATS);
@@ -1861,6 +1890,14 @@ static int run_one_tile(const chain_layer_t *layer, const chain_tile_t *tile, ui
     layer_perf.hw_psumovl_wait_psum_cycles += tile_psumovl_wait_psum;
     layer_perf.hw_psumovl_underflow_cycles += tile_psumovl_underflow;
     layer_perf.hw_psumovlperf_version = tile_psumovlperf_version;
+    layer_perf.hw_collect_packet_fire_cycles += tile_collect_packet_fire;
+    layer_perf.hw_collect_partial_write_cycles += tile_collect_partial_write;
+    layer_perf.hw_collect_final_write_cycles += tile_collect_final_write;
+    layer_perf.hw_collect_context_push_cycles += tile_collect_context_push;
+    layer_perf.hw_collect_context_pop_cycles += tile_collect_context_pop;
+    layer_perf.hw_collect_context_full_stall_cycles += tile_collect_context_full_stall;
+    layer_perf.hw_collect_column_empty_wait_cycles += tile_collect_column_empty_wait;
+    layer_perf.hw_collectperf_version = tile_collectperf_version;
     layer_perf.vector_packets += tile_vector_packets;
     layer_perf.vector_pixels += tile_vector_pixels;
     layer_perf.vector_beats += tile_vector_beats;
@@ -2120,6 +2157,14 @@ static int run_one_tile_batch(
     uint32_t tile_psumovl_wait_psum = rd32(ACCEL_BASE_ADDR, ACCEL_PSUMOVL_WAIT_PSUM);
     uint32_t tile_psumovl_underflow = rd32(ACCEL_BASE_ADDR, ACCEL_PSUMOVL_UNDERFLOW);
     uint32_t tile_psumovlperf_version = rd32(ACCEL_BASE_ADDR, ACCEL_PSUMOVLPERF_VERSION);
+    uint32_t tile_collect_packet_fire = rd32(ACCEL_BASE_ADDR, ACCEL_COLLECT_PACKET_FIRE);
+    uint32_t tile_collect_partial_write = rd32(ACCEL_BASE_ADDR, ACCEL_COLLECT_PARTIAL_WRITE);
+    uint32_t tile_collect_final_write = rd32(ACCEL_BASE_ADDR, ACCEL_COLLECT_FINAL_WRITE);
+    uint32_t tile_collect_context_push = rd32(ACCEL_BASE_ADDR, ACCEL_COLLECT_CONTEXT_PUSH);
+    uint32_t tile_collect_context_pop = rd32(ACCEL_BASE_ADDR, ACCEL_COLLECT_CONTEXT_POP);
+    uint32_t tile_collect_context_full_stall = rd32(ACCEL_BASE_ADDR, ACCEL_COLLECT_CONTEXT_FULL_STALL);
+    uint32_t tile_collect_column_empty_wait = rd32(ACCEL_BASE_ADDR, ACCEL_COLLECT_COLUMN_EMPTY_WAIT);
+    uint32_t tile_collectperf_version = rd32(ACCEL_BASE_ADDR, ACCEL_COLLECTPERF_VERSION);
     uint32_t tile_vector_packets = rd32(ACCEL_BASE_ADDR, ACCEL_VECTOR_PACKETS);
     uint32_t tile_vector_pixels = rd32(ACCEL_BASE_ADDR, ACCEL_VECTOR_PIXELS);
     uint32_t tile_vector_beats = rd32(ACCEL_BASE_ADDR, ACCEL_VECTOR_BEATS);
@@ -2241,6 +2286,14 @@ static int run_one_tile_batch(
     layer_perf.hw_psumovl_wait_psum_cycles += tile_psumovl_wait_psum;
     layer_perf.hw_psumovl_underflow_cycles += tile_psumovl_underflow;
     layer_perf.hw_psumovlperf_version = tile_psumovlperf_version;
+    layer_perf.hw_collect_packet_fire_cycles += tile_collect_packet_fire;
+    layer_perf.hw_collect_partial_write_cycles += tile_collect_partial_write;
+    layer_perf.hw_collect_final_write_cycles += tile_collect_final_write;
+    layer_perf.hw_collect_context_push_cycles += tile_collect_context_push;
+    layer_perf.hw_collect_context_pop_cycles += tile_collect_context_pop;
+    layer_perf.hw_collect_context_full_stall_cycles += tile_collect_context_full_stall;
+    layer_perf.hw_collect_column_empty_wait_cycles += tile_collect_column_empty_wait;
+    layer_perf.hw_collectperf_version = tile_collectperf_version;
     layer_perf.vector_packets += tile_vector_packets;
     layer_perf.vector_pixels += tile_vector_pixels;
     layer_perf.vector_beats += tile_vector_beats;
@@ -2303,7 +2356,9 @@ static int configure_layer(const chain_layer_t *layer)
              ((ACCEL_PASS_PREFETCH && layer_uses_raw_hwc(layer)) ?
               ACCEL_STREAM_CFG_PASS_PREFETCH : 0U) |
              ((ACCEL_PSUM_STREAM_OVERLAP && layer_uses_raw_hwc(layer)) ?
-              ACCEL_STREAM_CFG_PSUM_STREAM_OVERLAP : 0U)) :
+              ACCEL_STREAM_CFG_PSUM_STREAM_OVERLAP : 0U) |
+             ((ACCEL_CONTINUOUS_PSUM && layer_uses_raw_hwc(layer)) ?
+              ACCEL_STREAM_CFG_CONTINUOUS_PSUM : 0U)) :
             0U);
     if (program_quant_tile(layer) != 0) {
         return -1;

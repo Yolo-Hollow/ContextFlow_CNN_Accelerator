@@ -29,6 +29,7 @@ param(
     [switch]$EarlyDrain,
     [switch]$PassPrefetch,
     [switch]$PsumStreamOverlap,
+    [switch]$ContinuousPsum,
     [switch]$RunDeterministic,
     [string]$BuildDirName = "build_system_xck26_kv260"
 )
@@ -182,6 +183,9 @@ function Get-RawHwcVariantElf($Mode) {
     }
     if ($PsumStreamOverlap) {
         $variantTags += "psum_stream_overlap"
+    }
+    if ($ContinuousPsum) {
+        $variantTags += "continuous_psum"
     }
     if ($variantTags.Count -eq 0) {
         if ($Mode -eq "conv0_conv9_ddr_demo") {

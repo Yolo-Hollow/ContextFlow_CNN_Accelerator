@@ -121,6 +121,9 @@
 `ifndef TB_PSUM_STREAM_OVERLAP_OVERRIDE
 `define TB_PSUM_STREAM_OVERLAP_OVERRIDE 0
 `endif
+`ifndef TB_CONTINUOUS_PSUM_OVERRIDE
+`define TB_CONTINUOUS_PSUM_OVERRIDE 0
+`endif
 `ifndef TB_CONV_ACCEL_CORE_TILE_OY_BASE
 `define TB_CONV_ACCEL_CORE_TILE_OY_BASE 0
 `endif
@@ -486,6 +489,7 @@ module `TB_CONV_ACCEL_CORE_MODULE;
     integer early_drain_override;
     integer pass_prefetch_override;
     integer psum_stream_overlap_override;
+    integer continuous_psum_override;
     integer layer_done_pulse_count;
     integer ps_bias_service_count, ps_weight_service_count, ps_line_fill_count;
 `ifdef TB_CONV_ACCEL_CORE_CHECK_VECTOR_IFM
@@ -1276,7 +1280,8 @@ module `TB_CONV_ACCEL_CORE_MODULE;
             cfg_write(6'h19, 32'd3 |
                 (early_drain_override ? 32'd4 : 32'd0) |
                 (pass_prefetch_override ? 32'd8 : 32'd0) |
-                (psum_stream_overlap_override ? 32'd16 : 32'd0));
+                (psum_stream_overlap_override ? 32'd16 : 32'd0) |
+                (continuous_psum_override ? 32'd32 : 32'd0));
 `else
             cfg_write(6'h19, 32'd1 |
                 (early_drain_override ? 32'd4 : 32'd0) |
@@ -1747,6 +1752,7 @@ module `TB_CONV_ACCEL_CORE_MODULE;
         early_drain_override = `TB_EARLY_DRAIN_OVERRIDE;
         pass_prefetch_override = `TB_PASS_PREFETCH_OVERRIDE;
         psum_stream_overlap_override = `TB_PSUM_STREAM_OVERLAP_OVERRIDE;
+        continuous_psum_override = `TB_CONTINUOUS_PSUM_OVERRIDE;
         if (tail_cycles_override != 0) begin
             $display("[INFO] tail_cycles override=%0d", tail_cycles_override);
         end
@@ -1762,6 +1768,9 @@ module `TB_CONV_ACCEL_CORE_MODULE;
         end
         if (psum_stream_overlap_override != 0) begin
             $display("[INFO] psum_stream_overlap override=%0d", psum_stream_overlap_override);
+        end
+        if (continuous_psum_override != 0) begin
+            $display("[INFO] continuous_psum override=%0d", continuous_psum_override);
         end
         layer_done_pulse_count = 0;
         ps_bias_service_count = 0;

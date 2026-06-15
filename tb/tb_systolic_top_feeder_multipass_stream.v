@@ -40,6 +40,7 @@ module tb_systolic_top_feeder_multipass_stream;
     reg [COLS*2*PSUM_W-1:0] psum_top_ext;
     wire [COLS*2*PSUM_W-1:0] psum_stream_data;
     wire psum_stream_valid;
+    wire psum_stream_compute_ready;
     wire [31:0] wgt_fifo_wr_en;
     wire [ROWS*WGT_W*2-1:0] wgt_fifo_wr_data;
     wire [31:0] wgt_fifo_full;
@@ -74,7 +75,8 @@ module tb_systolic_top_feeder_multipass_stream;
         .dma_wr_data(dma_wr_data), .dma_line_advance(dma_line_advance),
         .bias_wr_addr(bias_wr_addr), .bias_wr_data(bias_wr_data), .bias_wr_en(bias_wr_en),
         .is_first_pass(is_first_pass), .psum_top_ext(psum_top_ext), .use_ext_psum(use_ext_psum),
-        .psum_stream_data(psum_stream_data), .psum_stream_valid(psum_stream_valid), .psum_stream_compute_ready(1'b1),
+        .psum_stream_data(psum_stream_data), .psum_stream_valid(psum_stream_valid),
+        .psum_stream_compute_ready(psum_stream_compute_ready),
         .use_psum_stream(use_psum_stream),
         .wgt_fifo_wr_en(wgt_fifo_wr_en), .wgt_fifo_wr_data(wgt_fifo_wr_data),
         .wgt_fifo_full(wgt_fifo_full),
@@ -102,9 +104,12 @@ module tb_systolic_top_feeder_multipass_stream;
         .clk(clk), .rst(rst), .start(compute_start), .compute_fire(compute_fire),
         .is_first_pass(is_first_pass), .use_ext_psum(use_ext_psum),
         .bias_data({COLS*2*PSUM_W{1'b0}}),
-        .rd_bank(1'b0), .rd_en(pp_rd_en), .rd_bank_out(pp_rd_bank), .rd_addr(pp_rd_addr),
+        .rd_bank(1'b0), .overlap_guard_enable(1'b0), .available_count(5'd0),
+        .rd_en(pp_rd_en), .rd_bank_out(pp_rd_bank), .rd_addr(pp_rd_addr),
         .rd_data(pp_rd_data), .rd_valid(pp_rd_valid),
         .psum_top_data(psum_stream_data), .psum_top_valid(psum_stream_valid),
+        .psum_compute_ready(psum_stream_compute_ready),
+        .psum_underflow(), .psum_wait(),
         .pixel_addr(psum_pixel_addr)
     );
 

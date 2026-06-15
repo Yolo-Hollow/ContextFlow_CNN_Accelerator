@@ -109,6 +109,7 @@ set rtl_files {
     systolic/axis_ifm_vector_loader.v
     systolic/axis_hwc_tile_cache.v
     systolic/psum_pingpong_buffer.v
+    systolic/psum_output_collector.v
     systolic/psum_stream_feeder.v
     systolic/psum_drain_writer.v
     systolic/psum_packet_fifo.v

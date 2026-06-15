@@ -697,6 +697,44 @@ Compatibility checks run with the same RTL:
 - `tb_conv_accel_core_axi_lite_axis_stream_r18_c8_b2_conv5_ext_tail_cout16`:
   `227 pass, 0 fail`
 
+### Continuous PSUM collector experimental checks
+
+Purpose:
+
+- Verify the opt-in `STREAM_CFG[5]` continuous PSUM collector path.
+- Keep the default/legacy drain path available while exercising the backend
+  Conv5/Conv6/Conv8 raw-HWC path with overlap64, early drain, pass prefetch,
+  and partial-PSUM overlap.
+- Check the new explicit-BRAM ping-pong storage and the collector pass-context
+  FIFO before board implementation.
+
+Checks:
+
+- `tb_psum_output_collector`: context FIFO, column skew, non-final partial
+  packets, final packets, backpressure, and context-full stall accounting.
+- `tb_psum_pingpong_buffer_bram`: independent bank write/read behavior and
+  synchronous read latency.
+- `tb_layer_scheduler_continuous_psum`: collector context handoff and fallback
+  behavior when the collector is disabled.
+- Top external-golden xsim:
+  - `tb_conv_accel_core_axi_lite_axis_stream_conv5_3x3_raw_hwc_overlap64_ext_tile0_cout16`
+  - `tb_conv_accel_core_axi_lite_axis_stream_conv6_3x3_raw_hwc_ext_tile0_cout16`
+  - `tb_conv_accel_core_axi_lite_axis_stream_conv8_3x3_raw_hwc_ext_tile0_cout16`
+
+Current result:
+
+- Icarus selected regression passes for collector, BRAM, scheduler, config,
+  core, and top stream tests.
+- Vivado/xsim `2022.2` module-level selected regression passes.
+- Vivado/xsim `2022.2` Conv5/Conv6/Conv8 raw-HWC tile0 continuous PSUM tests
+  pass with `854 pass, 0 fail` each.
+- Vivado/xsim `2022.2` Conv5/Conv6/Conv8 raw-HWC tile3 continuous PSUM tests
+  pass with `230 pass, 0 fail` each; this covers the board-reproduced tail
+  tile mismatch caused by stale partial-PSUM bank credit.
+- Fixed build `D:/MPSoC/b_psumcollector_fix3_22` passes KV260 batch-chain and
+  two DDR image demos. Measured DDR totals are about `0.3713 s`; collector
+  context-full stall and PSUM-overlap underflow are both `0`.
+
 ## 回归命令
 
 单个 xsim 顶层：

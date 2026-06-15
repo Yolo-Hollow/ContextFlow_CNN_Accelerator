@@ -32,7 +32,8 @@
 //                        bit1 enables experimental raw-HWC IFM tile cache,
 //                        bit2 enables experimental early PSUM drain,
 //                        bit3 enables experimental next-pass prefetch,
-//                        bit4 enables experimental partial-PSUM overlap
+//                        bit4 enables experimental partial-PSUM overlap,
+//                        bit5 enables experimental continuous PSUM collector
 //   0x1a BIAS_PACKETS:   expected bias packets for the current tile
 //   0x1b WEIGHT_PACKETS: expected weight packets for the current tile
 //   0x1c IFM_PACKETS:    expected IFM line packets for the current tile
@@ -85,6 +86,14 @@
 //   0x4e PSUMOVL_WAIT_PSUM: cycles waiting for partial-PSUM lead
 //   0x4f PSUMOVL_UNDERFLOW: illegal partial-PSUM read attempts
 //   0x50 PSUMOVL_VERSION: fixed partial-PSUM overlap counter map version
+//   0x51 COLLECT_PACKET_FIRE: continuous collector packets accepted downstream
+//   0x52 COLLECT_PARTIAL_WRITE: continuous collector partial packets written to PSUM RAM
+//   0x53 COLLECT_FINAL_WRITE: continuous collector final packets sent toward OFM
+//   0x54 COLLECT_CONTEXT_PUSH: pass contexts accepted by collector
+//   0x55 COLLECT_CONTEXT_POP: pass contexts started by collector
+//   0x56 COLLECT_CONTEXT_FULL_STALL: cycles compute start waited for context space
+//   0x57 COLLECT_COLUMN_EMPTY_WAIT: collector cycles waiting for any column FIFO
+//   0x58 COLLECTPERF_VERSION: fixed continuous collector counter map version
 module layer_config_regs #(
     parameter IFM_FIFO_DEPTH = 1024,
     parameter [15:0] RAW_HWC_COMPUTE_START_LEVEL = 16'd0
@@ -141,6 +150,13 @@ module layer_config_regs #(
     input         perf_psumovl_hit,
     input         perf_psumovl_wait_psum,
     input         perf_psumovl_underflow,
+    input         perf_collect_packet_fire,
+    input         perf_collect_partial_write,
+    input         perf_collect_final_write,
+    input         perf_collect_context_push,
+    input         perf_collect_context_pop,
+    input         perf_collect_context_full_stall,
+    input         perf_collect_column_empty_wait,
     input  [31:0] stream_bias_completed,
     input  [31:0] stream_weight_completed,
     input  [31:0] stream_ifm_completed,
@@ -177,6 +193,7 @@ module layer_config_regs #(
     output reg        early_drain_enable,
     output reg        pass_prefetch_enable,
     output reg        psum_stream_overlap_enable,
+    output reg        continuous_psum_enable,
     output reg [31:0] stream_bias_packets,
     output reg [31:0] stream_weight_packets,
     output reg [31:0] stream_ifm_packets,
@@ -222,6 +239,13 @@ module layer_config_regs #(
     reg [31:0] perf_psumovl_hit_cycles;
     reg [31:0] perf_psumovl_wait_psum_cycles;
     reg [31:0] perf_psumovl_underflow_cycles;
+    reg [31:0] perf_collect_packet_fire_cycles;
+    reg [31:0] perf_collect_partial_write_cycles;
+    reg [31:0] perf_collect_final_write_cycles;
+    reg [31:0] perf_collect_context_push_cycles;
+    reg [31:0] perf_collect_context_pop_cycles;
+    reg [31:0] perf_collect_context_full_stall_cycles;
+    reg [31:0] perf_collect_column_empty_wait_cycles;
     wire cfg_idle = !layer_busy;
     wire perf_wait_any = perf_wait_bias || perf_wait_weight ||
                          perf_wait_ifm || perf_wait_ofm;
@@ -257,6 +281,7 @@ module layer_config_regs #(
             early_drain_enable <= 1'b0;
             pass_prefetch_enable <= 1'b0;
             psum_stream_overlap_enable <= 1'b0;
+            continuous_psum_enable <= 1'b0;
             stream_bias_packets <= 32'd0;
             stream_weight_packets <= 32'd0;
             stream_ifm_packets <= 32'd0;
@@ -300,6 +325,13 @@ module layer_config_regs #(
             perf_psumovl_hit_cycles <= 32'd0;
             perf_psumovl_wait_psum_cycles <= 32'd0;
             perf_psumovl_underflow_cycles <= 32'd0;
+            perf_collect_packet_fire_cycles <= 32'd0;
+            perf_collect_partial_write_cycles <= 32'd0;
+            perf_collect_final_write_cycles <= 32'd0;
+            perf_collect_context_push_cycles <= 32'd0;
+            perf_collect_context_pop_cycles <= 32'd0;
+            perf_collect_context_full_stall_cycles <= 32'd0;
+            perf_collect_column_empty_wait_cycles <= 32'd0;
         end else begin
             start_pulse <= 1'b0;
             if (layer_done)
@@ -379,6 +411,20 @@ module layer_config_regs #(
                     perf_psumovl_wait_psum_cycles <= perf_psumovl_wait_psum_cycles + 1'b1;
                 if (perf_psumovl_underflow)
                     perf_psumovl_underflow_cycles <= perf_psumovl_underflow_cycles + 1'b1;
+                if (perf_collect_packet_fire)
+                    perf_collect_packet_fire_cycles <= perf_collect_packet_fire_cycles + 1'b1;
+                if (perf_collect_partial_write)
+                    perf_collect_partial_write_cycles <= perf_collect_partial_write_cycles + 1'b1;
+                if (perf_collect_final_write)
+                    perf_collect_final_write_cycles <= perf_collect_final_write_cycles + 1'b1;
+                if (perf_collect_context_push)
+                    perf_collect_context_push_cycles <= perf_collect_context_push_cycles + 1'b1;
+                if (perf_collect_context_pop)
+                    perf_collect_context_pop_cycles <= perf_collect_context_pop_cycles + 1'b1;
+                if (perf_collect_context_full_stall)
+                    perf_collect_context_full_stall_cycles <= perf_collect_context_full_stall_cycles + 1'b1;
+                if (perf_collect_column_empty_wait)
+                    perf_collect_column_empty_wait_cycles <= perf_collect_column_empty_wait_cycles + 1'b1;
             end
 
             if (cfg_wr_en) begin
@@ -426,6 +472,13 @@ module layer_config_regs #(
                                 perf_psumovl_hit_cycles <= 32'd0;
                                 perf_psumovl_wait_psum_cycles <= 32'd0;
                                 perf_psumovl_underflow_cycles <= 32'd0;
+                                perf_collect_packet_fire_cycles <= 32'd0;
+                                perf_collect_partial_write_cycles <= 32'd0;
+                                perf_collect_final_write_cycles <= 32'd0;
+                                perf_collect_context_push_cycles <= 32'd0;
+                                perf_collect_context_pop_cycles <= 32'd0;
+                                perf_collect_context_full_stall_cycles <= 32'd0;
+                                perf_collect_column_empty_wait_cycles <= 32'd0;
                             end
                         end
                         if (cfg_wdata[1]) begin
@@ -479,6 +532,7 @@ module layer_config_regs #(
                             early_drain_enable <= cfg_wdata[2];
                             pass_prefetch_enable <= cfg_wdata[3];
                             psum_stream_overlap_enable <= cfg_wdata[4];
+                            continuous_psum_enable <= cfg_wdata[5];
                         end
                     end
                     7'h1a: if (cfg_idle) stream_bias_packets <= cfg_wdata;
@@ -521,7 +575,8 @@ module layer_config_regs #(
             7'h16: cfg_rdata = perf_wait_ifm_cycles;
             7'h17: cfg_rdata = perf_wait_ofm_cycles;
             7'h18: cfg_rdata = perf_compute_cycles;
-            7'h19: cfg_rdata = {27'd0, psum_stream_overlap_enable,
+            7'h19: cfg_rdata = {26'd0, continuous_psum_enable,
+                                psum_stream_overlap_enable,
                                 pass_prefetch_enable, early_drain_enable,
                                 stream_raw_hwc_mode, stream_batch_mode};
             7'h1a: cfg_rdata = stream_bias_packets;
@@ -575,6 +630,14 @@ module layer_config_regs #(
             7'h4e: cfg_rdata = perf_psumovl_wait_psum_cycles;
             7'h4f: cfg_rdata = perf_psumovl_underflow_cycles;
             7'h50: cfg_rdata = 32'd1;
+            7'h51: cfg_rdata = perf_collect_packet_fire_cycles;
+            7'h52: cfg_rdata = perf_collect_partial_write_cycles;
+            7'h53: cfg_rdata = perf_collect_final_write_cycles;
+            7'h54: cfg_rdata = perf_collect_context_push_cycles;
+            7'h55: cfg_rdata = perf_collect_context_pop_cycles;
+            7'h56: cfg_rdata = perf_collect_context_full_stall_cycles;
+            7'h57: cfg_rdata = perf_collect_column_empty_wait_cycles;
+            7'h58: cfg_rdata = 32'd1;
             default: cfg_rdata = 32'd0;
         endcase
     end

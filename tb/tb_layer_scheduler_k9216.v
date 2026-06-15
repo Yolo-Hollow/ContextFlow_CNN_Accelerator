@@ -71,6 +71,13 @@ module tb_layer_scheduler_k9216;
         .early_drain_enable(1'b0),
         .pass_prefetch_enable(1'b0),
         .psum_stream_overlap_enable(1'b0),
+        .continuous_psum_enable(1'b0),
+        .collector_ctx_ready(1'b1),
+        .collector_partial_credit(1'b0),
+        .collector_context_active(1'b0),
+        .collector_context_wr_bank(1'b0),
+        .collector_context_is_final(1'b0),
+        .collector_final_done(1'b0),
         .psum_drain_data_ready(1'b0),
         .psum_drain_packet_fire(1'b0),
         .compute_fire(1'b0),
@@ -81,7 +88,10 @@ module tb_layer_scheduler_k9216;
         .feeder_pass_base_k(),
         .perf_prefetch_start(), .perf_prefetch_weight_done(),
         .perf_prefetch_feed_done(), .perf_prefetch_hit(),
-        .perf_prefetch_miss(), .perf_prefetch_stall()
+        .perf_prefetch_miss(), .perf_prefetch_stall(),
+        .perf_psumovl_start(), .perf_psumovl_hit(), .perf_psumovl_wait_psum(),
+        .perf_stage_bias(), .perf_stage_weight(), .perf_stage_feeder(),
+        .perf_stage_compute(), .perf_stage_drain()
     );
 
     always #5 clk = ~clk;

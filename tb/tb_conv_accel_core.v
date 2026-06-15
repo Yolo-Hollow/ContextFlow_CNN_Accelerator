@@ -313,11 +313,11 @@ module tb_conv_accel_core;
         repeat (3) @(negedge clk);
         rst = 0;
         repeat (2) @(negedge clk);
-        quant_write(0, 16'd1, 4'd0, 8'd0);
-        quant_write(7, 16'd1, 4'd0, 8'd0);
+        for (co = 0; co < COUT_TILE; co = co + 1)
+            quant_write(co, 16'd32768, 4'd0, 8'd0);
         quant_rd_addr = 6'd7;
         #1;
-        if (quant_rd_data !== {8'd0, 4'd0, 4'd0, 16'd1}) begin
+        if (quant_rd_data !== {8'd0, 4'd0, 4'd0, 16'd32768}) begin
             $display("[FAIL] quant rd got=%h", quant_rd_data);
             fail = fail + 1;
         end else pass = pass + 1;

@@ -10,6 +10,7 @@ param(
     [switch]$EarlyDrain,
     [switch]$PassPrefetch,
     [switch]$PsumStreamOverlap,
+    [switch]$ContinuousPsum,
     [switch]$TilePerfTrace,
     [int]$RawHwcComputeStartLevel = 0,
     [int]$TailCyclesOverride = 0
@@ -74,6 +75,9 @@ if ($PassPrefetch) {
 }
 if ($PsumStreamOverlap) {
     $Defines += "-DACCEL_PSUM_STREAM_OVERLAP=1"
+}
+if ($ContinuousPsum) {
+    $Defines += "-DACCEL_CONTINUOUS_PSUM=1"
 }
 $Source = Join-Path $AppSrcDir "main.c"
 if ($Mode -eq "conv0_crop_pool" -or $Mode -eq "conv0_crop_pool_tiles") {
@@ -388,6 +392,9 @@ if ($Mode -eq "conv0_conv9_batch_chain" -or $Mode -eq "conv0_conv9_ddr_demo") {
     }
     if ($PsumStreamOverlap) {
         $VariantTags += "psum_stream_overlap"
+    }
+    if ($ContinuousPsum) {
+        $VariantTags += "continuous_psum"
     }
     if ($VariantTags.Count -gt 0) {
         $VariantName = "raw_hwc_" + ($VariantTags -join "_")

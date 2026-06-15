@@ -20,6 +20,11 @@ module tb_layer_config_regs;
     reg perf_drain_ready_stall, perf_drain_internal_full_wait;
     reg perf_prefetch_start, perf_prefetch_weight_done, perf_prefetch_feed_done;
     reg perf_prefetch_hit, perf_prefetch_miss, perf_prefetch_stall;
+    reg perf_psumovl_start, perf_psumovl_hit, perf_psumovl_wait_psum;
+    reg perf_psumovl_underflow;
+    reg perf_collect_packet_fire, perf_collect_partial_write, perf_collect_final_write;
+    reg perf_collect_context_push, perf_collect_context_pop;
+    reg perf_collect_context_full_stall, perf_collect_column_empty_wait;
     reg [31:0] stream_bias_completed;
     reg [31:0] stream_weight_completed;
     reg [31:0] stream_ifm_completed;
@@ -49,6 +54,8 @@ module tb_layer_config_regs;
     wire stream_raw_hwc_mode;
     wire early_drain_enable;
     wire pass_prefetch_enable;
+    wire psum_stream_overlap_enable;
+    wire continuous_psum_enable;
     wire [31:0] stream_bias_packets;
     wire [31:0] stream_weight_packets;
     wire [31:0] stream_ifm_packets;
@@ -98,6 +105,17 @@ module tb_layer_config_regs;
         .perf_prefetch_hit(perf_prefetch_hit),
         .perf_prefetch_miss(perf_prefetch_miss),
         .perf_prefetch_stall(perf_prefetch_stall),
+        .perf_psumovl_start(perf_psumovl_start),
+        .perf_psumovl_hit(perf_psumovl_hit),
+        .perf_psumovl_wait_psum(perf_psumovl_wait_psum),
+        .perf_psumovl_underflow(perf_psumovl_underflow),
+        .perf_collect_packet_fire(perf_collect_packet_fire),
+        .perf_collect_partial_write(perf_collect_partial_write),
+        .perf_collect_final_write(perf_collect_final_write),
+        .perf_collect_context_push(perf_collect_context_push),
+        .perf_collect_context_pop(perf_collect_context_pop),
+        .perf_collect_context_full_stall(perf_collect_context_full_stall),
+        .perf_collect_column_empty_wait(perf_collect_column_empty_wait),
         .stream_bias_completed(stream_bias_completed),
         .stream_weight_completed(stream_weight_completed),
         .stream_ifm_completed(stream_ifm_completed),
@@ -123,6 +141,8 @@ module tb_layer_config_regs;
         .stream_raw_hwc_mode(stream_raw_hwc_mode),
         .early_drain_enable(early_drain_enable),
         .pass_prefetch_enable(pass_prefetch_enable),
+        .psum_stream_overlap_enable(psum_stream_overlap_enable),
+        .continuous_psum_enable(continuous_psum_enable),
         .stream_bias_packets(stream_bias_packets),
         .stream_weight_packets(stream_weight_packets),
         .stream_ifm_packets(stream_ifm_packets),
@@ -208,6 +228,17 @@ module tb_layer_config_regs;
         perf_prefetch_hit = 0;
         perf_prefetch_miss = 0;
         perf_prefetch_stall = 0;
+        perf_psumovl_start = 0;
+        perf_psumovl_hit = 0;
+        perf_psumovl_wait_psum = 0;
+        perf_psumovl_underflow = 0;
+        perf_collect_packet_fire = 0;
+        perf_collect_partial_write = 0;
+        perf_collect_final_write = 0;
+        perf_collect_context_push = 0;
+        perf_collect_context_pop = 0;
+        perf_collect_context_full_stall = 0;
+        perf_collect_column_empty_wait = 0;
         stream_bias_completed = 32'd7;
         stream_weight_completed = 32'd11;
         stream_ifm_completed = 32'd13;
@@ -237,7 +268,7 @@ module tb_layer_config_regs;
         write_reg(6'h09, 32'd6);
         write_reg(6'h0f, 32'd36);
         write_reg(6'h10, {28'd0, 2'd2, 1'b0, 1'b1});
-        write_reg(6'h19, 32'd15);
+        write_reg(6'h19, 32'd63);
         write_reg(6'h1a, 32'd7);
         write_reg(6'h1b, 32'd11);
         write_reg(6'h1c, 32'd13);
@@ -263,6 +294,8 @@ module tb_layer_config_regs;
         check_value(stream_raw_hwc_mode, 1, "stream raw hwc mode");
         check_value(early_drain_enable, 1, "early drain enable");
         check_value(pass_prefetch_enable, 1, "pass prefetch enable");
+        check_value(psum_stream_overlap_enable, 1, "psum stream overlap enable");
+        check_value(continuous_psum_enable, 1, "continuous psum enable");
         check_value(stream_bias_packets, 7, "stream bias packets");
         check_value(stream_weight_packets, 11, "stream weight packets");
         check_value(stream_ifm_packets, 13, "stream ifm packets");
@@ -365,6 +398,17 @@ module tb_layer_config_regs;
         perf_prefetch_hit = 1'b1;
         perf_prefetch_miss = 1'b1;
         perf_prefetch_stall = 1'b1;
+        perf_psumovl_start = 1'b1;
+        perf_psumovl_hit = 1'b1;
+        perf_psumovl_wait_psum = 1'b1;
+        perf_psumovl_underflow = 1'b1;
+        perf_collect_packet_fire = 1'b1;
+        perf_collect_partial_write = 1'b1;
+        perf_collect_final_write = 1'b1;
+        perf_collect_context_push = 1'b1;
+        perf_collect_context_pop = 1'b1;
+        perf_collect_context_full_stall = 1'b1;
+        perf_collect_column_empty_wait = 1'b1;
         repeat (2) @(posedge clk);
         @(negedge clk);
         layer_busy = 1'b0;
@@ -385,6 +429,17 @@ module tb_layer_config_regs;
         perf_prefetch_hit = 1'b0;
         perf_prefetch_miss = 1'b0;
         perf_prefetch_stall = 1'b0;
+        perf_psumovl_start = 1'b0;
+        perf_psumovl_hit = 1'b0;
+        perf_psumovl_wait_psum = 1'b0;
+        perf_psumovl_underflow = 1'b0;
+        perf_collect_packet_fire = 1'b0;
+        perf_collect_partial_write = 1'b0;
+        perf_collect_final_write = 1'b0;
+        perf_collect_context_push = 1'b0;
+        perf_collect_context_pop = 1'b0;
+        perf_collect_context_full_stall = 1'b0;
+        perf_collect_column_empty_wait = 1'b0;
         cfg_addr = 6'h12;
         #1;
         check_value(cfg_rdata, 5, "perf busy cycles");
@@ -487,6 +542,45 @@ module tb_layer_config_regs;
         cfg_addr = 7'h4b;
         #1;
         check_value(cfg_rdata, 1, "prefetchperf version");
+        cfg_addr = 7'h4c;
+        #1;
+        check_value(cfg_rdata, 2, "psumovl start cycles");
+        cfg_addr = 7'h4d;
+        #1;
+        check_value(cfg_rdata, 2, "psumovl hit cycles");
+        cfg_addr = 7'h4e;
+        #1;
+        check_value(cfg_rdata, 2, "psumovl wait cycles");
+        cfg_addr = 7'h4f;
+        #1;
+        check_value(cfg_rdata, 2, "psumovl underflow cycles");
+        cfg_addr = 7'h50;
+        #1;
+        check_value(cfg_rdata, 1, "psumovl version");
+        cfg_addr = 7'h51;
+        #1;
+        check_value(cfg_rdata, 2, "collect packet fire cycles");
+        cfg_addr = 7'h52;
+        #1;
+        check_value(cfg_rdata, 2, "collect partial write cycles");
+        cfg_addr = 7'h53;
+        #1;
+        check_value(cfg_rdata, 2, "collect final write cycles");
+        cfg_addr = 7'h54;
+        #1;
+        check_value(cfg_rdata, 2, "collect context push cycles");
+        cfg_addr = 7'h55;
+        #1;
+        check_value(cfg_rdata, 2, "collect context pop cycles");
+        cfg_addr = 7'h56;
+        #1;
+        check_value(cfg_rdata, 2, "collect context full stall cycles");
+        cfg_addr = 7'h57;
+        #1;
+        check_value(cfg_rdata, 2, "collect column empty wait cycles");
+        cfg_addr = 7'h58;
+        #1;
+        check_value(cfg_rdata, 1, "collectperf version");
 
         @(negedge clk);
         layer_done = 1'b1;
@@ -534,6 +628,8 @@ module tb_layer_config_regs;
         check_value(stream_raw_hwc_mode, 1, "busy freeze raw hwc mode");
         check_value(early_drain_enable, 1, "busy freeze early drain mode");
         check_value(pass_prefetch_enable, 1, "busy freeze pass prefetch mode");
+        check_value(psum_stream_overlap_enable, 1, "busy freeze psum overlap mode");
+        check_value(continuous_psum_enable, 1, "busy freeze continuous psum mode");
         check_value(stream_bias_packets, 7, "busy freeze bias packets");
         check_value(stream_weight_packets, 11, "busy freeze weight packets");
         check_value(stream_ifm_packets, 13, "busy freeze ifm packets");
@@ -563,6 +659,9 @@ module tb_layer_config_regs;
         cfg_addr = 7'h45;
         #1;
         check_value(cfg_rdata, 0, "start clears prefetch counters");
+        cfg_addr = 7'h51;
+        #1;
+        check_value(cfg_rdata, 0, "start clears collect counters");
 
         write_reg(6'h00, 32'd2);
         write_reg(6'h03, {15'd0, 1'b1, 6'd0, 2'd0, 6'd0, 2'd1});

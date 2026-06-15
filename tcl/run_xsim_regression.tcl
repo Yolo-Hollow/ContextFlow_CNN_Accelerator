@@ -10,6 +10,7 @@ set raw_hwc_compute_start_level 0
 set early_drain 0
 set pass_prefetch 0
 set psum_stream_overlap 0
+set continuous_psum 0
 for {set i 0} {$i < [llength $argv]} {incr i} {
     set arg [lindex $argv $i]
     if {$arg eq "-top"} {
@@ -37,6 +38,8 @@ for {set i 0} {$i < [llength $argv]} {incr i} {
         set pass_prefetch 1
     } elseif {$arg eq "-psum_stream_overlap"} {
         set psum_stream_overlap 1
+    } elseif {$arg eq "-continuous_psum"} {
+        set continuous_psum 1
     } else {
         error "unknown argument: $arg"
     }
@@ -65,6 +68,7 @@ set common_files {
     systolic/axis_ifm_vector_loader.v
     systolic/axis_hwc_tile_cache.v
     systolic/psum_pingpong_buffer.v
+    systolic/psum_output_collector.v
     systolic/psum_stream_feeder.v
     systolic/psum_drain_writer.v
     systolic/psum_packet_fifo.v
@@ -107,6 +111,7 @@ set tests {
     {tb_layer_scheduler_early_drain tb/tb_layer_scheduler_early_drain.v}
     {tb_layer_scheduler_pass_prefetch tb/tb_layer_scheduler_pass_prefetch.v}
     {tb_layer_scheduler_psum_overlap tb/tb_layer_scheduler_psum_overlap.v}
+    {tb_layer_scheduler_continuous_psum tb/tb_layer_scheduler_continuous_psum.v}
     {tb_layer_scheduler_k9216 tb/tb_layer_scheduler_k9216.v}
     {tb_conv_accel_core_cout64_fulltile tb/tb_conv_accel_core_cout64_fulltile.v}
     {tb_conv_accel_core_cout128_blocks tb/tb_conv_accel_core_cout128_blocks.v}
@@ -175,6 +180,8 @@ set tests {
     {tb_axis_ifm_line_loader tb/tb_axis_ifm_line_loader.v}
     {tb_axis_ifm_vector_loader tb/tb_axis_ifm_vector_loader.v}
     {tb_axis_hwc_tile_cache tb/tb_axis_hwc_tile_cache.v}
+    {tb_psum_pingpong_buffer_bram tb/tb_psum_pingpong_buffer_bram.v}
+    {tb_psum_output_collector tb/tb_psum_output_collector.v}
     {tb_ifm_fill_handshake tb/tb_ifm_fill_handshake.v}
     {tb_window_extract tb/tb_window_extract.v}
     {tb_axis_bias_weight_loader tb/tb_axis_bias_weight_loader.v}
@@ -252,6 +259,9 @@ foreach test $tests {
     }
     if {$psum_stream_overlap != 0} {
         puts $fh "`define TB_PSUM_STREAM_OVERLAP_OVERRIDE 1"
+    }
+    if {$continuous_psum != 0} {
+        puts $fh "`define TB_CONTINUOUS_PSUM_OVERRIDE 1"
     }
     close $fh
     exec {*}$xvlog -sv -L work -i [file join $root tb] -log $xvlog_log {*}$srcs >@ stdout 2>@ stderr

@@ -174,6 +174,13 @@ module conv_accel_core #(
     wire perf_psumovl_hit;
     wire perf_psumovl_wait_psum;
     wire perf_psumovl_underflow;
+    wire perf_collect_packet_fire;
+    wire perf_collect_partial_write;
+    wire perf_collect_final_write;
+    wire perf_collect_context_push;
+    wire perf_collect_context_pop;
+    wire perf_collect_context_full_stall;
+    wire perf_collect_column_empty_wait;
     wire [31:0] layer_cfg_rdata;
     wire [8:0] fm_h;
     wire [8:0] fm_w;
@@ -198,6 +205,7 @@ module conv_accel_core #(
     wire early_drain_enable;
     wire pass_prefetch_enable;
     wire psum_stream_overlap_enable;
+    wire continuous_psum_enable;
     wire [31:0] stream_bias_packets;
     wire [31:0] stream_weight_packets;
     wire [31:0] stream_ifm_packets;
@@ -322,6 +330,13 @@ module conv_accel_core #(
         .perf_psumovl_hit(perf_psumovl_hit),
         .perf_psumovl_wait_psum(perf_psumovl_wait_psum),
         .perf_psumovl_underflow(perf_psumovl_underflow),
+        .perf_collect_packet_fire(perf_collect_packet_fire),
+        .perf_collect_partial_write(perf_collect_partial_write),
+        .perf_collect_final_write(perf_collect_final_write),
+        .perf_collect_context_push(perf_collect_context_push),
+        .perf_collect_context_pop(perf_collect_context_pop),
+        .perf_collect_context_full_stall(perf_collect_context_full_stall),
+        .perf_collect_column_empty_wait(perf_collect_column_empty_wait),
         .stream_bias_completed(stream_bias_completed),
         .stream_weight_completed(stream_weight_completed),
         .stream_ifm_completed(stream_ifm_completed),
@@ -348,6 +363,7 @@ module conv_accel_core #(
         .early_drain_enable(early_drain_enable),
         .pass_prefetch_enable(pass_prefetch_enable),
         .psum_stream_overlap_enable(psum_stream_overlap_enable),
+        .continuous_psum_enable(continuous_psum_enable),
         .stream_bias_packets(stream_bias_packets),
         .stream_weight_packets(stream_weight_packets),
         .stream_ifm_packets(stream_ifm_packets),
@@ -410,6 +426,13 @@ module conv_accel_core #(
         .perf_psumovl_hit(perf_psumovl_hit),
         .perf_psumovl_wait_psum(perf_psumovl_wait_psum),
         .perf_psumovl_underflow(perf_psumovl_underflow),
+        .perf_collect_packet_fire(perf_collect_packet_fire),
+        .perf_collect_partial_write(perf_collect_partial_write),
+        .perf_collect_final_write(perf_collect_final_write),
+        .perf_collect_context_push(perf_collect_context_push),
+        .perf_collect_context_pop(perf_collect_context_pop),
+        .perf_collect_context_full_stall(perf_collect_context_full_stall),
+        .perf_collect_column_empty_wait(perf_collect_column_empty_wait),
         .fm_h(fm_h), .fm_w(fm_w), .ofm_h(ofm_h), .ofm_w(ofm_w),
         .conv_stride(conv_stride), .conv_pad(conv_pad), .kernel_1x1(kernel_1x1),
         .stream_raw_hwc_mode(stream_raw_hwc_mode),
@@ -419,6 +442,7 @@ module conv_accel_core #(
         .early_drain_enable(early_drain_enable),
         .pass_prefetch_enable(pass_prefetch_enable),
         .psum_stream_overlap_enable(psum_stream_overlap_enable),
+        .continuous_psum_enable(continuous_psum_enable),
         .tile_oy_base(tile_oy_base), .tile_ofm_h(tile_ofm_h),
         .tile_pixel_base(tile_pixel_base_ext),
         .pool_enable(pool_enable), .pool_stride(pool_stride),

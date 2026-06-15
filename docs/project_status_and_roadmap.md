@@ -748,3 +748,139 @@ drain_residual = STAGE_DRAIN
   is full programming, batch-chain bit-exact validation, and two-image DDR
   demo measurement. If the measured gain is small, the LUT-heavy PSUM storage
   should be redesigned as explicit dual-bank BRAM before keeping this mode.
+
+## 24. 2026-06-15 experimental continuous PSUM collector
+
+- Added opt-in `STREAM_CFG[5] = continuous_psum_enable`; reset/default remains
+  `0`, preserving the current board-validated pass-prefetch / partial-overlap
+  path unless software explicitly builds with `-ContinuousPsum`.
+- The prototype targets the same backend path as the previous overlap work:
+  Conv5/Conv6/Conv8 raw-HWC with `RawHwcComputeStartLevel=64`, `-EarlyDrain`,
+  `-PassPrefetch`, and `-PsumStreamOverlap`. It does not change DMA packet
+  formats, raw-HWC tile layout, OFM packet order, quantization, or the software
+  layer schedule.
+- Added `psum_output_collector`. The scheduler pushes one pass context at each
+  compute start. The collector consumes per-column PSUM FIFOs, groups one full
+  `COLS*2` PSUM packet per pixel, and keeps running across pass boundaries.
+  Non-final packets write partial sums directly into the ping-pong PSUM RAM;
+  final packets continue through the existing requant / activation / OFM path.
+- The ping-pong partial-PSUM storage has been rewritten as explicit dual banks
+  split into 64-bit lanes with `ram_style="block"`. This is intended to move
+  the heavy concurrent PSUM storage away from LUT memory in the next
+  implementation.
+- Added read-only `COLLECTPERF` counters at byte offsets `0x144..0x160`:
+  packet_fire, partial_write, final_write, context_push, context_pop,
+  context_full_stall, column_empty_wait, and version. Vitis prints
+  `COLLECTPERF layer=...`, and `tools/demo/summarize_uart_perf.py` parses the
+  line.
+- Local validation completed so far:
+
+  ```text
+  Icarus: tb_conv_layer_top_stream, tb_conv_accel_core,
+          tb_layer_config_regs, tb_axi_lite_cfg_bridge,
+          tb_layer_scheduler_continuous_psum,
+          tb_layer_scheduler_pass_prefetch,
+          tb_layer_scheduler_psum_overlap,
+          tb_psum_output_collector,
+          tb_psum_pingpong_buffer_bram PASS
+
+  xsim 2022.2: module-level collector / BRAM / scheduler / config tests PASS
+  xsim 2022.2: Conv5 raw-HWC tile0 continuous PSUM PASS, 854/0
+  xsim 2022.2: Conv6 raw-HWC tile0 continuous PSUM PASS, 854/0
+  xsim 2022.2: Conv8 raw-HWC tile0 continuous PSUM PASS, 854/0
+  Vitis 2022.2: batch-chain and DDR-demo experimental ELFs build
+  Python: UART performance parser COLLECTPERF parsing PASS
+  ```
+
+- Important correctness fix during this prototype: ping-pong RAM writes now use
+  the selected drain/collector packet's `wr_bank`. The continuous collector
+  carries its own pass-context bank, while the legacy path still uses the
+  scheduler drain bank.
+- Vivado `2022.2` synthesis and implementation completed in
+  `D:/MPSoC/b_psumcollector_22` with the current production parameters:
+  `ROWS=18`, `COLS=8`, `IFM_BANKS=2`, `HWC_CACHE_AW=14`,
+  `HWC_CACHE_DEPTH=13312`, `HWC_CACHE_STRIPES=4`,
+  `HWC_CACHE_USE_URAM=1`, and `TAIL_CYCLES_CONFIG=1`.
+- Final implementation meets timing:
+  `WNS=+0.212 ns`, `TNS=0`, `WHS=+0.010 ns`, and `THS=0`.
+  Route status reports `94545` fully routed nets and `0` routing errors.
+- Final resources are `56618 LUT`, `48993 FF`, `63 BRAM`, `8 URAM`, and
+  `183 DSP`. `LUT as Memory` is `16570` (`5500` distributed RAM and `11070`
+  shift-register LUTs). This is a large improvement over the previous
+  `b_psumovl_22` result (`78900 LUT`, `31 BRAM`, and a LUT-heavy `u_pp`),
+  but it does not yet meet the aggressive `<8000` LUT-memory target. The
+  rewritten ping-pong PSUM buffer is now reported as `32` BRAM with only about
+  `513` LUT, so the remaining LUT-memory cost is mainly outside the partial
+  PSUM RAM.
+- Artifact hashes:
+
+  ```text
+  bit 9E27106EA86106164C522A1F9AE3FAB646D9041D90D59C4E2DF4071C8F939186
+  xsa 973E7C98E137589D5C53FAE40DE2450F6F26E4BF4B77B220489F9494C4799B66
+  ```
+
+- The first board validation of `D:/MPSoC/b_psumcollector_22` exposed a real
+  correctness bug in Conv5 tail tile 3:
+
+  ```text
+  conv5 mismatch_count=5303 max_abs_diff=34 total=86528
+  first mismatch byte=79873 pixel=156 oy=12 ox=0 oc=1 got=19 exp=17
+  ```
+
+  The failure reproduced in xsim only with `continuous_psum_enable=1`; the
+  same tail tile passed with continuous PSUM disabled. Root cause: the
+  per-bank partial-PSUM availability counters could retain stale credit when a
+  non-final continuous-collector pass reused a ping-pong bank. The next pass
+  could therefore read old partial data before the collector wrote the first
+  packet of the new context.
+- Fixed by clearing the selected PSUM availability counter at each non-final
+  compute start in continuous mode. Additional protection wires the collector's
+  active context bank back into the scheduler so the scheduler can avoid
+  starting a next pass that would collide with an active collector context.
+- Re-validation after the fix:
+
+  ```text
+  xsim 2022.2 Conv5 tile0 continuous PSUM PASS, 854/0
+  xsim 2022.2 Conv5 tile3 continuous PSUM PASS, 230/0
+  xsim 2022.2 Conv6 tile0 continuous PSUM PASS, 854/0
+  xsim 2022.2 Conv6 tile3 continuous PSUM PASS, 230/0
+  xsim 2022.2 Conv8 tile0 continuous PSUM PASS, 854/0
+  xsim 2022.2 Conv8 tile3 continuous PSUM PASS, 230/0
+  Icarus selected regression PASS
+  ```
+- Vivado `2022.2` implementation of the fixed design completed in
+  `D:/MPSoC/b_psumcollector_fix3_22`. The Vivado batch run had to use
+  `C:/Xilinx/Vivado/2022.2/scripts/ipintegrator` as working directory to avoid
+  a Vivado 2022.2 BD rule initialization issue observed when launching from
+  the repository directory.
+- Final fixed implementation meets timing:
+
+  ```text
+  WNS=+0.165 ns, TNS=0, WHS=+0.010 ns, THS=0
+  routing errors=0
+  LUT=56442, FF=49000, BRAM=63, URAM=8, DSP=183
+  LUT as Memory=16530
+  bit SHA256=1E0255EA61AEBF28C01DC72386B398ABAE000193EA840C217CAAD5BC6437248D
+  XSA SHA256=40424070EDC08B05BDA56FE2295A2D5F3520E4F425559E2693F9B49185E1562A
+  ```
+- Fixed board validation passed:
+
+  ```text
+  build: D:/MPSoC/b_psumcollector_fix3_22
+  batch-chain log: 20260615_081758_conv0_conv9_batch_chain_COM8.log
+  DDR image0 log:  20260615_082040_conv0_conv9_ddr_demo_COM8.log
+  DDR image1 log:  20260615_082302_conv0_conv9_ddr_demo_COM8.log
+  batch-chain: PASS, RTL golden and YOLO decode match
+  image0: PASS, with_mask score=0.357321
+  image1: PASS, with_mask score=0.295050
+  DDR image0 total=0.371271 s
+  DDR image1 total=0.371314 s
+  ```
+
+  `COLLECTPERF` reports `context_full_stall=0`, `PREFETCHPERF` hit rate is
+  `100%`, and `PSUMOVLPERF underflow=0`. Relative to the previous
+  `b_psumovl_credit1_22` board baseline of about `374.36 ms`, the fixed
+  continuous collector is functionally correct but only slightly faster
+  (`~371.3 ms`). The collector mainly removes the explicit final drain stage
+  for raw-HWC Conv5/6/8, while the dominant remaining time is still
+  `compute_stage` plus feeder/replay activity.

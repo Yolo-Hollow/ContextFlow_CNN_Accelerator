@@ -73,6 +73,13 @@ module conv_layer_top_stream #(
     output perf_psumovl_hit,
     output perf_psumovl_wait_psum,
     output perf_psumovl_underflow,
+    output perf_collect_packet_fire,
+    output perf_collect_partial_write,
+    output perf_collect_final_write,
+    output perf_collect_context_push,
+    output perf_collect_context_pop,
+    output perf_collect_context_full_stall,
+    output perf_collect_column_empty_wait,
 
     input  [8:0] fm_h,
     input  [8:0] fm_w,
@@ -90,6 +97,7 @@ module conv_layer_top_stream #(
     input         early_drain_enable,
     input         pass_prefetch_enable,
     input         psum_stream_overlap_enable,
+    input         continuous_psum_enable,
     input  [8:0] tile_oy_base,
     input  [8:0] tile_ofm_h,
     input  [OFM_ADDR_W-1:0] tile_pixel_base,
@@ -179,6 +187,8 @@ module conv_layer_top_stream #(
     wire compute_fire;
     wire drain_done;
     wire [31:0] psum_fifo_rd_en;
+    wire [31:0] legacy_psum_fifo_rd_en;
+    wire [31:0] collector_psum_fifo_rd_en;
     wire [COLS*PSUM_W*2-1:0] psum_fifo_rd_data;
     wire [31:0] psum_fifo_empty;
     wire [31:0] psum_col_mask = (32'h1 << COLS) - 1;
@@ -188,7 +198,15 @@ module conv_layer_top_stream #(
     wire [PSUM_BUF_AW-1:0] drain_packet_addr;
     wire [COLS*2*PSUM_W-1:0] drain_packet_data;
     wire drain_packet_is_final;
+    wire drain_packet_wr_bank;
+    wire [10:0] drain_packet_cout_base;
+    wire [10:0] drain_packet_cout_valid;
     wire drain_packet_fire;
+    wire legacy_drain_packet_valid;
+    wire [PSUM_BUF_AW-1:0] legacy_drain_packet_addr;
+    wire [COLS*2*PSUM_W-1:0] legacy_drain_packet_data;
+    wire legacy_drain_packet_is_final;
+    wire legacy_drain_packet_fire;
     wire drain_read_fire;
     wire drain_ready_stall;
     wire drain_internal_full_wait;
@@ -208,6 +226,27 @@ module conv_layer_top_stream #(
     wire rq_fifo_full;
     wire rq_in_ready;
     wire act_in_ready;
+    wire collector_ctx_ready;
+    wire collector_context_start;
+    wire collector_context_done;
+    wire collector_partial_done;
+    wire collector_final_done;
+    wire collector_context_active;
+    wire collector_context_wr_bank;
+    wire collector_context_is_final;
+    wire collector_packet_valid;
+    wire [PSUM_BUF_AW-1:0] collector_packet_addr;
+    wire [COLS*2*PSUM_W-1:0] collector_packet_data;
+    wire collector_packet_is_final;
+    wire collector_packet_wr_bank;
+    wire [10:0] collector_packet_cout_base;
+    wire [10:0] collector_packet_cout_valid;
+    wire collector_packet_ready =
+        !collector_packet_is_final || final_fifo_ready;
+    reg [PSUM_BUF_AW:0] psum_available_count0;
+    reg [PSUM_BUF_AW:0] psum_available_count1;
+    reg active_drain_wr_bank;
+    reg [PSUM_BUF_AW:0] active_drain_num_pixels;
 
     assign current_cout_base = sched_cout_base;
     assign current_pass_base_k = sched_pass_base_k;
@@ -240,6 +279,15 @@ module conv_layer_top_stream #(
         .early_drain_enable(early_drain_enable),
         .pass_prefetch_enable(pass_prefetch_enable),
         .psum_stream_overlap_enable(psum_stream_overlap_enable),
+        .continuous_psum_enable(continuous_psum_enable),
+        .collector_ctx_ready(collector_ctx_ready),
+        .collector_partial_credit(
+            sched_psum_wr_bank ? (psum_available_count1 != 0) :
+                                 (psum_available_count0 != 0)),
+        .collector_context_active(collector_context_active),
+        .collector_context_wr_bank(collector_context_wr_bank),
+        .collector_context_is_final(collector_context_is_final),
+        .collector_final_done(collector_final_done),
         .psum_drain_data_ready(psum_drain_data_ready),
         .psum_drain_packet_fire(drain_packet_fire),
         .compute_fire(compute_fire),
@@ -361,7 +409,29 @@ module conv_layer_top_stream #(
     assign perf_compute_fire = compute_fire;
     wire [ROWS-1:0] ifm_fifo_full;
 
+    assign psum_fifo_rd_en = continuous_psum_enable ?
+        collector_psum_fifo_rd_en : legacy_psum_fifo_rd_en;
+
+    assign drain_packet_valid = continuous_psum_enable ?
+        collector_packet_valid : legacy_drain_packet_valid;
+    assign drain_packet_addr = continuous_psum_enable ?
+        collector_packet_addr : legacy_drain_packet_addr;
+    assign drain_packet_data = continuous_psum_enable ?
+        collector_packet_data : legacy_drain_packet_data;
+    assign drain_packet_is_final = continuous_psum_enable ?
+        collector_packet_is_final : legacy_drain_packet_is_final;
+    assign drain_packet_wr_bank = continuous_psum_enable ?
+        collector_packet_wr_bank : active_drain_wr_bank;
+    assign drain_packet_cout_base = continuous_psum_enable ?
+        collector_packet_cout_base : sched_cout_base;
+    assign drain_packet_cout_valid = continuous_psum_enable ?
+        collector_packet_cout_valid : sched_cout_valid;
+    assign drain_packet_fire = drain_packet_valid && drain_packet_ready;
+    assign legacy_drain_packet_fire =
+        legacy_drain_packet_valid && drain_packet_ready;
+
     wire pp_wr_en = drain_packet_fire && !drain_packet_is_final;
+    wire pp_wr_bank = drain_packet_wr_bank;
     wire [PSUM_BUF_AW-1:0] pp_wr_addr = drain_packet_addr;
     wire [COLS*2*PSUM_W-1:0] pp_wr_data = drain_packet_data;
     wire pp_rd_en;
@@ -369,14 +439,12 @@ module conv_layer_top_stream #(
     wire [PSUM_BUF_AW-1:0] pp_rd_addr;
     wire [COLS*2*PSUM_W-1:0] pp_rd_data;
     wire pp_rd_valid;
-    reg active_drain_wr_bank;
-    reg [PSUM_BUF_AW:0] active_drain_num_pixels;
-    reg [PSUM_BUF_AW:0] psum_available_count0;
-    reg [PSUM_BUF_AW:0] psum_available_count1;
     wire [PSUM_BUF_AW:0] psum_stream_available_count =
         sched_psum_rd_bank ? psum_available_count1 : psum_available_count0;
     wire [PSUM_BUF_AW:0] sched_num_pixels_ext =
         {1'b0, sched_num_pixels[PSUM_BUF_AW-1:0]};
+    wire [PSUM_BUF_AW:0] psum_count_max =
+        {1'b1, {PSUM_BUF_AW{1'b0}}};
 
     assign perf_psumovl_underflow = psum_stream_underflow;
 
@@ -387,22 +455,42 @@ module conv_layer_top_stream #(
             psum_available_count0 <= {(PSUM_BUF_AW+1){1'b0}};
             psum_available_count1 <= {(PSUM_BUF_AW+1){1'b0}};
         end else begin
-            if (sched_drain_start) begin
+            if (!continuous_psum_enable && sched_drain_start) begin
                 active_drain_wr_bank <= sched_psum_wr_bank;
                 active_drain_num_pixels <= sched_num_pixels_ext;
             end
-            if (sched_drain_start && !sched_final_pass) begin
+            if (!continuous_psum_enable &&
+                sched_drain_start && !sched_final_pass) begin
+                if (sched_psum_wr_bank)
+                    psum_available_count1 <= {(PSUM_BUF_AW+1){1'b0}};
+                else
+                    psum_available_count0 <= {(PSUM_BUF_AW+1){1'b0}};
+            end
+            if (continuous_psum_enable &&
+                sched_compute_start && !sched_final_pass) begin
                 if (sched_psum_wr_bank)
                     psum_available_count1 <= {(PSUM_BUF_AW+1){1'b0}};
                 else
                     psum_available_count0 <= {(PSUM_BUF_AW+1){1'b0}};
             end
             if (pp_wr_en) begin
-                if (active_drain_wr_bank) begin
-                    if (psum_available_count1 < active_drain_num_pixels)
+                if (drain_packet_wr_bank) begin
+                    if (continuous_psum_enable &&
+                        drain_packet_addr == {PSUM_BUF_AW{1'b0}})
+                        psum_available_count1 <= {{PSUM_BUF_AW{1'b0}}, 1'b1};
+                    else if (continuous_psum_enable) begin
+                        if (psum_available_count1 < psum_count_max)
+                            psum_available_count1 <= psum_available_count1 + 1'b1;
+                    end else if (psum_available_count1 < active_drain_num_pixels)
                         psum_available_count1 <= psum_available_count1 + 1'b1;
                 end else begin
-                    if (psum_available_count0 < active_drain_num_pixels)
+                    if (continuous_psum_enable &&
+                        drain_packet_addr == {PSUM_BUF_AW{1'b0}})
+                        psum_available_count0 <= {{PSUM_BUF_AW{1'b0}}, 1'b1};
+                    else if (continuous_psum_enable) begin
+                        if (psum_available_count0 < psum_count_max)
+                            psum_available_count0 <= psum_available_count0 + 1'b1;
+                    end else if (psum_available_count0 < active_drain_num_pixels)
                         psum_available_count0 <= psum_available_count0 + 1'b1;
                 end
             end
@@ -413,7 +501,7 @@ module conv_layer_top_stream #(
         .DATA_W(COLS*2*PSUM_W), .DEPTH(PSUM_BUF_DEPTH), .AW(PSUM_BUF_AW)
     ) u_pp (
         .clk(clk), .rst(rst),
-        .wr_en(pp_wr_en), .wr_bank(active_drain_wr_bank), .wr_addr(pp_wr_addr), .wr_data(pp_wr_data),
+        .wr_en(pp_wr_en), .wr_bank(pp_wr_bank), .wr_addr(pp_wr_addr), .wr_data(pp_wr_data),
         .rd_en(pp_rd_en), .rd_bank(pp_rd_bank), .rd_addr(pp_rd_addr),
         .rd_data(pp_rd_data), .rd_valid(pp_rd_valid)
     );
@@ -482,35 +570,83 @@ module conv_layer_top_stream #(
     wire [PSUM_W-1:0] drain_baseline = sched_use_ext_psum ? partial_col0 : bias_col0;
 
     psum_drain_writer #(.COLS(COLS), .PSUM_W(PSUM_W), .AW(PSUM_BUF_AW)) u_drain (
-        .clk(clk), .rst(rst), .start(sched_drain_start), .busy(), .done(drain_done),
+        .clk(clk), .rst(rst),
+        .start(sched_drain_start && !continuous_psum_enable),
+        .busy(), .done(drain_done),
         .num_pixels(sched_num_pixels), .baseline_col0(drain_baseline),
         .is_final_pass(sched_final_pass),
-        .psum_fifo_rd_en(psum_fifo_rd_en), .psum_fifo_rd_data(psum_fifo_rd_data),
+        .psum_fifo_rd_en(legacy_psum_fifo_rd_en),
+        .psum_fifo_rd_data(psum_fifo_rd_data),
         .psum_fifo_empty(psum_fifo_empty),
-        .packet_valid(drain_packet_valid), .packet_ready(drain_packet_ready),
-        .packet_addr(drain_packet_addr),
-        .packet_data(drain_packet_data), .packet_is_final(drain_packet_is_final),
+        .packet_valid(legacy_drain_packet_valid),
+        .packet_ready(drain_packet_ready),
+        .packet_addr(legacy_drain_packet_addr),
+        .packet_data(legacy_drain_packet_data),
+        .packet_is_final(legacy_drain_packet_is_final),
         .fifo_empty_wait(perf_drain_fifo_empty_wait),
         .fifo_empty_wait_sticky(perf_drain_fifo_empty_sticky),
         .drain_read_fire(drain_read_fire),
-        .drain_packet_fire(drain_packet_fire),
+        .drain_packet_fire(),
         .drain_ready_stall(drain_ready_stall),
         .drain_internal_full_wait(drain_internal_full_wait)
     );
 
     assign perf_drain_read_fire = drain_read_fire;
-    assign perf_drain_packet_fire = drain_packet_fire;
+    assign perf_drain_packet_fire = legacy_drain_packet_fire;
     assign perf_drain_ready_stall = drain_ready_stall;
     assign perf_drain_internal_full_wait = drain_internal_full_wait;
+
+    psum_output_collector #(
+        .COLS(COLS), .PSUM_W(PSUM_W), .ADDR_W(PSUM_BUF_AW),
+        .CTX_DEPTH(4), .CTX_AW(2)
+    ) u_collector (
+        .clk(clk), .rst(rst), .enable(continuous_psum_enable),
+        .ctx_valid(sched_compute_start && continuous_psum_enable),
+        .ctx_ready(collector_ctx_ready),
+        .ctx_num_pixels(sched_num_pixels),
+        .ctx_is_final(sched_final_pass),
+        .ctx_wr_bank(sched_psum_wr_bank),
+        .ctx_cout_base(sched_cout_base),
+        .ctx_cout_valid(sched_cout_valid),
+        .psum_fifo_rd_en(collector_psum_fifo_rd_en),
+        .psum_fifo_rd_data(psum_fifo_rd_data),
+        .psum_fifo_empty(psum_fifo_empty),
+        .packet_valid(collector_packet_valid),
+        .packet_ready(collector_packet_ready),
+        .packet_addr(collector_packet_addr),
+        .packet_data(collector_packet_data),
+        .packet_is_final(collector_packet_is_final),
+        .packet_wr_bank(collector_packet_wr_bank),
+        .packet_cout_base(collector_packet_cout_base),
+        .packet_cout_valid(collector_packet_cout_valid),
+        .context_start(collector_context_start),
+        .context_done(collector_context_done),
+        .partial_done(collector_partial_done),
+        .final_done(collector_final_done),
+        .context_active(collector_context_active),
+        .context_wr_bank(collector_context_wr_bank),
+        .context_is_final(collector_context_is_final),
+        .perf_context_push(perf_collect_context_push),
+        .perf_context_pop(perf_collect_context_pop),
+        .perf_context_full_stall(perf_collect_context_full_stall),
+        .perf_column_empty_wait(perf_collect_column_empty_wait)
+    );
+
+    assign perf_collect_packet_fire =
+        continuous_psum_enable && drain_packet_fire;
+    assign perf_collect_partial_write =
+        continuous_psum_enable && drain_packet_fire && !drain_packet_is_final;
+    assign perf_collect_final_write =
+        continuous_psum_enable && drain_packet_fire && drain_packet_is_final;
 
     assign final_valid = drain_packet_valid && drain_packet_is_final;
     assign final_addr = drain_packet_addr;
     assign final_data = drain_packet_data;
-    assign final_cout_base = sched_cout_base;
+    assign final_cout_base = drain_packet_cout_base;
     genvar vc;
     generate
         for (vc = 0; vc < COLS*2; vc = vc + 1) begin : final_mask_gen
-            assign final_channel_valid[vc] = (vc < sched_cout_valid);
+            assign final_channel_valid[vc] = (vc < drain_packet_cout_valid);
         end
     endgenerate
 
