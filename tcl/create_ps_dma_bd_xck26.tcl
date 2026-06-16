@@ -128,6 +128,8 @@ set rtl_files {
     systolic/window_feeder.v
     systolic/systolic_top_feeder.v
     systolic/layer_scheduler_stream.v
+    systolic/pass_timeline_monitor.v
+    systolic/coltrace_monitor.v
     systolic/weight_tile_loader.v
     systolic/bias_weight_stream_loader.v
     systolic/axis_bias_weight_loader.v
@@ -138,6 +140,9 @@ set rtl_files {
     systolic/psum_pingpong_buffer.v
     systolic/psum_output_collector.v
     systolic/psum_stream_feeder.v
+    systolic/psum_column_pingpong_buffer.v
+    systolic/psum_column_stream_feeder.v
+    systolic/psum_column_output_collector.v
     systolic/psum_drain_writer.v
     systolic/psum_packet_fifo.v
     systolic/ofm_requant_writer.v

@@ -52,6 +52,7 @@ module tb_systolic_top_multipass;
         .USE_DMA_IFM(0)
     ) dut (
         .clk(clk), .rst(rst), .start(start), .tail_cycles_config(16'd0),
+        .hold_compute_count_on_stall(1'b0),
         .num_pixels(num_pixels), .done(done),
         .ifm_fifo_wr_en(ifm_wr_en), .ifm_fifo_wr_data(ifm_wr_data),
         .ifm_fifo_full_legacy(ifm_full),

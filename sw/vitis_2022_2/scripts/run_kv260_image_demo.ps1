@@ -8,7 +8,20 @@ param(
     [switch]$FastRun,
     [switch]$RebuildElf,
     [switch]$RawHwcIfm,
+    [switch]$RawHwcConv3,
+    [switch]$RawHwcConv4,
+    [switch]$RawHwcConv5,
     [switch]$RawHwcConv6,
+    [switch]$RawHwcConv8,
+    [switch]$RawHwc3x3All,
+    [switch]$EarlyDrain,
+    [switch]$PassPrefetch,
+    [switch]$DuringComputePrefetch,
+    [switch]$PsumStreamOverlap,
+    [switch]$ContinuousPsum,
+    [switch]$ColumnPsum,
+    [switch]$BackendFullTile,
+    [int]$RawHwcComputeStartLevel = 0,
     [int]$TailCyclesOverride = 0
 )
 
@@ -54,13 +67,50 @@ if ($LASTEXITCODE -ne 0) {
 if ($RebuildElf -or !(Test-Path $Elf)) {
     $BuildArgs = @{
         Mode = "conv0_conv9_ddr_demo"
+        RawHwcComputeStartLevel = $RawHwcComputeStartLevel
         TailCyclesOverride = $TailCyclesOverride
     }
     if ($RawHwcIfm) {
         $BuildArgs.RawHwcIfm = $true
     }
+    if ($RawHwcConv3) {
+        $BuildArgs.RawHwcConv3 = $true
+    }
+    if ($RawHwcConv4) {
+        $BuildArgs.RawHwcConv4 = $true
+    }
+    if ($RawHwcConv5) {
+        $BuildArgs.RawHwcConv5 = $true
+    }
     if ($RawHwcConv6) {
         $BuildArgs.RawHwcConv6 = $true
+    }
+    if ($RawHwcConv8) {
+        $BuildArgs.RawHwcConv8 = $true
+    }
+    if ($RawHwc3x3All) {
+        $BuildArgs.RawHwc3x3All = $true
+    }
+    if ($EarlyDrain) {
+        $BuildArgs.EarlyDrain = $true
+    }
+    if ($PassPrefetch) {
+        $BuildArgs.PassPrefetch = $true
+    }
+    if ($DuringComputePrefetch) {
+        $BuildArgs.DuringComputePrefetch = $true
+    }
+    if ($PsumStreamOverlap) {
+        $BuildArgs.PsumStreamOverlap = $true
+    }
+    if ($ContinuousPsum) {
+        $BuildArgs.ContinuousPsum = $true
+    }
+    if ($ColumnPsum) {
+        $BuildArgs.ColumnPsum = $true
+    }
+    if ($BackendFullTile) {
+        $BuildArgs.BackendFullTile = $true
     }
     & $BuildScript @BuildArgs
     if ($LASTEXITCODE -ne 0) {
@@ -74,9 +124,52 @@ $RunArgs = @{
     RunConv0Conv9DdrDemo = $true
     InputPackage = $Package
     BuildDirName = $BuildDirName
+    RawHwcComputeStartLevel = $RawHwcComputeStartLevel
 }
 if ($FastRun) {
     $RunArgs.FastRun = $true
+}
+if ($RawHwcIfm) {
+    $RunArgs.RawHwcIfm = $true
+}
+if ($RawHwcConv3) {
+    $RunArgs.RawHwcConv3 = $true
+}
+if ($RawHwcConv4) {
+    $RunArgs.RawHwcConv4 = $true
+}
+if ($RawHwcConv5) {
+    $RunArgs.RawHwcConv5 = $true
+}
+if ($RawHwcConv6) {
+    $RunArgs.RawHwcConv6 = $true
+}
+if ($RawHwcConv8) {
+    $RunArgs.RawHwcConv8 = $true
+}
+if ($RawHwc3x3All) {
+    $RunArgs.RawHwc3x3All = $true
+}
+if ($EarlyDrain) {
+    $RunArgs.EarlyDrain = $true
+}
+if ($PassPrefetch) {
+    $RunArgs.PassPrefetch = $true
+}
+if ($DuringComputePrefetch) {
+    $RunArgs.DuringComputePrefetch = $true
+}
+if ($PsumStreamOverlap) {
+    $RunArgs.PsumStreamOverlap = $true
+}
+if ($ContinuousPsum) {
+    $RunArgs.ContinuousPsum = $true
+}
+if ($ColumnPsum) {
+    $RunArgs.ColumnPsum = $true
+}
+if ($BackendFullTile) {
+    $RunArgs.BackendFullTile = $true
 }
 $RunStart = Get-Date
 & $RunScript @RunArgs

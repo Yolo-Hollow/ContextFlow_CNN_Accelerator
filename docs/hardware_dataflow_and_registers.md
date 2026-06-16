@@ -772,3 +772,258 @@ DDR image1:  PASS, 0.371314 s, 20260615_082302_conv0_conv9_ddr_demo_COM8.log
 The measured gain over the previous `b_psumovl_credit1_22` baseline is small
 but positive; the dominant remaining cycles are still compute-stage and
 feeder/replay activity.
+
+## 20. 2026-06-15 pass timeline diagnostic addendum
+
+The pass timeline monitor is a diagnostic-only block. It does not feed back
+into scheduler control, DMA handshakes, raw-HWC cache replay, PSUM storage, OFM
+format, or quantization. Its purpose is to explain why the continuous PSUM
+collector build still reports much more `STAGE_COMPUTE` and
+`COLLECT_COLUMN_EMPTY_WAIT` time than true `compute_fire` time.
+
+The monitor observes existing pass events:
+
+```text
+weight_done
+feed_start/feed_ready/feed_done
+compute_start/compute_fire/compute_done
+collector_packet_fire/collector_context_done
+raw_replay_active
+stage_compute
+```
+
+Per-layer aggregate counters are cleared on layer start and held after layer
+done:
+
+| Byte offset | Name | R/W | Meaning |
+|---:|---|---|---|
+| `0x164` | `PASSTRACE_SELECT` | R/W | bit31 trace enable, `[23:16]` COUT block, `[15:0]` K pass |
+| `0x168` | `PASS_COUNT` | R | Completed pass contexts seen by the monitor |
+| `0x16c` | `PASS_START_TO_FIRST_FIRE` | R | Sum of compute-start to first compute-fire latency |
+| `0x170` | `PASS_FIRST_TO_LAST_FIRE` | R | Sum of first-fire to last-fire spans |
+| `0x174` | `PASS_LAST_FIRE_TO_DONE` | R | Sum of last-fire to compute-done tail latency |
+| `0x178` | `PASS_COLLECT_FIRST_WAIT` | R | Sum of compute-start to first collector packet latency |
+| `0x17c` | `PASS_COLLECT_COLUMN_EMPTY` | R | Collector column-empty wait cycles |
+| `0x180` | `PASS_REPLAY_DURING_COMPUTE` | R | Raw-HWC replay-active cycles during compute stage |
+| `0x184` | `PASS_COMPUTE_IDLE_STAGE` | R | Compute-stage cycles without `compute_fire` |
+
+The optional trace window records layer-local timestamps for one selected pass:
+
+| Byte offset | Name | R/W | Meaning |
+|---:|---|---|---|
+| `0x188` | `PASSTRACE_WEIGHT_DONE` | R | Selected pass weight-done timestamp |
+| `0x18c` | `PASSTRACE_FEED_START` | R | Selected pass feeder-start timestamp |
+| `0x190` | `PASSTRACE_FEED_READY` | R | Selected pass first feeder-ready timestamp |
+| `0x194` | `PASSTRACE_FEED_DONE` | R | Selected pass feeder-done timestamp |
+| `0x198` | `PASSTRACE_COMPUTE_START` | R | Selected pass compute-start timestamp |
+| `0x19c` | `PASSTRACE_FIRST_FIRE` | R | Selected pass first compute-fire timestamp |
+| `0x1a0` | `PASSTRACE_LAST_FIRE` | R | Selected pass last compute-fire timestamp |
+| `0x1a4` | `PASSTRACE_COMPUTE_DONE` | R | Selected pass compute-done timestamp |
+| `0x1a8` | `PASSTRACE_COLLECT_FIRST` | R | Selected pass first collector packet timestamp |
+| `0x1ac` | `PASSTRACE_COLLECT_LAST` | R | Selected pass last collector packet timestamp |
+| `0x1b0` | `PASSTRACE_PASS_DONE` | R | Selected pass context completion timestamp |
+| `0x1b4` | `PASSPERF_VERSION` | R | bit31 trace-valid, `[30:0]` fixed version `1` |
+
+Runtime software prints aggregate lines as:
+
+```text
+PASSPERF layer=... pass_count=... start_to_first=... fire_span=...
+         tail=... collect_wait=... collect_empty=...
+         replay_during_compute=... compute_idle=... version=...
+```
+
+When tracing is enabled at build time with `-TilePerfTrace`, it also prints:
+
+```text
+PASSTRACE layer=... tile=... cout_block=... k_pass=...
+          weight_done=... feed_start=... feed_ready=... feed_done=...
+          compute_start=... first_fire=... last_fire=... compute_done=...
+          collect_first=... collect_last=... pass_done=... version=...
+```
+
+The intended first use is Conv5/Conv6/Conv8 raw-HWC with overlap64, early drain,
+pass prefetch, partial-PSUM overlap, and continuous PSUM enabled. If
+`start_to_first_fire` or `compute_idle_stage` dominates, the next work should
+focus on compute-start and array input cadence. If `fire_span` has low density,
+the issue is inside the active compute window. If `collect_column_empty`
+dominates, the next work should inspect per-column PSUM output alignment and
+collector aggregation.
+
+The first Vivado `2022.2` implementation for this diagnostic build completed in
+`D:/MPSoC/b_passtrace_22` with timing met (`WNS=+0.193 ns`, `TNS=0`,
+`WHS=+0.010 ns`, `THS=0`) and `0` routing errors. The exported artifacts are:
+
+```text
+bit SHA256=7712344B10C36969552A9547B1CED9F834C6381B3209316D9E0001DFDA4F4B04
+XSA SHA256=99F09A6ACC6E9D3DE287DDD8AB7BA05080F4CF887E477745D8359B9D3D076AD8
+```
+
+The first board run showed that a selected trace could be overwritten by the
+next pass before the continuous collector popped the selected context. The
+monitor now tracks the selected trace lifetime separately from the current
+compute lifetime. The fixed implementation is:
+
+```text
+build dir: D:/MPSoC/b_passtrace_fix2_22
+WNS=+0.113 ns, TNS=0, WHS=+0.010 ns, THS=0
+routing errors=0
+CLB LUTs=57226, CLB Registers=49831
+LUT as Memory=16638, BRAM Tile=63, URAM=8, DSP=184
+bit SHA256=3DC26E405921DCF04057CFFC8E8997D0A3481D4EBFF9585551B34A26FE7D2FBE
+XSA SHA256=258458C60231AE5D62CE1E4E0F9BB7D73C8F8043FEB2A0D440DF24C2ABC660AA
+```
+
+KV260 validation passed batch-chain and two DDR images:
+
+```text
+batch-chain: 20260615_230847_conv0_conv9_batch_chain_COM8.log
+image0:      20260615_231105_conv0_conv9_ddr_demo_COM8.log
+image1:      20260615_231547_conv0_conv9_ddr_demo_COM8.log
+```
+
+The selected Conv5/Conv6/Conv8 tile0 traces are valid. For `cout_block=0`,
+`k_pass=0`, compute begins nine cycles before the first compute fire, the
+52-pixel tile fires over a 52-cycle span, and the first collector packet appears
+about 112 cycles after compute done. The aggregate counters point toward
+collector column-empty / compute-idle behavior as the next item to explain:
+
+```text
+COLLECTPERF column_empty_wait=11628928
+PASSPERF compute_idle=11907808
+PASSPERF avg_start_to_first=9.00
+PASSPERF avg_collect_wait=1.50
+```
+
+## 21. 2026-06-15 column-level PSUM trace addendum
+
+`coltrace_monitor` is a diagnostic-only block attached to the PSUM FIFO write
+side and the continuous collector wait side. It does not feed back into the
+array, scheduler, FIFO, collector, or AXI control paths. The selected pass is
+the same `cout_block/k_pass` selected by `PASSTRACE_SELECT`.
+
+The column trace registers are:
+
+| Byte offset | Name | R/W | Meaning |
+|---:|---|---|---|
+| `0x1b8` | `COLTRACE_CTRL` | R/W | bit31 trace valid, `[4:0]` selected column |
+| `0x1bc` | `COLTRACE_FIRST_WR` | R | First PSUM FIFO write timestamp for the selected column |
+| `0x1c0` | `COLTRACE_LAST_WR` | R | Last selected-pass PSUM FIFO write timestamp |
+| `0x1c4` | `COLTRACE_WR_COUNT` | R | Selected-pass PSUM FIFO writes for the selected column |
+| `0x1c8` | `COLTRACE_EMPTY_WAIT` | R | Collector wait cycles while the selected column was empty |
+| `0x1cc` | `COLTRACE_MISSING_MASK_OR` | R | OR of all missing-column masks during the selected pass |
+| `0x1d0` | `COLTRACE_MISSING_MASK_FIRST` | R | First missing-column mask |
+| `0x1d4` | `COLTRACE_MISSING_MASK_LAST` | R | Last missing-column mask |
+| `0x1d8` | `COLTRACE_VERSION` | R | Current fixed value: `1` |
+
+The runtime selects each column after layer completion and prints:
+
+```text
+COLTRACE layer=... tile=... cout_block=... k_pass=... col=...
+         first_wr=... last_wr=... wr_count=... empty_wait=...
+         missing_or=... missing_first=... missing_last=...
+         version=... valid=...
+```
+
+Vivado/xsim `2022.2` external-golden tests for Conv5, Conv6, and Conv8 tile0
+all pass with the trace enabled. Their selected 52-pixel pass has the same
+column timing:
+
+```text
+column  first write  last write  writes  empty wait
+0       152127       152178      52      99
+1       152131       152182      52      103
+2       152135       152186      52      107
+3       152139       152190      52      111
+4       152143       152194      52      115
+5       152147       152198      52      119
+6       152151       152202      52      123
+7       152155       152206      52      127
+```
+
+This is a deterministic four-cycle phase shift per array column. Each column
+then produces one result per cycle for all 52 pixels. The collector is not
+seeing random starvation, lost packets, unequal packet counts, or downstream
+backpressure. `missing_first=0xff` and `missing_last=0x80` are consistent with
+the array filling from column 0 toward column 7.
+
+The important consequence is that a collector-only phase compensation cannot
+recover the full `COLLECT_COLUMN_EMPTY_WAIT` count: a complete `COLS*2` packet
+still depends on the latest column. The 28-cycle first-to-last-column skew is
+only part of the 127-cycle first-packet latency. Further optimization must
+either amortize the fixed pass startup over larger spatial tiles, or change
+partial-PSUM consumption so the next pass can consume per-column results
+without waiting for a fully assembled packet.
+## 2026-06-16 backend full-tile HWC cache note
+
+The current 3x3 raw-HWC cache is still the materialized 3x3 window cache. It is
+not yet a pure raw feature-map cache with a new address generator. The cache
+capacity requirement is therefore expressed in materialized words:
+
+```text
+required_words = tile_pixels * ceil(CIN / IFM_BANKS)
+IFM_BANKS      = 2
+```
+
+The experimental backend full-tile configuration is:
+
+```text
+HWC_CACHE_AW=16
+HWC_CACHE_DEPTH=43264
+HWC_CACHE_STRIPES=4
+HWC_CACHE_USE_URAM=1
+```
+
+This keeps the existing DMA/AXIS format, weight format, OFM packet format,
+quantization, and replay semantics unchanged. It only increases the cache depth
+so Conv5, Conv6, and Conv8 can use one 13x13 spatial tile:
+
+```text
+Conv5/8: 169 * ceil(256/2) = 21632 words
+Conv6:   169 * ceil(512/2) = 43264 words
+```
+
+The first software switch is `-BackendFullTile`. It is intentionally
+non-default and should be paired with a hardware build whose cache parameters
+match the values above. The old four-tile backend schedule remains the safe
+path when the switch is not set.
+## During-Compute Next-Pass Prefetch
+
+`STREAM_CFG[7]` is an experimental `during_compute_prefetch_enable` bit.
+Reset/default software leaves it at `0`.
+
+When this bit is set together with raw-HWC mode and pass prefetch, the scheduler
+may start staging the next K pass while the current pass is still in compute.
+This is deliberately only staging:
+
+```text
+current pass:
+  PE weights and IFM FIFO entries are consumed by the active compute
+
+next pass:
+  weight stream may be accepted into the weight staging path
+  raw-HWC replay may append IFM vectors behind current-pass FIFO data
+  next compute does not start until the current pass dependency rules are met
+```
+
+The bit does not allow PE weights to be overwritten during the current compute,
+does not start the next compute early, and does not change DMA stream formats,
+raw-HWC tile layout, OFM packet order, quantization, or layer scheduling visible
+to software. If the current feeder/replay has not completed before compute,
+the optimization naturally falls back to the old pass-prefetch timing.
+
+`STREAM_CFG` readback at AXI-Lite offset `0x19` is:
+
+```text
+bit0 batch stream
+bit1 raw-HWC mode
+bit2 early drain
+bit3 pass prefetch
+bit4 psum stream overlap
+bit5 continuous PSUM
+bit6 column PSUM
+bit7 during-compute next-pass prefetch
+```
+
+The first validation target is the backend full-tile raw-HWC path for Conv5,
+Conv6, and Conv8. Existing prepacked IFM paths and default board-validated
+ELFs leave this bit clear.

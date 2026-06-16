@@ -57,6 +57,9 @@
 #ifndef ACCEL_RAW_HWC_3X3
 #define ACCEL_RAW_HWC_3X3 0
 #endif
+#ifndef ACCEL_RAW_HWC_CONV3
+#define ACCEL_RAW_HWC_CONV3 0
+#endif
 #ifndef ACCEL_RAW_HWC_CONV4
 #define ACCEL_RAW_HWC_CONV4 0
 #endif
@@ -71,6 +74,9 @@
 #endif
 #ifndef ACCEL_HWC_CACHE_DEPTH
 #define ACCEL_HWC_CACHE_DEPTH 4096U
+#endif
+#ifndef ACCEL_BACKEND_FULL_TILE
+#define ACCEL_BACKEND_FULL_TILE 0
 #endif
 
 #define UART0_BASE            0xFF000000U
@@ -125,23 +131,43 @@ static const image_package_header_t *image_package;
 #if ACCEL_CHAIN_CONV0_CONV9
 #define CHAIN_SMOKE_NAME      "conv0_pool -> conv9 chained smoke"
 #define MAX_FM_W              416U
+#if ACCEL_BACKEND_FULL_TILE
+#define MAX_TILE_OFM_BYTES    (13U * 13U * 1024U)
+#else
 #define MAX_TILE_OFM_BYTES    (13U * 4U * 1024U)
+#endif
 #elif ACCEL_CHAIN_CONV0_CONV8
 #define CHAIN_SMOKE_NAME      "conv0_pool -> conv8 chained smoke"
 #define MAX_FM_W              416U
+#if ACCEL_BACKEND_FULL_TILE
+#define MAX_TILE_OFM_BYTES    (13U * 13U * 1024U)
+#else
 #define MAX_TILE_OFM_BYTES    (13U * 4U * 1024U)
+#endif
 #elif ACCEL_CHAIN_CONV0_CONV7
 #define CHAIN_SMOKE_NAME      "conv0_pool -> conv7 chained smoke"
 #define MAX_FM_W              416U
+#if ACCEL_BACKEND_FULL_TILE
+#define MAX_TILE_OFM_BYTES    (13U * 13U * 1024U)
+#else
 #define MAX_TILE_OFM_BYTES    (13U * 4U * 1024U)
+#endif
 #elif ACCEL_CHAIN_CONV0_CONV6
 #define CHAIN_SMOKE_NAME      "conv0_pool -> conv6 chained smoke"
 #define MAX_FM_W              416U
+#if ACCEL_BACKEND_FULL_TILE
+#define MAX_TILE_OFM_BYTES    (13U * 13U * 1024U)
+#else
 #define MAX_TILE_OFM_BYTES    (13U * 4U * 1024U)
+#endif
 #elif ACCEL_CHAIN_CONV0_CONV5
 #define CHAIN_SMOKE_NAME      "conv0_pool -> conv5 chained smoke"
 #define MAX_FM_W              416U
+#if ACCEL_BACKEND_FULL_TILE
+#define MAX_TILE_OFM_BYTES    (13U * 13U * 512U)
+#else
 #define MAX_TILE_OFM_BYTES    (13U * 4U * 512U)
+#endif
 #elif ACCEL_CHAIN_CONV0_CONV4
 #define CHAIN_SMOKE_NAME      "conv0_pool -> conv4_pool chained smoke"
 #define MAX_FM_W              416U
@@ -149,7 +175,11 @@ static const image_package_header_t *image_package;
 #elif ACCEL_CHAIN_CONV4_CONV5
 #define CHAIN_SMOKE_NAME      "conv4_pool -> conv5 chained smoke"
 #define MAX_FM_W              52U
+#if ACCEL_BACKEND_FULL_TILE
+#define MAX_TILE_OFM_BYTES    (13U * 13U * 512U)
+#else
 #define MAX_TILE_OFM_BYTES    (13U * 4U * 512U)
+#endif
 #else
 #define CHAIN_SMOKE_NAME      "conv3_pool -> conv4_pool chained smoke"
 #define MAX_FM_W              52U
@@ -289,6 +319,15 @@ typedef struct {
     uint64_t hw_collect_context_full_stall_cycles;
     uint64_t hw_collect_column_empty_wait_cycles;
     uint64_t hw_collectperf_version;
+    uint64_t hw_pass_count;
+    uint64_t hw_pass_start_to_first_fire_cycles;
+    uint64_t hw_pass_first_to_last_fire_cycles;
+    uint64_t hw_pass_last_fire_to_done_cycles;
+    uint64_t hw_pass_collect_first_wait_cycles;
+    uint64_t hw_pass_collect_column_empty_cycles;
+    uint64_t hw_pass_replay_during_compute_cycles;
+    uint64_t hw_pass_compute_idle_stage_cycles;
+    uint64_t hw_passperf_version;
     uint64_t vector_packets;
     uint64_t vector_pixels;
     uint64_t vector_beats;
@@ -336,6 +375,11 @@ static const chain_tile_t conv4_tiles[7] = {
 #endif
 
 #if ACCEL_CHAIN_CONV4_CONV5 || ACCEL_CHAIN_CONV0_CONV5 || ACCEL_CHAIN_CONV0_CONV6 || ACCEL_CHAIN_CONV0_CONV7 || ACCEL_CHAIN_CONV0_CONV8 || ACCEL_CHAIN_CONV0_CONV9
+#if ACCEL_BACKEND_FULL_TILE
+static const chain_tile_t conv5_tiles[1] = {
+    {"conv5_fulltile", 0U, 13U, 0U * 13U, 13U * 13U, 13U * 13U * 512U},
+};
+#else
 static const chain_tile_t conv5_tiles[4] = {
     {"conv5_tile0", 0U, 4U, 0U * 13U, 13U * 4U, 13U * 4U * 512U},
     {"conv5_tile1", 4U, 4U, 4U * 13U, 13U * 4U, 13U * 4U * 512U},
@@ -343,14 +387,21 @@ static const chain_tile_t conv5_tiles[4] = {
     {"conv5_tile3", 12U, 1U, 12U * 13U, 13U * 1U, 13U * 1U * 512U},
 };
 #endif
+#endif
 
 #if ACCEL_CHAIN_CONV0_CONV6 || ACCEL_CHAIN_CONV0_CONV7 || ACCEL_CHAIN_CONV0_CONV8 || ACCEL_CHAIN_CONV0_CONV9
+#if ACCEL_BACKEND_FULL_TILE
+static const chain_tile_t conv6_tiles[1] = {
+    {"conv6_fulltile", 0U, 13U, 0U * 13U, 13U * 13U, 13U * 13U * 1024U},
+};
+#else
 static const chain_tile_t conv6_tiles[4] = {
     {"conv6_tile0", 0U, 4U, 0U * 13U, 13U * 4U, 13U * 4U * 1024U},
     {"conv6_tile1", 4U, 4U, 4U * 13U, 13U * 4U, 13U * 4U * 1024U},
     {"conv6_tile2", 8U, 4U, 8U * 13U, 13U * 4U, 13U * 4U * 1024U},
     {"conv6_tile3", 12U, 1U, 12U * 13U, 13U * 1U, 13U * 1U * 1024U},
 };
+#endif
 #endif
 
 #if ACCEL_CHAIN_CONV0_CONV7 || ACCEL_CHAIN_CONV0_CONV8 || ACCEL_CHAIN_CONV0_CONV9
@@ -363,12 +414,18 @@ static const chain_tile_t conv7_tiles[4] = {
 #endif
 
 #if ACCEL_CHAIN_CONV0_CONV8 || ACCEL_CHAIN_CONV0_CONV9
+#if ACCEL_BACKEND_FULL_TILE
+static const chain_tile_t conv8_tiles[1] = {
+    {"conv8_fulltile", 0U, 13U, 0U * 13U, 13U * 13U, 13U * 13U * 512U},
+};
+#else
 static const chain_tile_t conv8_tiles[4] = {
     {"conv8_tile0", 0U, 4U, 0U * 13U, 13U * 4U, 13U * 4U * 512U},
     {"conv8_tile1", 4U, 4U, 4U * 13U, 13U * 4U, 13U * 4U * 512U},
     {"conv8_tile2", 8U, 4U, 8U * 13U, 13U * 4U, 13U * 4U * 512U},
     {"conv8_tile3", 12U, 1U, 12U * 13U, 13U * 1U, 13U * 1U * 512U},
 };
+#endif
 #endif
 
 #if ACCEL_CHAIN_CONV0_CONV9
@@ -453,8 +510,15 @@ static chain_layer_t conv3_layer = {
     conv3_pool_golden_ofm_u8,
     feature_buffer1,
     0,
+#if ACCEL_BACKEND_FULL_TILE
+    3U,
+    18U,
+#else
     7U,
     8U,
+#endif
+    0U,
+    ACCEL_RAW_HWC_CONV3,
 };
 
 static chain_layer_t conv4_layer = {
@@ -471,8 +535,13 @@ static chain_layer_t conv4_layer = {
     conv4_pool_golden_ofm_u8,
     feature_buffer0,
     0,
+#if ACCEL_BACKEND_FULL_TILE
+    1U,
+    26U,
+#else
     4U,
     8U,
+#endif
     0U,
     ACCEL_RAW_HWC_CONV4,
 };
@@ -492,7 +561,11 @@ static chain_layer_t conv5_layer = {
     conv5_pool_golden_ofm_u8,
     feature_buffer1,
     conv5_tiles,
+#if ACCEL_BACKEND_FULL_TILE
+    1U,
+#else
     4U,
+#endif
     0U,
     0U,
     ACCEL_RAW_HWC_CONV5,
@@ -514,7 +587,11 @@ static chain_layer_t conv6_layer = {
     conv6_golden_ofm_u8,
     feature_buffer0,
     conv6_tiles,
+#if ACCEL_BACKEND_FULL_TILE
+    1U,
+#else
     4U,
+#endif
     0U,
     0U,
     ACCEL_RAW_HWC_CONV6,
@@ -559,7 +636,11 @@ static chain_layer_t conv8_layer = {
     conv8_golden_ofm_u8,
     feature_buffer0,
     conv8_tiles,
+#if ACCEL_BACKEND_FULL_TILE
+    1U,
+#else
     4U,
+#endif
     0U,
     0U,
     ACCEL_RAW_HWC_CONV8,
@@ -1485,6 +1566,20 @@ static void print_layer_perf(const chain_layer_t *layer)
         (unsigned long long)layer_perf.hw_collect_column_empty_wait_cycles,
         (unsigned long long)layer_perf.hw_collectperf_version);
     xil_printf(
+        "PASSPERF layer=%s pass_count=%llu start_to_first=%llu "
+        "fire_span=%llu tail=%llu collect_wait=%llu collect_empty=%llu "
+        "replay_during_compute=%llu compute_idle=%llu version=%llu\r\n",
+        layer->name,
+        (unsigned long long)layer_perf.hw_pass_count,
+        (unsigned long long)layer_perf.hw_pass_start_to_first_fire_cycles,
+        (unsigned long long)layer_perf.hw_pass_first_to_last_fire_cycles,
+        (unsigned long long)layer_perf.hw_pass_last_fire_to_done_cycles,
+        (unsigned long long)layer_perf.hw_pass_collect_first_wait_cycles,
+        (unsigned long long)layer_perf.hw_pass_collect_column_empty_cycles,
+        (unsigned long long)layer_perf.hw_pass_replay_during_compute_cycles,
+        (unsigned long long)layer_perf.hw_pass_compute_idle_stage_cycles,
+        (unsigned long long)layer_perf.hw_passperf_version);
+    xil_printf(
         "DMASTAT layer=%s bias_starts=%lu weight_starts=%lu ifm_starts=%lu ofm_starts=%lu\r\n",
         layer->name,
         (unsigned long)layer_perf.dma_bias_starts,
@@ -1507,6 +1602,42 @@ static void print_layer_perf(const chain_layer_t *layer)
         (unsigned long long)layer_perf.raw_replay_active_cycles,
         (unsigned long long)layer_perf.raw_replay_wait_ready_cycles,
         (unsigned long long)layer_perf.hw_comp_ifm_stall_cycles);
+}
+
+static void print_coltrace(
+    const chain_layer_t *layer,
+    uint32_t tile_index)
+{
+#if ACCEL_TILE_PERF_TRACE && ACCEL_PASS_TRACE_ENABLE
+    for (uint32_t col = 0U; col < COLS; ++col) {
+        wr32(ACCEL_BASE_ADDR, ACCEL_COLTRACE_CTRL, col);
+        uint32_t ctrl = rd32(ACCEL_BASE_ADDR, ACCEL_COLTRACE_CTRL);
+        if ((ctrl >> 31) == 0U) {
+            return;
+        }
+        xil_printf(
+            "COLTRACE layer=%s tile=%lu cout_block=%lu k_pass=%lu col=%lu "
+            "first_wr=%lu last_wr=%lu wr_count=%lu empty_wait=%lu "
+            "missing_or=%lu missing_first=%lu missing_last=%lu "
+            "version=%lu valid=1\r\n",
+            layer->name,
+            (unsigned long)tile_index,
+            (unsigned long)ACCEL_PASS_TRACE_COUT_BLOCK,
+            (unsigned long)ACCEL_PASS_TRACE_K_PASS,
+            (unsigned long)col,
+            (unsigned long)rd32(ACCEL_BASE_ADDR, ACCEL_COLTRACE_FIRST_WR),
+            (unsigned long)rd32(ACCEL_BASE_ADDR, ACCEL_COLTRACE_LAST_WR),
+            (unsigned long)rd32(ACCEL_BASE_ADDR, ACCEL_COLTRACE_WR_COUNT),
+            (unsigned long)rd32(ACCEL_BASE_ADDR, ACCEL_COLTRACE_EMPTY_WAIT),
+            (unsigned long)rd32(ACCEL_BASE_ADDR, ACCEL_COLTRACE_MISSING_OR),
+            (unsigned long)rd32(ACCEL_BASE_ADDR, ACCEL_COLTRACE_MISSING_FIRST),
+            (unsigned long)rd32(ACCEL_BASE_ADDR, ACCEL_COLTRACE_MISSING_LAST),
+            (unsigned long)rd32(ACCEL_BASE_ADDR, ACCEL_COLTRACE_VERSION));
+    }
+#else
+    (void)layer;
+    (void)tile_index;
+#endif
 }
 
 static void clear_ofm(uint8_t *ofm, uint32_t bytes)
@@ -1769,6 +1900,28 @@ static int run_one_tile(const chain_layer_t *layer, const chain_tile_t *tile, ui
     uint32_t tile_collect_context_full_stall = rd32(ACCEL_BASE_ADDR, ACCEL_COLLECT_CONTEXT_FULL_STALL);
     uint32_t tile_collect_column_empty_wait = rd32(ACCEL_BASE_ADDR, ACCEL_COLLECT_COLUMN_EMPTY_WAIT);
     uint32_t tile_collectperf_version = rd32(ACCEL_BASE_ADDR, ACCEL_COLLECTPERF_VERSION);
+    uint32_t tile_pass_count = rd32(ACCEL_BASE_ADDR, ACCEL_PASS_COUNT);
+    uint32_t tile_pass_start_to_first = rd32(ACCEL_BASE_ADDR, ACCEL_PASS_START_TO_FIRST_FIRE);
+    uint32_t tile_pass_first_to_last = rd32(ACCEL_BASE_ADDR, ACCEL_PASS_FIRST_TO_LAST_FIRE);
+    uint32_t tile_pass_last_to_done = rd32(ACCEL_BASE_ADDR, ACCEL_PASS_LAST_FIRE_TO_DONE);
+    uint32_t tile_pass_collect_first_wait = rd32(ACCEL_BASE_ADDR, ACCEL_PASS_COLLECT_FIRST_WAIT);
+    uint32_t tile_pass_collect_column_empty = rd32(ACCEL_BASE_ADDR, ACCEL_PASS_COLLECT_COLUMN_EMPTY);
+    uint32_t tile_pass_replay_during_compute = rd32(ACCEL_BASE_ADDR, ACCEL_PASS_REPLAY_DURING_COMPUTE);
+    uint32_t tile_pass_compute_idle = rd32(ACCEL_BASE_ADDR, ACCEL_PASS_COMPUTE_IDLE_STAGE);
+    uint32_t tile_trace_weight_done = rd32(ACCEL_BASE_ADDR, ACCEL_TRACE_WEIGHT_DONE);
+    uint32_t tile_trace_feed_start = rd32(ACCEL_BASE_ADDR, ACCEL_TRACE_FEED_START);
+    uint32_t tile_trace_feed_ready = rd32(ACCEL_BASE_ADDR, ACCEL_TRACE_FEED_READY);
+    uint32_t tile_trace_feed_done = rd32(ACCEL_BASE_ADDR, ACCEL_TRACE_FEED_DONE);
+    uint32_t tile_trace_compute_start = rd32(ACCEL_BASE_ADDR, ACCEL_TRACE_COMPUTE_START);
+    uint32_t tile_trace_first_fire = rd32(ACCEL_BASE_ADDR, ACCEL_TRACE_FIRST_FIRE);
+    uint32_t tile_trace_last_fire = rd32(ACCEL_BASE_ADDR, ACCEL_TRACE_LAST_FIRE);
+    uint32_t tile_trace_compute_done = rd32(ACCEL_BASE_ADDR, ACCEL_TRACE_COMPUTE_DONE);
+    uint32_t tile_trace_collect_first = rd32(ACCEL_BASE_ADDR, ACCEL_TRACE_COLLECT_FIRST);
+    uint32_t tile_trace_collect_last = rd32(ACCEL_BASE_ADDR, ACCEL_TRACE_COLLECT_LAST);
+    uint32_t tile_trace_pass_done = rd32(ACCEL_BASE_ADDR, ACCEL_TRACE_PASS_DONE);
+    uint32_t tile_passperf_version_raw = rd32(ACCEL_BASE_ADDR, ACCEL_PASSPERF_VERSION);
+    uint32_t tile_pass_trace_valid = tile_passperf_version_raw >> 31;
+    uint32_t tile_passperf_version = tile_passperf_version_raw & 0x7fffffffU;
     uint32_t tile_vector_packets = rd32(ACCEL_BASE_ADDR, ACCEL_VECTOR_PACKETS);
     uint32_t tile_vector_pixels = rd32(ACCEL_BASE_ADDR, ACCEL_VECTOR_PIXELS);
     uint32_t tile_vector_beats = rd32(ACCEL_BASE_ADDR, ACCEL_VECTOR_BEATS);
@@ -1793,6 +1946,9 @@ static int run_one_tile(const chain_layer_t *layer, const chain_tile_t *tile, ui
         "vector_packets=%lu vector_pixels=%lu vector_beats=%lu vector_stalls=%lu "
         "raw_load_active=%lu raw_load_unpack=%lu raw_replay_active=%lu "
         "raw_replay_wait_ready=%lu "
+        "pass_count=%lu pass_start_to_first=%lu pass_fire_span=%lu "
+        "pass_tail=%lu pass_collect_wait=%lu pass_collect_empty=%lu "
+        "pass_replay_compute=%lu pass_compute_idle=%lu passperf_version=%lu "
         "subperf_version=%lu\r\n",
         layer->name,
         (unsigned long)tile_index,
@@ -1842,7 +1998,42 @@ static int run_one_tile(const chain_layer_t *layer, const chain_tile_t *tile, ui
         (unsigned long)tile_raw_load_unpack,
         (unsigned long)tile_raw_replay_active,
         (unsigned long)tile_raw_replay_wait_ready,
+        (unsigned long)tile_pass_count,
+        (unsigned long)tile_pass_start_to_first,
+        (unsigned long)tile_pass_first_to_last,
+        (unsigned long)tile_pass_last_to_done,
+        (unsigned long)tile_pass_collect_first_wait,
+        (unsigned long)tile_pass_collect_column_empty,
+        (unsigned long)tile_pass_replay_during_compute,
+        (unsigned long)tile_pass_compute_idle,
+        (unsigned long)tile_passperf_version,
         (unsigned long)tile_subperf_version);
+    if ((tile_pass_trace_valid != 0U) &&
+        layer_uses_raw_hwc(layer) &&
+        (tile_index == 0U)) {
+        xil_printf(
+            "PASSTRACE layer=%s tile=%lu cout_block=%lu k_pass=%lu "
+            "weight_done=%lu feed_start=%lu feed_ready=%lu feed_done=%lu "
+            "compute_start=%lu first_fire=%lu last_fire=%lu compute_done=%lu "
+            "collect_first=%lu collect_last=%lu pass_done=%lu version=%lu\r\n",
+            layer->name,
+            (unsigned long)tile_index,
+            (unsigned long)ACCEL_PASS_TRACE_COUT_BLOCK,
+            (unsigned long)ACCEL_PASS_TRACE_K_PASS,
+            (unsigned long)tile_trace_weight_done,
+            (unsigned long)tile_trace_feed_start,
+            (unsigned long)tile_trace_feed_ready,
+            (unsigned long)tile_trace_feed_done,
+            (unsigned long)tile_trace_compute_start,
+            (unsigned long)tile_trace_first_fire,
+            (unsigned long)tile_trace_last_fire,
+            (unsigned long)tile_trace_compute_done,
+            (unsigned long)tile_trace_collect_first,
+            (unsigned long)tile_trace_collect_last,
+            (unsigned long)tile_trace_pass_done,
+            (unsigned long)tile_passperf_version);
+        print_coltrace(layer, tile_index);
+    }
 #endif
 
     layer_perf.hw_busy_cycles += tile_busy;
@@ -1898,6 +2089,15 @@ static int run_one_tile(const chain_layer_t *layer, const chain_tile_t *tile, ui
     layer_perf.hw_collect_context_full_stall_cycles += tile_collect_context_full_stall;
     layer_perf.hw_collect_column_empty_wait_cycles += tile_collect_column_empty_wait;
     layer_perf.hw_collectperf_version = tile_collectperf_version;
+    layer_perf.hw_pass_count += tile_pass_count;
+    layer_perf.hw_pass_start_to_first_fire_cycles += tile_pass_start_to_first;
+    layer_perf.hw_pass_first_to_last_fire_cycles += tile_pass_first_to_last;
+    layer_perf.hw_pass_last_fire_to_done_cycles += tile_pass_last_to_done;
+    layer_perf.hw_pass_collect_first_wait_cycles += tile_pass_collect_first_wait;
+    layer_perf.hw_pass_collect_column_empty_cycles += tile_pass_collect_column_empty;
+    layer_perf.hw_pass_replay_during_compute_cycles += tile_pass_replay_during_compute;
+    layer_perf.hw_pass_compute_idle_stage_cycles += tile_pass_compute_idle;
+    layer_perf.hw_passperf_version = tile_passperf_version;
     layer_perf.vector_packets += tile_vector_packets;
     layer_perf.vector_pixels += tile_vector_pixels;
     layer_perf.vector_beats += tile_vector_beats;
@@ -2165,6 +2365,28 @@ static int run_one_tile_batch(
     uint32_t tile_collect_context_full_stall = rd32(ACCEL_BASE_ADDR, ACCEL_COLLECT_CONTEXT_FULL_STALL);
     uint32_t tile_collect_column_empty_wait = rd32(ACCEL_BASE_ADDR, ACCEL_COLLECT_COLUMN_EMPTY_WAIT);
     uint32_t tile_collectperf_version = rd32(ACCEL_BASE_ADDR, ACCEL_COLLECTPERF_VERSION);
+    uint32_t tile_pass_count = rd32(ACCEL_BASE_ADDR, ACCEL_PASS_COUNT);
+    uint32_t tile_pass_start_to_first = rd32(ACCEL_BASE_ADDR, ACCEL_PASS_START_TO_FIRST_FIRE);
+    uint32_t tile_pass_first_to_last = rd32(ACCEL_BASE_ADDR, ACCEL_PASS_FIRST_TO_LAST_FIRE);
+    uint32_t tile_pass_last_to_done = rd32(ACCEL_BASE_ADDR, ACCEL_PASS_LAST_FIRE_TO_DONE);
+    uint32_t tile_pass_collect_first_wait = rd32(ACCEL_BASE_ADDR, ACCEL_PASS_COLLECT_FIRST_WAIT);
+    uint32_t tile_pass_collect_column_empty = rd32(ACCEL_BASE_ADDR, ACCEL_PASS_COLLECT_COLUMN_EMPTY);
+    uint32_t tile_pass_replay_during_compute = rd32(ACCEL_BASE_ADDR, ACCEL_PASS_REPLAY_DURING_COMPUTE);
+    uint32_t tile_pass_compute_idle = rd32(ACCEL_BASE_ADDR, ACCEL_PASS_COMPUTE_IDLE_STAGE);
+    uint32_t tile_trace_weight_done = rd32(ACCEL_BASE_ADDR, ACCEL_TRACE_WEIGHT_DONE);
+    uint32_t tile_trace_feed_start = rd32(ACCEL_BASE_ADDR, ACCEL_TRACE_FEED_START);
+    uint32_t tile_trace_feed_ready = rd32(ACCEL_BASE_ADDR, ACCEL_TRACE_FEED_READY);
+    uint32_t tile_trace_feed_done = rd32(ACCEL_BASE_ADDR, ACCEL_TRACE_FEED_DONE);
+    uint32_t tile_trace_compute_start = rd32(ACCEL_BASE_ADDR, ACCEL_TRACE_COMPUTE_START);
+    uint32_t tile_trace_first_fire = rd32(ACCEL_BASE_ADDR, ACCEL_TRACE_FIRST_FIRE);
+    uint32_t tile_trace_last_fire = rd32(ACCEL_BASE_ADDR, ACCEL_TRACE_LAST_FIRE);
+    uint32_t tile_trace_compute_done = rd32(ACCEL_BASE_ADDR, ACCEL_TRACE_COMPUTE_DONE);
+    uint32_t tile_trace_collect_first = rd32(ACCEL_BASE_ADDR, ACCEL_TRACE_COLLECT_FIRST);
+    uint32_t tile_trace_collect_last = rd32(ACCEL_BASE_ADDR, ACCEL_TRACE_COLLECT_LAST);
+    uint32_t tile_trace_pass_done = rd32(ACCEL_BASE_ADDR, ACCEL_TRACE_PASS_DONE);
+    uint32_t tile_passperf_version_raw = rd32(ACCEL_BASE_ADDR, ACCEL_PASSPERF_VERSION);
+    uint32_t tile_pass_trace_valid = tile_passperf_version_raw >> 31;
+    uint32_t tile_passperf_version = tile_passperf_version_raw & 0x7fffffffU;
     uint32_t tile_vector_packets = rd32(ACCEL_BASE_ADDR, ACCEL_VECTOR_PACKETS);
     uint32_t tile_vector_pixels = rd32(ACCEL_BASE_ADDR, ACCEL_VECTOR_PIXELS);
     uint32_t tile_vector_beats = rd32(ACCEL_BASE_ADDR, ACCEL_VECTOR_BEATS);
@@ -2189,6 +2411,9 @@ static int run_one_tile_batch(
         "vector_packets=%lu vector_pixels=%lu vector_beats=%lu vector_stalls=%lu "
         "raw_load_active=%lu raw_load_unpack=%lu raw_replay_active=%lu "
         "raw_replay_wait_ready=%lu "
+        "pass_count=%lu pass_start_to_first=%lu pass_fire_span=%lu "
+        "pass_tail=%lu pass_collect_wait=%lu pass_collect_empty=%lu "
+        "pass_replay_compute=%lu pass_compute_idle=%lu passperf_version=%lu "
         "subperf_version=%lu\r\n",
         layer->name,
         (unsigned long)tile_index,
@@ -2238,7 +2463,42 @@ static int run_one_tile_batch(
         (unsigned long)tile_raw_load_unpack,
         (unsigned long)tile_raw_replay_active,
         (unsigned long)tile_raw_replay_wait_ready,
+        (unsigned long)tile_pass_count,
+        (unsigned long)tile_pass_start_to_first,
+        (unsigned long)tile_pass_first_to_last,
+        (unsigned long)tile_pass_last_to_done,
+        (unsigned long)tile_pass_collect_first_wait,
+        (unsigned long)tile_pass_collect_column_empty,
+        (unsigned long)tile_pass_replay_during_compute,
+        (unsigned long)tile_pass_compute_idle,
+        (unsigned long)tile_passperf_version,
         (unsigned long)tile_subperf_version);
+    if ((tile_pass_trace_valid != 0U) &&
+        layer_uses_raw_hwc(layer) &&
+        (tile_index == 0U)) {
+        xil_printf(
+            "PASSTRACE layer=%s tile=%lu cout_block=%lu k_pass=%lu "
+            "weight_done=%lu feed_start=%lu feed_ready=%lu feed_done=%lu "
+            "compute_start=%lu first_fire=%lu last_fire=%lu compute_done=%lu "
+            "collect_first=%lu collect_last=%lu pass_done=%lu version=%lu\r\n",
+            layer->name,
+            (unsigned long)tile_index,
+            (unsigned long)ACCEL_PASS_TRACE_COUT_BLOCK,
+            (unsigned long)ACCEL_PASS_TRACE_K_PASS,
+            (unsigned long)tile_trace_weight_done,
+            (unsigned long)tile_trace_feed_start,
+            (unsigned long)tile_trace_feed_ready,
+            (unsigned long)tile_trace_feed_done,
+            (unsigned long)tile_trace_compute_start,
+            (unsigned long)tile_trace_first_fire,
+            (unsigned long)tile_trace_last_fire,
+            (unsigned long)tile_trace_compute_done,
+            (unsigned long)tile_trace_collect_first,
+            (unsigned long)tile_trace_collect_last,
+            (unsigned long)tile_trace_pass_done,
+            (unsigned long)tile_passperf_version);
+        print_coltrace(layer, tile_index);
+    }
 #endif
 
     layer_perf.hw_busy_cycles += tile_busy;
@@ -2294,6 +2554,15 @@ static int run_one_tile_batch(
     layer_perf.hw_collect_context_full_stall_cycles += tile_collect_context_full_stall;
     layer_perf.hw_collect_column_empty_wait_cycles += tile_collect_column_empty_wait;
     layer_perf.hw_collectperf_version = tile_collectperf_version;
+    layer_perf.hw_pass_count += tile_pass_count;
+    layer_perf.hw_pass_start_to_first_fire_cycles += tile_pass_start_to_first;
+    layer_perf.hw_pass_first_to_last_fire_cycles += tile_pass_first_to_last;
+    layer_perf.hw_pass_last_fire_to_done_cycles += tile_pass_last_to_done;
+    layer_perf.hw_pass_collect_first_wait_cycles += tile_pass_collect_first_wait;
+    layer_perf.hw_pass_collect_column_empty_cycles += tile_pass_collect_column_empty;
+    layer_perf.hw_pass_replay_during_compute_cycles += tile_pass_replay_during_compute;
+    layer_perf.hw_pass_compute_idle_stage_cycles += tile_pass_compute_idle;
+    layer_perf.hw_passperf_version = tile_passperf_version;
     layer_perf.vector_packets += tile_vector_packets;
     layer_perf.vector_pixels += tile_vector_pixels;
     layer_perf.vector_beats += tile_vector_beats;
@@ -2358,8 +2627,19 @@ static int configure_layer(const chain_layer_t *layer)
              ((ACCEL_PSUM_STREAM_OVERLAP && layer_uses_raw_hwc(layer)) ?
               ACCEL_STREAM_CFG_PSUM_STREAM_OVERLAP : 0U) |
              ((ACCEL_CONTINUOUS_PSUM && layer_uses_raw_hwc(layer)) ?
-              ACCEL_STREAM_CFG_CONTINUOUS_PSUM : 0U)) :
+              ACCEL_STREAM_CFG_CONTINUOUS_PSUM : 0U) |
+             ((ACCEL_COLUMN_PSUM && layer_uses_raw_hwc(layer)) ?
+              ACCEL_STREAM_CFG_COLUMN_PSUM : 0U) |
+             ((ACCEL_DURING_COMPUTE_PREFETCH && layer_uses_raw_hwc(layer)) ?
+              ACCEL_STREAM_CFG_DURING_COMPUTE_PREFETCH : 0U)) :
             0U);
+    wr32(
+        ACCEL_BASE_ADDR,
+        ACCEL_PASSTRACE_SELECT,
+        (ACCEL_PASS_TRACE_ENABLE ? 0x80000000U : 0U) |
+        ((ACCEL_PASS_TRACE_COUT_BLOCK & 0xffU) << 16) |
+        (ACCEL_PASS_TRACE_K_PASS & 0xffffU));
+    wr32(ACCEL_BASE_ADDR, ACCEL_COLTRACE_CTRL, 0U);
     if (program_quant_tile(layer) != 0) {
         return -1;
     }

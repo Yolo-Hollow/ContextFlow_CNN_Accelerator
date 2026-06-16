@@ -75,6 +75,9 @@ module systolic_top_feeder #(
     input                       psum_stream_valid,
     input                       psum_stream_compute_ready,
     input                       use_psum_stream,
+    input  [COLS*2*PSUM_W-1:0]  psum_column_stream_data,
+    input  [COLS-1:0]           psum_column_stream_valid,
+    input                       use_column_psum_stream,
 
     input  [ROWS-1:0]            wgt_fifo_wr_en,
     input  [ROWS*WEIGHT_W*2-1:0] wgt_fifo_wr_data,
@@ -83,6 +86,7 @@ module systolic_top_feeder #(
     input  [31:0]              psum_fifo_rd_en,
     output [COLS*PSUM_W*2-1:0] psum_fifo_rd_data,
     output [31:0]              psum_fifo_empty,
+    output [31:0]              psum_fifo_wr_en_dbg,
 
     output [ROWS-1:0] ifm_fifo_full
 );
@@ -204,6 +208,7 @@ module systolic_top_feeder #(
         .start(compute_start),
         .num_pixels(num_pixels),
         .tail_cycles_config(tail_cycles_config),
+        .hold_compute_count_on_stall(vector_mode),
         .done(compute_done),
         .compute_fire_out(compute_fire_out),
         .perf_comp_wload(perf_comp_wload),
@@ -239,11 +244,15 @@ module systolic_top_feeder #(
         .psum_stream_valid(psum_stream_valid),
         .psum_stream_compute_ready(psum_stream_compute_ready),
         .use_psum_stream(use_psum_stream),
+        .psum_column_stream_data(psum_column_stream_data),
+        .psum_column_stream_valid(psum_column_stream_valid),
+        .use_column_psum_stream(use_column_psum_stream),
         .wgt_fifo_wr_en(wgt_fifo_wr_en),
         .wgt_fifo_wr_data(wgt_fifo_wr_data),
         .wgt_fifo_full(wgt_fifo_full),
         .psum_fifo_rd_en(psum_fifo_rd_en),
         .psum_fifo_rd_data(psum_fifo_rd_data),
-        .psum_fifo_empty(psum_fifo_empty)
+        .psum_fifo_empty(psum_fifo_empty),
+        .psum_fifo_wr_en_dbg(psum_fifo_wr_en_dbg)
     );
 endmodule

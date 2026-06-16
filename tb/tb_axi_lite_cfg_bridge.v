@@ -45,6 +45,10 @@ module tb_axi_lite_cfg_bridge;
     wire stream_raw_hwc_mode;
     wire early_drain_enable;
     wire pass_prefetch_enable;
+    wire psum_stream_overlap_enable;
+    wire continuous_psum_enable;
+    wire column_psum_enable;
+    wire during_compute_prefetch_enable;
     wire [31:0] stream_bias_packets;
     wire [31:0] stream_weight_packets;
     wire [31:0] stream_ifm_packets;
@@ -126,6 +130,10 @@ module tb_axi_lite_cfg_bridge;
         .stream_raw_hwc_mode(stream_raw_hwc_mode),
         .early_drain_enable(early_drain_enable),
         .pass_prefetch_enable(pass_prefetch_enable),
+        .psum_stream_overlap_enable(psum_stream_overlap_enable),
+        .continuous_psum_enable(continuous_psum_enable),
+        .column_psum_enable(column_psum_enable),
+        .during_compute_prefetch_enable(during_compute_prefetch_enable),
         .stream_bias_packets(stream_bias_packets),
         .stream_weight_packets(stream_weight_packets),
         .stream_ifm_packets(stream_ifm_packets),
@@ -306,16 +314,20 @@ module tb_axi_lite_cfg_bridge;
         axi_write(8'h24, 32'd6, 4'hf);
         axi_write(8'h3c, 32'd36, 4'hf);
         axi_write(8'h40, {28'd0, 2'd2, 1'b0, 1'b1}, 4'hf);
-        axi_write(8'h64, 32'd15, 4'hf);
+        axi_write(8'h64, 32'd255, 4'hf);
         axi_write(8'h68, 32'd7, 4'hf);
         axi_write(8'h6c, 32'd11, 4'hf);
         axi_write(8'h70, 32'd13, 4'hf);
         axi_read(8'h64, rd);
-        check_eq(rd, 32'd15, "stream cfg read");
+        check_eq(rd, 32'd255, "stream cfg read");
         check_eq({31'd0, stream_batch_mode}, 32'd1, "stream batch output");
         check_eq({31'd0, stream_raw_hwc_mode}, 32'd1, "stream raw hwc output");
         check_eq({31'd0, early_drain_enable}, 32'd1, "early drain output");
         check_eq({31'd0, pass_prefetch_enable}, 32'd1, "pass prefetch output");
+        check_eq({31'd0, psum_stream_overlap_enable}, 32'd1, "psum stream overlap output");
+        check_eq({31'd0, continuous_psum_enable}, 32'd1, "continuous psum output");
+        check_eq({31'd0, column_psum_enable}, 32'd1, "column psum output");
+        check_eq({31'd0, during_compute_prefetch_enable}, 32'd1, "during compute prefetch output");
         axi_read(8'h74, rd);
         check_eq(rd, 32'd7, "stream bias completed read");
         axi_read(8'h78, rd);

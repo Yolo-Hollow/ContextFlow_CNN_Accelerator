@@ -33,7 +33,8 @@
 //                        bit2 enables experimental early PSUM drain,
 //                        bit3 enables experimental next-pass prefetch,
 //                        bit4 enables experimental partial-PSUM overlap,
-//                        bit5 enables experimental continuous PSUM collector
+//                        bit5 enables experimental continuous PSUM collector,
+//                        bit6 enables experimental column-level partial PSUM
 //   0x1a BIAS_PACKETS:   expected bias packets for the current tile
 //   0x1b WEIGHT_PACKETS: expected weight packets for the current tile
 //   0x1c IFM_PACKETS:    expected IFM line packets for the current tile
@@ -94,6 +95,26 @@
 //   0x56 COLLECT_CONTEXT_FULL_STALL: cycles compute start waited for context space
 //   0x57 COLLECT_COLUMN_EMPTY_WAIT: collector cycles waiting for any column FIFO
 //   0x58 COLLECTPERF_VERSION: fixed continuous collector counter map version
+//   0x59 PASSTRACE_SELECT: bit31=enable, [23:16]=cout block, [15:0]=K pass
+//   0x5a PASS_COUNT: compute pass count observed by timeline monitor
+//   0x5b PASS_START_TO_FIRST: sum compute_start -> first compute_fire cycles
+//   0x5c PASS_FIRST_TO_LAST: sum first compute_fire -> last compute_fire cycles
+//   0x5d PASS_LAST_TO_DONE: sum last compute_fire -> compute_done cycles
+//   0x5e PASS_COLLECT_FIRST_WAIT: sum compute_start -> first collector packet
+//   0x5f PASS_COLLECT_COLUMN_EMPTY: collector column-empty wait cycles
+//   0x60 PASS_REPLAY_DURING_COMPUTE: raw replay active while pass compute is active
+//   0x61 PASS_COMPUTE_IDLE_STAGE: stage-compute cycles without compute_fire
+//   0x62..0x6c PASSTRACE timestamps for selected pass
+//   0x6d PASSPERF_VERSION: bit31=trace_valid, [30:0]=version
+//   0x6e COLTRACE_CTRL: read bit31=valid, [4:0]=selected column
+//   0x6f COLTRACE_FIRST_WR: selected column first PSUM FIFO write timestamp
+//   0x70 COLTRACE_LAST_WR: selected column last PSUM FIFO write timestamp
+//   0x71 COLTRACE_WR_COUNT: selected column writes captured for selected pass
+//   0x72 COLTRACE_EMPTY_WAIT: cycles selected column blocked collector reads
+//   0x73 COLTRACE_MISSING_OR: OR of missing-column masks during collector waits
+//   0x74 COLTRACE_MISSING_FIRST: first missing-column mask
+//   0x75 COLTRACE_MISSING_LAST: most recent missing-column mask
+//   0x76 COLTRACE_VERSION: fixed column-trace register map version
 module layer_config_regs #(
     parameter IFM_FIFO_DEPTH = 1024,
     parameter [15:0] RAW_HWC_COMPUTE_START_LEVEL = 16'd0
@@ -157,6 +178,34 @@ module layer_config_regs #(
     input         perf_collect_context_pop,
     input         perf_collect_context_full_stall,
     input         perf_collect_column_empty_wait,
+    input  [31:0] perf_pass_count,
+    input  [31:0] perf_pass_start_to_first_fire,
+    input  [31:0] perf_pass_first_to_last_fire,
+    input  [31:0] perf_pass_last_fire_to_done,
+    input  [31:0] perf_pass_collect_first_wait,
+    input  [31:0] perf_pass_collect_column_empty,
+    input  [31:0] perf_pass_replay_active_during_compute,
+    input  [31:0] perf_pass_compute_idle_in_stage,
+    input  [31:0] pass_trace_weight_done,
+    input  [31:0] pass_trace_feed_start,
+    input  [31:0] pass_trace_feed_ready,
+    input  [31:0] pass_trace_feed_done,
+    input  [31:0] pass_trace_compute_start,
+    input  [31:0] pass_trace_first_fire,
+    input  [31:0] pass_trace_last_fire,
+    input  [31:0] pass_trace_compute_done,
+    input  [31:0] pass_trace_collect_first,
+    input  [31:0] pass_trace_collect_last,
+    input  [31:0] pass_trace_pass_done,
+    input         pass_trace_valid,
+    input  [31:0] col_trace_first_wr,
+    input  [31:0] col_trace_last_wr,
+    input  [31:0] col_trace_wr_count,
+    input  [31:0] col_trace_empty_wait,
+    input  [31:0] col_trace_missing_mask_or,
+    input  [31:0] col_trace_missing_mask_first,
+    input  [31:0] col_trace_missing_mask_last,
+    input         col_trace_valid,
     input  [31:0] stream_bias_completed,
     input  [31:0] stream_weight_completed,
     input  [31:0] stream_ifm_completed,
@@ -194,11 +243,17 @@ module layer_config_regs #(
     output reg        pass_prefetch_enable,
     output reg        psum_stream_overlap_enable,
     output reg        continuous_psum_enable,
+    output reg        column_psum_enable,
+    output reg        during_compute_prefetch_enable,
     output reg [31:0] stream_bias_packets,
     output reg [31:0] stream_weight_packets,
     output reg [31:0] stream_ifm_packets,
     output reg [15:0] tail_cycles_config,
     output reg [15:0] raw_hwc_compute_start_level,
+    output reg        pass_trace_enable,
+    output reg [7:0]  pass_trace_cout_block,
+    output reg [15:0] pass_trace_k_pass,
+    output reg [4:0]  col_trace_selected_col,
     output reg        config_error
 );
     reg done_sticky;
@@ -282,11 +337,17 @@ module layer_config_regs #(
             pass_prefetch_enable <= 1'b0;
             psum_stream_overlap_enable <= 1'b0;
             continuous_psum_enable <= 1'b0;
+            column_psum_enable <= 1'b0;
+            during_compute_prefetch_enable <= 1'b0;
             stream_bias_packets <= 32'd0;
             stream_weight_packets <= 32'd0;
             stream_ifm_packets <= 32'd0;
             tail_cycles_config <= 16'd0;
             raw_hwc_compute_start_level <= RAW_HWC_COMPUTE_START_LEVEL;
+            pass_trace_enable <= 1'b0;
+            pass_trace_cout_block <= 8'd0;
+            pass_trace_k_pass <= 16'd0;
+            col_trace_selected_col <= 5'd0;
             config_error <= 1'b0;
             perf_busy_cycles <= 32'd0;
             perf_wait_any_cycles <= 32'd0;
@@ -533,6 +594,8 @@ module layer_config_regs #(
                             pass_prefetch_enable <= cfg_wdata[3];
                             psum_stream_overlap_enable <= cfg_wdata[4];
                             continuous_psum_enable <= cfg_wdata[5];
+                            column_psum_enable <= cfg_wdata[6];
+                            during_compute_prefetch_enable <= cfg_wdata[7];
                         end
                     end
                     7'h1a: if (cfg_idle) stream_bias_packets <= cfg_wdata;
@@ -542,6 +605,13 @@ module layer_config_regs #(
                         tail_cycles_config <= cfg_wdata[15:0];
                         raw_hwc_compute_start_level <= cfg_wdata[31:16];
                     end
+                    7'h59: if (cfg_idle) begin
+                        pass_trace_enable <= cfg_wdata[31];
+                        pass_trace_cout_block <= cfg_wdata[23:16];
+                        pass_trace_k_pass <= cfg_wdata[15:0];
+                    end
+                    7'h6e: if (cfg_idle)
+                        col_trace_selected_col <= cfg_wdata[4:0];
                     default: begin end
                 endcase
             end
@@ -575,7 +645,9 @@ module layer_config_regs #(
             7'h16: cfg_rdata = perf_wait_ifm_cycles;
             7'h17: cfg_rdata = perf_wait_ofm_cycles;
             7'h18: cfg_rdata = perf_compute_cycles;
-            7'h19: cfg_rdata = {26'd0, continuous_psum_enable,
+            7'h19: cfg_rdata = {24'd0, during_compute_prefetch_enable,
+                                column_psum_enable,
+                                continuous_psum_enable,
                                 psum_stream_overlap_enable,
                                 pass_prefetch_enable, early_drain_enable,
                                 stream_raw_hwc_mode, stream_batch_mode};
@@ -638,6 +710,38 @@ module layer_config_regs #(
             7'h56: cfg_rdata = perf_collect_context_full_stall_cycles;
             7'h57: cfg_rdata = perf_collect_column_empty_wait_cycles;
             7'h58: cfg_rdata = 32'd1;
+            7'h59: cfg_rdata = {pass_trace_enable, 7'd0,
+                                pass_trace_cout_block, pass_trace_k_pass};
+            7'h5a: cfg_rdata = perf_pass_count;
+            7'h5b: cfg_rdata = perf_pass_start_to_first_fire;
+            7'h5c: cfg_rdata = perf_pass_first_to_last_fire;
+            7'h5d: cfg_rdata = perf_pass_last_fire_to_done;
+            7'h5e: cfg_rdata = perf_pass_collect_first_wait;
+            7'h5f: cfg_rdata = perf_pass_collect_column_empty;
+            7'h60: cfg_rdata = perf_pass_replay_active_during_compute;
+            7'h61: cfg_rdata = perf_pass_compute_idle_in_stage;
+            7'h62: cfg_rdata = pass_trace_weight_done;
+            7'h63: cfg_rdata = pass_trace_feed_start;
+            7'h64: cfg_rdata = pass_trace_feed_ready;
+            7'h65: cfg_rdata = pass_trace_feed_done;
+            7'h66: cfg_rdata = pass_trace_compute_start;
+            7'h67: cfg_rdata = pass_trace_first_fire;
+            7'h68: cfg_rdata = pass_trace_last_fire;
+            7'h69: cfg_rdata = pass_trace_compute_done;
+            7'h6a: cfg_rdata = pass_trace_collect_first;
+            7'h6b: cfg_rdata = pass_trace_collect_last;
+            7'h6c: cfg_rdata = pass_trace_pass_done;
+            7'h6d: cfg_rdata = {pass_trace_valid, 31'd1};
+            7'h6e: cfg_rdata = {col_trace_valid, 26'd0,
+                                col_trace_selected_col};
+            7'h6f: cfg_rdata = col_trace_first_wr;
+            7'h70: cfg_rdata = col_trace_last_wr;
+            7'h71: cfg_rdata = col_trace_wr_count;
+            7'h72: cfg_rdata = col_trace_empty_wait;
+            7'h73: cfg_rdata = col_trace_missing_mask_or;
+            7'h74: cfg_rdata = col_trace_missing_mask_first;
+            7'h75: cfg_rdata = col_trace_missing_mask_last;
+            7'h76: cfg_rdata = 32'd1;
             default: cfg_rdata = 32'd0;
         endcase
     end

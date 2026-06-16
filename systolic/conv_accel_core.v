@@ -181,6 +181,38 @@ module conv_accel_core #(
     wire perf_collect_context_pop;
     wire perf_collect_context_full_stall;
     wire perf_collect_column_empty_wait;
+    wire [31:0] perf_pass_count;
+    wire [31:0] perf_pass_start_to_first_fire;
+    wire [31:0] perf_pass_first_to_last_fire;
+    wire [31:0] perf_pass_last_fire_to_done;
+    wire [31:0] perf_pass_collect_first_wait;
+    wire [31:0] perf_pass_collect_column_empty;
+    wire [31:0] perf_pass_replay_active_during_compute;
+    wire [31:0] perf_pass_compute_idle_in_stage;
+    wire [31:0] pass_trace_weight_done;
+    wire [31:0] pass_trace_feed_start;
+    wire [31:0] pass_trace_feed_ready;
+    wire [31:0] pass_trace_feed_done;
+    wire [31:0] pass_trace_compute_start;
+    wire [31:0] pass_trace_first_fire;
+    wire [31:0] pass_trace_last_fire;
+    wire [31:0] pass_trace_compute_done;
+    wire [31:0] pass_trace_collect_first;
+    wire [31:0] pass_trace_collect_last;
+    wire [31:0] pass_trace_pass_done;
+    wire pass_trace_valid;
+    wire [31:0] col_trace_first_wr;
+    wire [31:0] col_trace_last_wr;
+    wire [31:0] col_trace_wr_count;
+    wire [31:0] col_trace_empty_wait;
+    wire [31:0] col_trace_missing_mask_or;
+    wire [31:0] col_trace_missing_mask_first;
+    wire [31:0] col_trace_missing_mask_last;
+    wire col_trace_valid;
+    wire pass_trace_enable;
+    wire [7:0] pass_trace_cout_block;
+    wire [15:0] pass_trace_k_pass;
+    wire [4:0] col_trace_selected_col;
     wire [31:0] layer_cfg_rdata;
     wire [8:0] fm_h;
     wire [8:0] fm_w;
@@ -206,12 +238,17 @@ module conv_accel_core #(
     wire pass_prefetch_enable;
     wire psum_stream_overlap_enable;
     wire continuous_psum_enable;
+    wire column_psum_enable;
+    wire during_compute_prefetch_enable;
     wire [31:0] stream_bias_packets;
     wire [31:0] stream_weight_packets;
     wire [31:0] stream_ifm_packets;
     wire [15:0] tail_cycles_config;
     wire [15:0] raw_hwc_compute_start_level;
     wire config_error;
+    reg [31:0] raw_hwc_replay_active_cycles_q;
+    wire raw_hwc_replay_active_event =
+        raw_hwc_replay_active_cycles != raw_hwc_replay_active_cycles_q;
     wire [OFM_ADDR_W-1:0] tile_pixel_base_ext = tile_pixel_base[OFM_ADDR_W-1:0];
     wire [COLS*2*MULT_W-1:0] quant_mult_flat;
     wire [COLS*2*SHIFT_W-1:0] quant_shift_flat;
@@ -231,6 +268,13 @@ module conv_accel_core #(
     wire [7:0] merged_act_lut_wr_data = cfg_lut_wr_en ? cfg_wdata[7:0] : act_lut_wr_data;
 
     integer lut_i;
+
+    always @(posedge clk) begin
+        if (rst)
+            raw_hwc_replay_active_cycles_q <= 32'd0;
+        else
+            raw_hwc_replay_active_cycles_q <= raw_hwc_replay_active_cycles;
+    end
 
     assign configured_cout_total = cout_total;
     assign configured_k_total = k_total;
@@ -337,6 +381,34 @@ module conv_accel_core #(
         .perf_collect_context_pop(perf_collect_context_pop),
         .perf_collect_context_full_stall(perf_collect_context_full_stall),
         .perf_collect_column_empty_wait(perf_collect_column_empty_wait),
+        .perf_pass_count(perf_pass_count),
+        .perf_pass_start_to_first_fire(perf_pass_start_to_first_fire),
+        .perf_pass_first_to_last_fire(perf_pass_first_to_last_fire),
+        .perf_pass_last_fire_to_done(perf_pass_last_fire_to_done),
+        .perf_pass_collect_first_wait(perf_pass_collect_first_wait),
+        .perf_pass_collect_column_empty(perf_pass_collect_column_empty),
+        .perf_pass_replay_active_during_compute(perf_pass_replay_active_during_compute),
+        .perf_pass_compute_idle_in_stage(perf_pass_compute_idle_in_stage),
+        .pass_trace_weight_done(pass_trace_weight_done),
+        .pass_trace_feed_start(pass_trace_feed_start),
+        .pass_trace_feed_ready(pass_trace_feed_ready),
+        .pass_trace_feed_done(pass_trace_feed_done),
+        .pass_trace_compute_start(pass_trace_compute_start),
+        .pass_trace_first_fire(pass_trace_first_fire),
+        .pass_trace_last_fire(pass_trace_last_fire),
+        .pass_trace_compute_done(pass_trace_compute_done),
+        .pass_trace_collect_first(pass_trace_collect_first),
+        .pass_trace_collect_last(pass_trace_collect_last),
+        .pass_trace_pass_done(pass_trace_pass_done),
+        .pass_trace_valid(pass_trace_valid),
+        .col_trace_first_wr(col_trace_first_wr),
+        .col_trace_last_wr(col_trace_last_wr),
+        .col_trace_wr_count(col_trace_wr_count),
+        .col_trace_empty_wait(col_trace_empty_wait),
+        .col_trace_missing_mask_or(col_trace_missing_mask_or),
+        .col_trace_missing_mask_first(col_trace_missing_mask_first),
+        .col_trace_missing_mask_last(col_trace_missing_mask_last),
+        .col_trace_valid(col_trace_valid),
         .stream_bias_completed(stream_bias_completed),
         .stream_weight_completed(stream_weight_completed),
         .stream_ifm_completed(stream_ifm_completed),
@@ -364,11 +436,17 @@ module conv_accel_core #(
         .pass_prefetch_enable(pass_prefetch_enable),
         .psum_stream_overlap_enable(psum_stream_overlap_enable),
         .continuous_psum_enable(continuous_psum_enable),
+        .column_psum_enable(column_psum_enable),
+        .during_compute_prefetch_enable(during_compute_prefetch_enable),
         .stream_bias_packets(stream_bias_packets),
         .stream_weight_packets(stream_weight_packets),
         .stream_ifm_packets(stream_ifm_packets),
         .tail_cycles_config(tail_cycles_config),
         .raw_hwc_compute_start_level(raw_hwc_compute_start_level),
+        .pass_trace_enable(pass_trace_enable),
+        .pass_trace_cout_block(pass_trace_cout_block),
+        .pass_trace_k_pass(pass_trace_k_pass),
+        .col_trace_selected_col(col_trace_selected_col),
         .config_error(config_error)
     );
 
@@ -433,6 +511,34 @@ module conv_accel_core #(
         .perf_collect_context_pop(perf_collect_context_pop),
         .perf_collect_context_full_stall(perf_collect_context_full_stall),
         .perf_collect_column_empty_wait(perf_collect_column_empty_wait),
+        .perf_pass_count(perf_pass_count),
+        .perf_pass_start_to_first_fire(perf_pass_start_to_first_fire),
+        .perf_pass_first_to_last_fire(perf_pass_first_to_last_fire),
+        .perf_pass_last_fire_to_done(perf_pass_last_fire_to_done),
+        .perf_pass_collect_first_wait(perf_pass_collect_first_wait),
+        .perf_pass_collect_column_empty(perf_pass_collect_column_empty),
+        .perf_pass_replay_active_during_compute(perf_pass_replay_active_during_compute),
+        .perf_pass_compute_idle_in_stage(perf_pass_compute_idle_in_stage),
+        .pass_trace_weight_done(pass_trace_weight_done),
+        .pass_trace_feed_start(pass_trace_feed_start),
+        .pass_trace_feed_ready(pass_trace_feed_ready),
+        .pass_trace_feed_done(pass_trace_feed_done),
+        .pass_trace_compute_start(pass_trace_compute_start),
+        .pass_trace_first_fire(pass_trace_first_fire),
+        .pass_trace_last_fire(pass_trace_last_fire),
+        .pass_trace_compute_done(pass_trace_compute_done),
+        .pass_trace_collect_first(pass_trace_collect_first),
+        .pass_trace_collect_last(pass_trace_collect_last),
+        .pass_trace_pass_done(pass_trace_pass_done),
+        .pass_trace_valid(pass_trace_valid),
+        .col_trace_first_wr(col_trace_first_wr),
+        .col_trace_last_wr(col_trace_last_wr),
+        .col_trace_wr_count(col_trace_wr_count),
+        .col_trace_empty_wait(col_trace_empty_wait),
+        .col_trace_missing_mask_or(col_trace_missing_mask_or),
+        .col_trace_missing_mask_first(col_trace_missing_mask_first),
+        .col_trace_missing_mask_last(col_trace_missing_mask_last),
+        .col_trace_valid(col_trace_valid),
         .fm_h(fm_h), .fm_w(fm_w), .ofm_h(ofm_h), .ofm_w(ofm_w),
         .conv_stride(conv_stride), .conv_pad(conv_pad), .kernel_1x1(kernel_1x1),
         .stream_raw_hwc_mode(stream_raw_hwc_mode),
@@ -443,6 +549,13 @@ module conv_accel_core #(
         .pass_prefetch_enable(pass_prefetch_enable),
         .psum_stream_overlap_enable(psum_stream_overlap_enable),
         .continuous_psum_enable(continuous_psum_enable),
+        .column_psum_enable(column_psum_enable),
+        .during_compute_prefetch_enable(during_compute_prefetch_enable),
+        .pass_trace_enable(pass_trace_enable),
+        .pass_trace_cout_block(pass_trace_cout_block),
+        .pass_trace_k_pass(pass_trace_k_pass),
+        .col_trace_selected_col(col_trace_selected_col),
+        .raw_replay_active(raw_hwc_replay_active_event),
         .tile_oy_base(tile_oy_base), .tile_ofm_h(tile_ofm_h),
         .tile_pixel_base(tile_pixel_base_ext),
         .pool_enable(pool_enable), .pool_stride(pool_stride),

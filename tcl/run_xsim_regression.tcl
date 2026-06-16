@@ -9,8 +9,11 @@ set tail_cycles 0
 set raw_hwc_compute_start_level 0
 set early_drain 0
 set pass_prefetch 0
+set during_compute_prefetch 0
 set psum_stream_overlap 0
 set continuous_psum 0
+set column_psum 0
+set coredbg 0
 for {set i 0} {$i < [llength $argv]} {incr i} {
     set arg [lindex $argv $i]
     if {$arg eq "-top"} {
@@ -36,10 +39,16 @@ for {set i 0} {$i < [llength $argv]} {incr i} {
         set early_drain 1
     } elseif {$arg eq "-pass_prefetch"} {
         set pass_prefetch 1
+    } elseif {$arg eq "-during_compute_prefetch"} {
+        set during_compute_prefetch 1
     } elseif {$arg eq "-psum_stream_overlap"} {
         set psum_stream_overlap 1
     } elseif {$arg eq "-continuous_psum"} {
         set continuous_psum 1
+    } elseif {$arg eq "-column_psum"} {
+        set column_psum 1
+    } elseif {$arg eq "-coredbg"} {
+        set coredbg 1
     } else {
         error "unknown argument: $arg"
     }
@@ -60,6 +69,8 @@ set common_files {
     systolic/window_feeder.v
     systolic/systolic_top_feeder.v
     systolic/layer_scheduler_stream.v
+    systolic/pass_timeline_monitor.v
+    systolic/coltrace_monitor.v
     systolic/weight_tile_loader.v
     systolic/bias_weight_stream_loader.v
     systolic/axis_bias_weight_loader.v
@@ -68,6 +79,9 @@ set common_files {
     systolic/axis_ifm_vector_loader.v
     systolic/axis_hwc_tile_cache.v
     systolic/psum_pingpong_buffer.v
+    systolic/psum_column_pingpong_buffer.v
+    systolic/psum_column_stream_feeder.v
+    systolic/psum_column_output_collector.v
     systolic/psum_output_collector.v
     systolic/psum_stream_feeder.v
     systolic/psum_drain_writer.v
@@ -152,10 +166,13 @@ set tests {
     {tb_conv_accel_core_axi_lite_axis_stream_conv4_3x3_raw_hwc_ext_tile0_cout16 tb/tb_conv_accel_core_axi_lite_axis_stream_conv4_3x3_raw_hwc_ext_tile0_cout16.v diagnostic}
     {tb_conv_accel_core_axi_lite_axis_stream_conv4_3x3_raw_hwc_ext_tile3_cout16 tb/tb_conv_accel_core_axi_lite_axis_stream_conv4_3x3_raw_hwc_ext_tile3_cout16.v diagnostic}
     {tb_conv_accel_core_axi_lite_axis_stream_conv6_3x3_raw_hwc_ext_tile0_cout16 tb/tb_conv_accel_core_axi_lite_axis_stream_conv6_3x3_raw_hwc_ext_tile0_cout16.v diagnostic}
+    {tb_conv_accel_core_axi_lite_axis_stream_conv6_3x3_raw_hwc_fulltile_cout16 tb/tb_conv_accel_core_axi_lite_axis_stream_conv6_3x3_raw_hwc_fulltile_cout16.v diagnostic}
     {tb_conv_accel_core_axi_lite_axis_stream_conv6_3x3_raw_hwc_ext_tile3_cout16 tb/tb_conv_accel_core_axi_lite_axis_stream_conv6_3x3_raw_hwc_ext_tile3_cout16.v diagnostic}
     {tb_conv_accel_core_axi_lite_axis_stream_conv8_3x3_raw_hwc_ext_tile0_cout16 tb/tb_conv_accel_core_axi_lite_axis_stream_conv8_3x3_raw_hwc_ext_tile0_cout16.v diagnostic}
+    {tb_conv_accel_core_axi_lite_axis_stream_conv8_3x3_raw_hwc_fulltile_cout16 tb/tb_conv_accel_core_axi_lite_axis_stream_conv8_3x3_raw_hwc_fulltile_cout16.v diagnostic}
     {tb_conv_accel_core_axi_lite_axis_stream_conv8_3x3_raw_hwc_ext_tile3_cout16 tb/tb_conv_accel_core_axi_lite_axis_stream_conv8_3x3_raw_hwc_ext_tile3_cout16.v diagnostic}
     {tb_conv_accel_core_axi_lite_axis_stream_conv5_3x3_raw_hwc_ext_tile0_cout16 tb/tb_conv_accel_core_axi_lite_axis_stream_conv5_3x3_raw_hwc_ext_tile0_cout16.v diagnostic}
+    {tb_conv_accel_core_axi_lite_axis_stream_conv5_3x3_raw_hwc_fulltile_cout16 tb/tb_conv_accel_core_axi_lite_axis_stream_conv5_3x3_raw_hwc_fulltile_cout16.v diagnostic}
     {tb_conv_accel_core_axi_lite_axis_stream_conv5_3x3_raw_hwc_overlap64_ext_tile0_cout16 tb/tb_conv_accel_core_axi_lite_axis_stream_conv5_3x3_raw_hwc_overlap64_ext_tile0_cout16.v diagnostic}
     {tb_conv_accel_core_axi_lite_axis_stream_conv5_3x3_raw_hwc_ext_tile3_cout16 tb/tb_conv_accel_core_axi_lite_axis_stream_conv5_3x3_raw_hwc_ext_tile3_cout16.v diagnostic}
     {tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_tiles tb/tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_tiles.v}
@@ -168,6 +185,8 @@ set tests {
     {tb_conv_accel_core_axi_lite_axis_stream_backpressure tb/tb_conv_accel_core_axi_lite_axis_stream_backpressure.v}
     {tb_conv_accel_core_axi_lite_full_stream_backpressure tb/tb_conv_accel_core_axi_lite_full_stream_backpressure.v}
     {tb_layer_config_regs tb/tb_layer_config_regs.v}
+    {tb_pass_timeline_monitor tb/tb_pass_timeline_monitor.v}
+    {tb_coltrace_monitor tb/tb_coltrace_monitor.v}
     {tb_axi_lite_cfg_bridge tb/tb_axi_lite_cfg_bridge.v}
     {tb_requant tb/tb_requant.v}
     {tb_ofm_requant_writer tb/tb_ofm_requant_writer.v}
@@ -181,6 +200,8 @@ set tests {
     {tb_axis_ifm_vector_loader tb/tb_axis_ifm_vector_loader.v}
     {tb_axis_hwc_tile_cache tb/tb_axis_hwc_tile_cache.v}
     {tb_psum_pingpong_buffer_bram tb/tb_psum_pingpong_buffer_bram.v}
+    {tb_psum_stream_feeder tb/tb_psum_stream_feeder.v}
+    {tb_psum_column_stream tb/tb_psum_column_stream.v}
     {tb_psum_output_collector tb/tb_psum_output_collector.v}
     {tb_ifm_fill_handshake tb/tb_ifm_fill_handshake.v}
     {tb_window_extract tb/tb_window_extract.v}
@@ -257,11 +278,20 @@ foreach test $tests {
     if {$pass_prefetch != 0} {
         puts $fh "`define TB_PASS_PREFETCH_OVERRIDE 1"
     }
+    if {$during_compute_prefetch != 0} {
+        puts $fh "`define TB_DURING_COMPUTE_PREFETCH_OVERRIDE 1"
+    }
     if {$psum_stream_overlap != 0} {
         puts $fh "`define TB_PSUM_STREAM_OVERLAP_OVERRIDE 1"
     }
     if {$continuous_psum != 0} {
         puts $fh "`define TB_CONTINUOUS_PSUM_OVERRIDE 1"
+    }
+    if {$column_psum != 0} {
+        puts $fh "`define TB_COLUMN_PSUM_OVERRIDE 1"
+    }
+    if {$coredbg != 0} {
+        puts $fh "`define TB_CONV_ACCEL_CORE_PROGRESS_COREDBG 1"
     }
     close $fh
     exec {*}$xvlog -sv -L work -i [file join $root tb] -log $xvlog_log {*}$srcs >@ stdout 2>@ stderr

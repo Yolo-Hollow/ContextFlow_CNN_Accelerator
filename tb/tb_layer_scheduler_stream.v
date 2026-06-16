@@ -32,6 +32,7 @@ module tb_layer_scheduler_stream;
         .early_drain_enable(1'b0), .psum_drain_data_ready(1'b0),
         .psum_drain_packet_fire(1'b0),
         .pass_prefetch_enable(1'b0),
+        .during_compute_prefetch_enable(1'b0),
         .psum_stream_overlap_enable(1'b0),
         .continuous_psum_enable(1'b0),
         .collector_ctx_ready(1'b1),

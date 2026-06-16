@@ -222,13 +222,14 @@ module axis_hwc_tile_cache #(
     reg replay_active;
     reg replay_valid;
     reg req_armed;
-    reg [15:0] replay_pixel;
-    reg replay_read_en;
-    reg replay_read_pending;
-    reg [8:0] replay_read_rel_y;
-    reg [8:0] replay_read_x;
+    reg [15:0] replay_rd_pixel;
+    reg [15:0] replay_out_pixel;
+    reg [8:0] replay_rd_rel_y;
+    reg [8:0] replay_rd_x;
+    reg [8:0] replay_out_rel_y;
+    reg [8:0] replay_out_x;
     reg [CACHE_AW-1:0] replay_mem_addr;
-    reg [ROWS-1:0] replay_lane_valid;
+    reg [ROWS-1:0] replay_out_lane_valid;
 
     reg cache_wr_en_q;
     reg cache_wr_group_q;
@@ -266,7 +267,14 @@ module axis_hwc_tile_cache #(
     wire [31:0] expected_bytes = cache_pixels * raw_channels;
     wire current_keep = beat_keep[beat_byte_idx];
     wire last_beat_byte = (beat_byte_idx + 1'b1 == KEEP_W);
-    wire replay_last_pixel = (replay_pixel + 1'b1 == num_pixels);
+    wire replay_last_out_pixel = (replay_out_pixel + 1'b1 == num_pixels);
+    wire replay_rd_done = (replay_rd_pixel == num_pixels);
+    wire replay_output_fire = replay_valid && vector_ready;
+    wire replay_can_issue_read =
+        replay_active && !replay_rd_done &&
+        (!replay_valid || vector_ready);
+    wire replay_read_en = replay_can_issue_read;
+    wire [15:0] replay_pixel = replay_out_pixel;
     wire source_byte_done = kernel_1x1 || (load_kernel_pos == 4'd8);
 
     wire [1:0] load_ky = load_kernel_pos / 3;
@@ -361,22 +369,22 @@ module axis_hwc_tile_cache #(
                 (replay_chunk << 1) + LANE_GROUP;
             wire [10:0] replay_y_scaled =
                 (conv_stride == 2'd2) ?
-                ({2'd0, tile_oy_base + replay_read_rel_y} << 1) :
-                 {2'd0, tile_oy_base + replay_read_rel_y};
+                ({2'd0, tile_oy_base + replay_out_rel_y} << 1) :
+                 {2'd0, tile_oy_base + replay_out_rel_y};
             wire [10:0] replay_x_scaled =
                 (conv_stride == 2'd2) ?
-                ({2'd0, replay_read_x} << 1) :
-                 {2'd0, replay_read_x};
+                ({2'd0, replay_out_x} << 1) :
+                 {2'd0, replay_out_x};
             wire signed [11:0] lane_fy_s =
-                kernel_1x1 ? $signed({3'd0, tile_oy_base + replay_read_rel_y}) :
+                kernel_1x1 ? $signed({3'd0, tile_oy_base + replay_out_rel_y}) :
                 ($signed({1'b0, replay_y_scaled}) +
                  LANE_KY - $signed({10'd0, conv_pad}));
             wire signed [11:0] lane_fx_s =
-                kernel_1x1 ? $signed({3'd0, replay_read_x}) :
+                kernel_1x1 ? $signed({3'd0, replay_out_x}) :
                 ($signed({1'b0, replay_x_scaled}) +
                  LANE_KX - $signed({10'd0, conv_pad}));
             wire lane_in_bounds =
-                replay_lane_valid[lane] &&
+                replay_out_lane_valid[lane] &&
                 (lane_fy_s >= 0) && (lane_fy_s < $signed({3'd0, fm_h})) &&
                 (lane_fx_s >= 0) && (lane_fx_s < $signed({3'd0, fm_w}));
             wire [7:0] packed_byte =
@@ -448,13 +456,14 @@ module axis_hwc_tile_cache #(
             replay_active <= 1'b0;
             replay_valid <= 1'b0;
             req_armed <= 1'b1;
-            replay_pixel <= 16'd0;
-            replay_read_en <= 1'b0;
-            replay_read_pending <= 1'b0;
-            replay_read_rel_y <= 9'd0;
-            replay_read_x <= 9'd0;
+            replay_rd_pixel <= 16'd0;
+            replay_out_pixel <= 16'd0;
+            replay_rd_rel_y <= 9'd0;
+            replay_rd_x <= 9'd0;
+            replay_out_rel_y <= 9'd0;
+            replay_out_x <= 9'd0;
             replay_mem_addr <= {CACHE_AW{1'b0}};
-            replay_lane_valid <= {ROWS{1'b0}};
+            replay_out_lane_valid <= {ROWS{1'b0}};
             cache_wr_en_q <= 1'b0;
             cache_wr_group_q <= 1'b0;
             cache_wr_byte_en_q <= 9'd0;
@@ -474,12 +483,9 @@ module axis_hwc_tile_cache #(
             replay_wait_ready_cycles <= 32'd0;
         end else begin
             packet_done <= 1'b0;
-            replay_read_en <= 1'b0;
             cache_wr_en_q <= 1'b0;
-            if (replay_read_pending) begin
-                replay_valid <= 1'b1;
-                replay_read_pending <= 1'b0;
-            end
+            replay_valid <= (replay_valid && !replay_output_fire) ||
+                            replay_can_issue_read;
 
             if (stream_reset) begin
                 load_active <= 1'b1;
@@ -496,12 +502,14 @@ module axis_hwc_tile_cache #(
                 replay_active <= 1'b0;
                 replay_valid <= 1'b0;
                 req_armed <= 1'b1;
-                replay_pixel <= 16'd0;
-                replay_read_pending <= 1'b0;
-                replay_read_rel_y <= 9'd0;
-                replay_read_x <= 9'd0;
+                replay_rd_pixel <= 16'd0;
+                replay_out_pixel <= 16'd0;
+                replay_rd_rel_y <= 9'd0;
+                replay_rd_x <= 9'd0;
+                replay_out_rel_y <= 9'd0;
+                replay_out_x <= 9'd0;
                 replay_mem_addr <= {CACHE_AW{1'b0}};
-                replay_lane_valid <= {ROWS{1'b0}};
+                replay_out_lane_valid <= {ROWS{1'b0}};
                 cache_wr_en_q <= 1'b0;
                 completed_packets <= 32'd0;
                 completed_pixels <= 32'd0;
@@ -517,7 +525,7 @@ module axis_hwc_tile_cache #(
                 load_active_cycles <= load_active_cycles + 1'b1;
             if (beat_pending)
                 load_unpack_cycles <= load_unpack_cycles + 1'b1;
-            if (replay_active || replay_valid || replay_read_pending)
+            if (replay_active || replay_valid)
                 replay_active_cycles <= replay_active_cycles + 1'b1;
 
             if (!fill_req)
@@ -528,13 +536,14 @@ module axis_hwc_tile_cache #(
                 replay_active <= 1'b1;
                 replay_valid <= 1'b0;
                 req_armed <= 1'b0;
-                replay_pixel <= 16'd0;
-                replay_read_en <= 1'b1;
-                replay_read_pending <= 1'b1;
-                replay_read_rel_y <= 9'd0;
-                replay_read_x <= 9'd0;
+                replay_rd_pixel <= 16'd0;
+                replay_out_pixel <= 16'd0;
+                replay_rd_rel_y <= 9'd0;
+                replay_rd_x <= 9'd0;
+                replay_out_rel_y <= 9'd0;
+                replay_out_x <= 9'd0;
                 replay_mem_addr <= replay_chunk * num_pixels;
-                replay_lane_valid <= replay_start_lane_valid;
+                replay_out_lane_valid <= {ROWS{1'b0}};
             end
 
             if (axis_fire) begin
@@ -603,6 +612,21 @@ module axis_hwc_tile_cache #(
                 end
             end
 
+            if (replay_can_issue_read) begin
+                replay_out_pixel <= replay_rd_pixel;
+                replay_out_rel_y <= replay_rd_rel_y;
+                replay_out_x <= replay_rd_x;
+                replay_out_lane_valid <= replay_start_lane_valid;
+                replay_rd_pixel <= replay_rd_pixel + 1'b1;
+                if (replay_rd_x + 1'b1 == ofm_w) begin
+                    replay_rd_x <= 9'd0;
+                    replay_rd_rel_y <= replay_rd_rel_y + 1'b1;
+                end else begin
+                    replay_rd_x <= replay_rd_x + 1'b1;
+                end
+                replay_mem_addr <= replay_mem_addr + 1'b1;
+            end
+
             if (vector_valid && !vector_ready) begin
                 fifo_stall_cycles <= fifo_stall_cycles + 1'b1;
                 replay_wait_ready_cycles <= replay_wait_ready_cycles + 1'b1;
@@ -610,22 +634,12 @@ module axis_hwc_tile_cache #(
 
             if (vector_fire) begin
                 completed_pixels <= completed_pixels + 1'b1;
-                if (replay_last_pixel) begin
+                if (replay_last_out_pixel) begin
                     replay_active <= 1'b0;
                     replay_valid <= 1'b0;
                     packet_done <= 1'b1;
                 end else begin
-                    replay_pixel <= replay_pixel + 1'b1;
-                    replay_valid <= 1'b0;
-                    replay_read_en <= 1'b1;
-                    replay_read_pending <= 1'b1;
-                    if (replay_read_x + 1'b1 == ofm_w) begin
-                        replay_read_x <= 9'd0;
-                        replay_read_rel_y <= replay_read_rel_y + 1'b1;
-                    end else begin
-                        replay_read_x <= replay_read_x + 1'b1;
-                    end
-                    replay_mem_addr <= replay_mem_addr + 1'b1;
+                    replay_out_pixel <= replay_out_pixel + 1'b1;
                 end
             end
         end

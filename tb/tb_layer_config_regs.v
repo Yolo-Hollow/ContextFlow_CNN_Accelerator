@@ -25,6 +25,34 @@ module tb_layer_config_regs;
     reg perf_collect_packet_fire, perf_collect_partial_write, perf_collect_final_write;
     reg perf_collect_context_push, perf_collect_context_pop;
     reg perf_collect_context_full_stall, perf_collect_column_empty_wait;
+    reg [31:0] perf_pass_count;
+    reg [31:0] perf_pass_start_to_first_fire;
+    reg [31:0] perf_pass_first_to_last_fire;
+    reg [31:0] perf_pass_last_fire_to_done;
+    reg [31:0] perf_pass_collect_first_wait;
+    reg [31:0] perf_pass_collect_column_empty;
+    reg [31:0] perf_pass_replay_active_during_compute;
+    reg [31:0] perf_pass_compute_idle_in_stage;
+    reg [31:0] pass_trace_weight_done;
+    reg [31:0] pass_trace_feed_start;
+    reg [31:0] pass_trace_feed_ready;
+    reg [31:0] pass_trace_feed_done;
+    reg [31:0] pass_trace_compute_start;
+    reg [31:0] pass_trace_first_fire;
+    reg [31:0] pass_trace_last_fire;
+    reg [31:0] pass_trace_compute_done;
+    reg [31:0] pass_trace_collect_first;
+    reg [31:0] pass_trace_collect_last;
+    reg [31:0] pass_trace_pass_done;
+    reg pass_trace_valid;
+    reg [31:0] col_trace_first_wr;
+    reg [31:0] col_trace_last_wr;
+    reg [31:0] col_trace_wr_count;
+    reg [31:0] col_trace_empty_wait;
+    reg [31:0] col_trace_missing_mask_or;
+    reg [31:0] col_trace_missing_mask_first;
+    reg [31:0] col_trace_missing_mask_last;
+    reg col_trace_valid;
     reg [31:0] stream_bias_completed;
     reg [31:0] stream_weight_completed;
     reg [31:0] stream_ifm_completed;
@@ -56,11 +84,17 @@ module tb_layer_config_regs;
     wire pass_prefetch_enable;
     wire psum_stream_overlap_enable;
     wire continuous_psum_enable;
+    wire column_psum_enable;
+    wire during_compute_prefetch_enable;
     wire [31:0] stream_bias_packets;
     wire [31:0] stream_weight_packets;
     wire [31:0] stream_ifm_packets;
     wire [15:0] tail_cycles_config;
     wire [15:0] raw_hwc_compute_start_level;
+    wire pass_trace_enable;
+    wire [7:0] pass_trace_cout_block;
+    wire [15:0] pass_trace_k_pass;
+    wire [4:0] col_trace_selected_col;
     wire [31:0] tail_cycles_selected =
         {16'd0, (tail_cycles_config == 16'd0) ? 16'd138 : tail_cycles_config};
     wire config_error;
@@ -116,6 +150,34 @@ module tb_layer_config_regs;
         .perf_collect_context_pop(perf_collect_context_pop),
         .perf_collect_context_full_stall(perf_collect_context_full_stall),
         .perf_collect_column_empty_wait(perf_collect_column_empty_wait),
+        .perf_pass_count(perf_pass_count),
+        .perf_pass_start_to_first_fire(perf_pass_start_to_first_fire),
+        .perf_pass_first_to_last_fire(perf_pass_first_to_last_fire),
+        .perf_pass_last_fire_to_done(perf_pass_last_fire_to_done),
+        .perf_pass_collect_first_wait(perf_pass_collect_first_wait),
+        .perf_pass_collect_column_empty(perf_pass_collect_column_empty),
+        .perf_pass_replay_active_during_compute(perf_pass_replay_active_during_compute),
+        .perf_pass_compute_idle_in_stage(perf_pass_compute_idle_in_stage),
+        .pass_trace_weight_done(pass_trace_weight_done),
+        .pass_trace_feed_start(pass_trace_feed_start),
+        .pass_trace_feed_ready(pass_trace_feed_ready),
+        .pass_trace_feed_done(pass_trace_feed_done),
+        .pass_trace_compute_start(pass_trace_compute_start),
+        .pass_trace_first_fire(pass_trace_first_fire),
+        .pass_trace_last_fire(pass_trace_last_fire),
+        .pass_trace_compute_done(pass_trace_compute_done),
+        .pass_trace_collect_first(pass_trace_collect_first),
+        .pass_trace_collect_last(pass_trace_collect_last),
+        .pass_trace_pass_done(pass_trace_pass_done),
+        .pass_trace_valid(pass_trace_valid),
+        .col_trace_first_wr(col_trace_first_wr),
+        .col_trace_last_wr(col_trace_last_wr),
+        .col_trace_wr_count(col_trace_wr_count),
+        .col_trace_empty_wait(col_trace_empty_wait),
+        .col_trace_missing_mask_or(col_trace_missing_mask_or),
+        .col_trace_missing_mask_first(col_trace_missing_mask_first),
+        .col_trace_missing_mask_last(col_trace_missing_mask_last),
+        .col_trace_valid(col_trace_valid),
         .stream_bias_completed(stream_bias_completed),
         .stream_weight_completed(stream_weight_completed),
         .stream_ifm_completed(stream_ifm_completed),
@@ -143,11 +205,17 @@ module tb_layer_config_regs;
         .pass_prefetch_enable(pass_prefetch_enable),
         .psum_stream_overlap_enable(psum_stream_overlap_enable),
         .continuous_psum_enable(continuous_psum_enable),
+        .column_psum_enable(column_psum_enable),
+        .during_compute_prefetch_enable(during_compute_prefetch_enable),
         .stream_bias_packets(stream_bias_packets),
         .stream_weight_packets(stream_weight_packets),
         .stream_ifm_packets(stream_ifm_packets),
         .tail_cycles_config(tail_cycles_config),
         .raw_hwc_compute_start_level(raw_hwc_compute_start_level),
+        .pass_trace_enable(pass_trace_enable),
+        .pass_trace_cout_block(pass_trace_cout_block),
+        .pass_trace_k_pass(pass_trace_k_pass),
+        .col_trace_selected_col(col_trace_selected_col),
         .config_error(config_error)
     );
 
@@ -239,6 +307,34 @@ module tb_layer_config_regs;
         perf_collect_context_pop = 0;
         perf_collect_context_full_stall = 0;
         perf_collect_column_empty_wait = 0;
+        perf_pass_count = 32'd101;
+        perf_pass_start_to_first_fire = 32'd102;
+        perf_pass_first_to_last_fire = 32'd103;
+        perf_pass_last_fire_to_done = 32'd104;
+        perf_pass_collect_first_wait = 32'd105;
+        perf_pass_collect_column_empty = 32'd106;
+        perf_pass_replay_active_during_compute = 32'd107;
+        perf_pass_compute_idle_in_stage = 32'd108;
+        pass_trace_weight_done = 32'd201;
+        pass_trace_feed_start = 32'd202;
+        pass_trace_feed_ready = 32'd203;
+        pass_trace_feed_done = 32'd204;
+        pass_trace_compute_start = 32'd205;
+        pass_trace_first_fire = 32'd206;
+        pass_trace_last_fire = 32'd207;
+        pass_trace_compute_done = 32'd208;
+        pass_trace_collect_first = 32'd209;
+        pass_trace_collect_last = 32'd210;
+        pass_trace_pass_done = 32'd211;
+        pass_trace_valid = 1'b1;
+        col_trace_first_wr = 32'd301;
+        col_trace_last_wr = 32'd302;
+        col_trace_wr_count = 32'd303;
+        col_trace_empty_wait = 32'd304;
+        col_trace_missing_mask_or = 32'h0000_00a5;
+        col_trace_missing_mask_first = 32'h0000_0020;
+        col_trace_missing_mask_last = 32'h0000_0004;
+        col_trace_valid = 1'b1;
         stream_bias_completed = 32'd7;
         stream_weight_completed = 32'd11;
         stream_ifm_completed = 32'd13;
@@ -268,11 +364,13 @@ module tb_layer_config_regs;
         write_reg(6'h09, 32'd6);
         write_reg(6'h0f, 32'd36);
         write_reg(6'h10, {28'd0, 2'd2, 1'b0, 1'b1});
-        write_reg(6'h19, 32'd63);
+        write_reg(6'h19, 32'd255);
         write_reg(6'h1a, 32'd7);
         write_reg(6'h1b, 32'd11);
         write_reg(6'h1c, 32'd13);
         write_reg(6'h38, {16'd64, 16'd96});
+        write_reg(7'h59, {1'b1, 7'd0, 8'd3, 16'd11});
+        write_reg(7'h6e, 32'd5);
 
         check_value(fm_h, 7, "fm_h");
         check_value(fm_w, 5, "fm_w");
@@ -296,11 +394,17 @@ module tb_layer_config_regs;
         check_value(pass_prefetch_enable, 1, "pass prefetch enable");
         check_value(psum_stream_overlap_enable, 1, "psum stream overlap enable");
         check_value(continuous_psum_enable, 1, "continuous psum enable");
+        check_value(column_psum_enable, 1, "column psum enable");
+        check_value(during_compute_prefetch_enable, 1, "during compute prefetch enable");
         check_value(stream_bias_packets, 7, "stream bias packets");
         check_value(stream_weight_packets, 11, "stream weight packets");
         check_value(stream_ifm_packets, 13, "stream ifm packets");
         check_value(tail_cycles_config, 96, "tail cycles config output");
         check_value(raw_hwc_compute_start_level, 64, "raw hwc compute start level");
+        check_value(pass_trace_enable, 1, "pass trace enable");
+        check_value(pass_trace_cout_block, 3, "pass trace cout block");
+        check_value(pass_trace_k_pass, 11, "pass trace k pass");
+        check_value(col_trace_selected_col, 5, "column trace selected col");
         cfg_addr = 6'h1d;
         #1;
         check_value(cfg_rdata, 7, "stream bias completed");
@@ -581,6 +685,96 @@ module tb_layer_config_regs;
         cfg_addr = 7'h58;
         #1;
         check_value(cfg_rdata, 1, "collectperf version");
+        cfg_addr = 7'h59;
+        #1;
+        check_value(cfg_rdata, {1'b1, 7'd0, 8'd3, 16'd11}, "pass trace select");
+        cfg_addr = 7'h5a;
+        #1;
+        check_value(cfg_rdata, 101, "pass count");
+        cfg_addr = 7'h5b;
+        #1;
+        check_value(cfg_rdata, 102, "pass start to first fire");
+        cfg_addr = 7'h5c;
+        #1;
+        check_value(cfg_rdata, 103, "pass first to last fire");
+        cfg_addr = 7'h5d;
+        #1;
+        check_value(cfg_rdata, 104, "pass last fire to done");
+        cfg_addr = 7'h5e;
+        #1;
+        check_value(cfg_rdata, 105, "pass collect first wait");
+        cfg_addr = 7'h5f;
+        #1;
+        check_value(cfg_rdata, 106, "pass collect column empty");
+        cfg_addr = 7'h60;
+        #1;
+        check_value(cfg_rdata, 107, "pass replay during compute");
+        cfg_addr = 7'h61;
+        #1;
+        check_value(cfg_rdata, 108, "pass compute idle in stage");
+        cfg_addr = 7'h62;
+        #1;
+        check_value(cfg_rdata, 201, "trace weight done");
+        cfg_addr = 7'h63;
+        #1;
+        check_value(cfg_rdata, 202, "trace feed start");
+        cfg_addr = 7'h64;
+        #1;
+        check_value(cfg_rdata, 203, "trace feed ready");
+        cfg_addr = 7'h65;
+        #1;
+        check_value(cfg_rdata, 204, "trace feed done");
+        cfg_addr = 7'h66;
+        #1;
+        check_value(cfg_rdata, 205, "trace compute start");
+        cfg_addr = 7'h67;
+        #1;
+        check_value(cfg_rdata, 206, "trace first fire");
+        cfg_addr = 7'h68;
+        #1;
+        check_value(cfg_rdata, 207, "trace last fire");
+        cfg_addr = 7'h69;
+        #1;
+        check_value(cfg_rdata, 208, "trace compute done");
+        cfg_addr = 7'h6a;
+        #1;
+        check_value(cfg_rdata, 209, "trace collect first");
+        cfg_addr = 7'h6b;
+        #1;
+        check_value(cfg_rdata, 210, "trace collect last");
+        cfg_addr = 7'h6c;
+        #1;
+        check_value(cfg_rdata, 211, "trace pass done");
+        cfg_addr = 7'h6d;
+        #1;
+        check_value(cfg_rdata, {1'b1, 31'd1}, "passperf version valid");
+        cfg_addr = 7'h6e;
+        #1;
+        check_value(cfg_rdata, {1'b1, 26'd0, 5'd5}, "coltrace control");
+        cfg_addr = 7'h6f;
+        #1;
+        check_value(cfg_rdata, 301, "coltrace first write");
+        cfg_addr = 7'h70;
+        #1;
+        check_value(cfg_rdata, 302, "coltrace last write");
+        cfg_addr = 7'h71;
+        #1;
+        check_value(cfg_rdata, 303, "coltrace write count");
+        cfg_addr = 7'h72;
+        #1;
+        check_value(cfg_rdata, 304, "coltrace empty wait");
+        cfg_addr = 7'h73;
+        #1;
+        check_value(cfg_rdata, 32'h0000_00a5, "coltrace missing or");
+        cfg_addr = 7'h74;
+        #1;
+        check_value(cfg_rdata, 32'h0000_0020, "coltrace missing first");
+        cfg_addr = 7'h75;
+        #1;
+        check_value(cfg_rdata, 32'h0000_0004, "coltrace missing last");
+        cfg_addr = 7'h76;
+        #1;
+        check_value(cfg_rdata, 1, "coltrace version");
 
         @(negedge clk);
         layer_done = 1'b1;
@@ -614,6 +808,7 @@ module tb_layer_config_regs;
         write_reg(6'h1b, 32'd99);
         write_reg(6'h1c, 32'd99);
         write_reg(6'h38, 32'd99);
+        write_reg(7'h6e, 32'd7);
         check_value(fm_h, 7, "busy freeze fm_h");
         check_value(fm_w, 5, "busy freeze fm_w");
         check_value(k_total, 9216, "busy freeze k_total");
@@ -630,11 +825,17 @@ module tb_layer_config_regs;
         check_value(pass_prefetch_enable, 1, "busy freeze pass prefetch mode");
         check_value(psum_stream_overlap_enable, 1, "busy freeze psum overlap mode");
         check_value(continuous_psum_enable, 1, "busy freeze continuous psum mode");
+        check_value(column_psum_enable, 1, "busy freeze column psum mode");
+        check_value(during_compute_prefetch_enable, 1, "busy freeze during compute prefetch");
         check_value(stream_bias_packets, 7, "busy freeze bias packets");
         check_value(stream_weight_packets, 11, "busy freeze weight packets");
         check_value(stream_ifm_packets, 13, "busy freeze ifm packets");
         check_value(tail_cycles_config, 96, "busy freeze tail config");
         check_value(raw_hwc_compute_start_level, 64, "busy freeze raw start level");
+        check_value(pass_trace_enable, 1, "busy freeze pass trace enable");
+        check_value(pass_trace_cout_block, 3, "busy freeze pass trace cout");
+        check_value(pass_trace_k_pass, 11, "busy freeze pass trace k");
+        check_value(col_trace_selected_col, 5, "busy freeze column trace");
 
         write_reg(6'h00, 32'd1);
         repeat (2) @(negedge clk);

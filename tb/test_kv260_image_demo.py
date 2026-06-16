@@ -128,6 +128,22 @@ def main():
             "underflow=0 version=1\n"
             "PSUMOVLPERF layer=conv1 start=10 hit=9 wait_psum=12 "
             "underflow=0 version=1\n"
+            "PASSPERF layer=conv0 pass_count=2 start_to_first=6 "
+            "fire_span=20 tail=4 collect_wait=8 collect_empty=3 "
+            "replay_during_compute=5 compute_idle=7 version=1\n"
+            "PASSPERF layer=conv1 pass_count=3 start_to_first=9 "
+            "fire_span=30 tail=6 collect_wait=12 collect_empty=4 "
+            "replay_during_compute=6 compute_idle=8 version=1\n"
+            "PASSTRACE layer=conv1 tile=0 cout_block=1 k_pass=2 "
+            "weight_done=1 feed_start=2 feed_ready=3 feed_done=4 "
+            "compute_start=5 first_fire=8 last_fire=20 compute_done=22 "
+            "collect_first=9 collect_last=21 pass_done=23 version=1\n"
+            "COLTRACE layer=conv1 tile=0 cout_block=1 k_pass=2 col=0 "
+            "first_wr=9 last_wr=20 wr_count=12 empty_wait=3 "
+            "missing_or=3 missing_first=2 missing_last=1 version=1 valid=1\n"
+            "COLTRACE layer=conv1 tile=0 cout_block=1 k_pass=2 col=1 "
+            "first_wr=10 last_wr=21 wr_count=12 empty_wait=7 "
+            "missing_or=3 missing_first=2 missing_last=1 version=1 valid=1\n"
         )
         assert summary["layer_count"] == 2
         assert summary["total_microseconds"] == 300
@@ -186,6 +202,25 @@ def main():
         assert summary["psumovlperf"]["underflow_cycles"] == 0
         assert summary["psumovlperf"]["hit_percent"] == 90.0
         assert summary["psumovlperf"]["version"] == 1
+        assert summary["passperf"]["pass_count"] == 5
+        assert summary["passperf"]["start_to_first_cycles"] == 15
+        assert summary["passperf"]["fire_span_cycles"] == 50
+        assert summary["passperf"]["tail_cycles"] == 10
+        assert summary["passperf"]["collect_wait_cycles"] == 20
+        assert summary["passperf"]["collect_empty_cycles"] == 7
+        assert summary["passperf"]["replay_during_compute_cycles"] == 11
+        assert summary["passperf"]["compute_idle_cycles"] == 15
+        assert summary["passperf"]["avg_start_to_first"] == 3.0
+        assert summary["passperf"]["avg_collect_wait"] == 4.0
+        assert summary["passperf"]["fire_density_percent"] == 200.0
+        assert summary["passperf"]["compute_util_percent"] == 62.5
+        assert summary["passtrace"][0]["layer"] == "conv1"
+        assert summary["passtrace"][0]["pass_done"] == 23
+        assert summary["coltrace"]["total_empty_wait"] == 10
+        assert summary["coltrace"]["worst_layer"] == "conv1"
+        assert summary["coltrace"]["worst_col"] == 1
+        assert summary["coltrace"]["max_empty_wait"] == 7
+        assert summary["coltrace"]["columns"][0]["wr_count"] == 12
 
     print("PASS: KV260 runtime image package and visualization tests")
 

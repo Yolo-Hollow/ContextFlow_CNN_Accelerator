@@ -71,6 +71,7 @@ module tb_layer_scheduler_continuous_psum;
         .raw_hwc_mode(1'b1),
         .early_drain_enable(1'b1),
         .pass_prefetch_enable(1'b1),
+        .during_compute_prefetch_enable(1'b0),
         .psum_stream_overlap_enable(1'b1),
         .continuous_psum_enable(1'b1),
         .collector_ctx_ready(1'b1),

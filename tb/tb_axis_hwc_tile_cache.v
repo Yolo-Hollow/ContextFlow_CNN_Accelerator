@@ -36,6 +36,7 @@ module tb_axis_hwc_tile_cache;
     wire [31:0] completed_pixels;
     wire [31:0] accepted_beats;
     wire [31:0] fifo_stall_cycles;
+    wire [31:0] replay_active_cycles;
 
     integer pass, fail;
     integer pixel, lane, ch;
@@ -83,7 +84,8 @@ module tb_axis_hwc_tile_cache;
         .completed_packets(completed_packets),
         .completed_pixels(completed_pixels),
         .accepted_beats(accepted_beats),
-        .fifo_stall_cycles(fifo_stall_cycles)
+        .fifo_stall_cycles(fifo_stall_cycles),
+        .replay_active_cycles(replay_active_cycles)
     );
 
     always #5 clk = ~clk;
@@ -247,6 +249,37 @@ module tb_axis_hwc_tile_cache;
         end
     endtask
 
+    task check_fast_replay;
+        reg [31:0] replay_before;
+        reg [31:0] replay_delta;
+        integer fire_count;
+        begin
+            replay_before = replay_active_cycles;
+            fire_count = 0;
+            vector_ready = 1'b1;
+            fill_req = 1'b1;
+            while (!packet_done) begin
+                @(posedge clk);
+                if (vector_valid && vector_ready)
+                    fire_count = fire_count + 1;
+            end
+            replay_delta = replay_active_cycles - replay_before;
+            @(negedge clk);
+            vector_ready = 1'b0;
+            fill_req = 1'b0;
+            if (fire_count !== num_pixels) begin
+                $display("[FAIL] fast replay fire_count got=%0d exp=%0d",
+                    fire_count, num_pixels);
+                fail = fail + 1;
+            end else pass = pass + 1;
+            if (replay_delta > num_pixels + 2) begin
+                $display("[FAIL] fast replay active cycles got=%0d exp<=%0d",
+                    replay_delta, num_pixels + 2);
+                fail = fail + 1;
+            end else pass = pass + 1;
+        end
+    endtask
+
     initial begin
         clk = 0;
         rst = 1;
@@ -320,6 +353,10 @@ module tb_axis_hwc_tile_cache;
             $display("[FAIL] completed_pixels got=%0d exp=6", completed_pixels);
             fail = fail + 1;
         end else pass = pass + 1;
+
+        repeat (3) @(negedge clk);
+        pass_base_k = 14'd0;
+        check_fast_replay();
 
         num_pixels = 16'd4;
         fm_h = 9'd4;

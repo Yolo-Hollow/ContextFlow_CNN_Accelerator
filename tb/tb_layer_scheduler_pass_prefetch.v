@@ -1,8 +1,17 @@
 `timescale 1ns / 1ps
 
-module tb_layer_scheduler_pass_prefetch;
+`ifndef TB_DURING_COMPUTE_PREFETCH
+`define TB_DURING_COMPUTE_PREFETCH 0
+`endif
+`ifndef TB_LAYER_SCHEDULER_PASS_PREFETCH_MODULE
+`define TB_LAYER_SCHEDULER_PASS_PREFETCH_MODULE tb_layer_scheduler_pass_prefetch
+`endif
+
+module `TB_LAYER_SCHEDULER_PASS_PREFETCH_MODULE;
     localparam K_TILE = 18;
     localparam COUT_TILE = 16;
+    localparam DURING_COMPUTE_PREFETCH = `TB_DURING_COMPUTE_PREFETCH;
+    localparam COMPUTE_DELAY_CYCLES = DURING_COMPUTE_PREFETCH ? 20 : 8;
 
     reg clk = 1'b0;
     reg rst = 1'b1;
@@ -46,6 +55,7 @@ module tb_layer_scheduler_pass_prefetch;
     integer compute_start_count = 0;
     integer drain_start_count = 0;
     integer prefetch_start_count = 0;
+    integer prefetch_before_compute_done_count = 0;
     integer prefetch_hit_count = 0;
     integer prefetch_miss_count = 0;
     integer weight_delay = 0;
@@ -54,6 +64,7 @@ module tb_layer_scheduler_pass_prefetch;
     integer drain_delay = 0;
     integer compute_fire_delay = 0;
     integer psum_ready_delay = 0;
+    reg compute_done_seen_for_pass = 1'b0;
 
     layer_scheduler_stream #(
         .K_TILE(K_TILE),
@@ -74,6 +85,7 @@ module tb_layer_scheduler_pass_prefetch;
         .raw_hwc_mode(1'b1),
         .early_drain_enable(1'b1),
         .pass_prefetch_enable(1'b1),
+        .during_compute_prefetch_enable(DURING_COMPUTE_PREFETCH != 0),
         .psum_stream_overlap_enable(1'b0),
         .continuous_psum_enable(1'b0),
         .collector_ctx_ready(1'b1),
@@ -110,12 +122,15 @@ module tb_layer_scheduler_pass_prefetch;
             prefetch_start_count <= 0;
             prefetch_hit_count <= 0;
             prefetch_miss_count <= 0;
+            prefetch_before_compute_done_count <= 0;
+            compute_done_seen_for_pass <= 1'b0;
         end else begin
             if (weight_load_start)
                 weight_start_count <= weight_start_count + 1;
             if (feeder_start)
                 feeder_start_count <= feeder_start_count + 1;
             if (compute_start) begin
+                compute_done_seen_for_pass <= 1'b0;
                 if (pass_base_k !== compute_start_count * K_TILE) begin
                     $display("[FAIL] compute[%0d] pass_base=%0d",
                              compute_start_count, pass_base_k);
@@ -126,6 +141,9 @@ module tb_layer_scheduler_pass_prefetch;
             if (psum_drain_start)
                 drain_start_count <= drain_start_count + 1;
             if (perf_prefetch_start) begin
+                if (!compute_done_seen_for_pass)
+                    prefetch_before_compute_done_count <=
+                        prefetch_before_compute_done_count + 1;
                 if (pass_base_k !== (prefetch_start_count * K_TILE) ||
                     feeder_pass_base_k !== ((prefetch_start_count + 1) * K_TILE)) begin
                     $display("[FAIL] prefetch[%0d] exec=%0d feeder=%0d",
@@ -139,6 +157,8 @@ module tb_layer_scheduler_pass_prefetch;
                 prefetch_hit_count <= prefetch_hit_count + 1;
             if (perf_prefetch_miss)
                 prefetch_miss_count <= prefetch_miss_count + 1;
+            if (compute_done)
+                compute_done_seen_for_pass <= 1'b1;
         end
     end
 
@@ -174,7 +194,7 @@ module tb_layer_scheduler_pass_prefetch;
         end
 
         if (compute_start) begin
-            compute_delay = 8;
+            compute_delay = COMPUTE_DELAY_CYCLES;
             compute_fire_delay = 1;
             psum_ready_delay = 2;
         end
@@ -220,10 +240,17 @@ module tb_layer_scheduler_pass_prefetch;
             fail = fail + 1;
         end
         if (prefetch_start_count !== 2 || prefetch_hit_count !== 2 ||
-            prefetch_miss_count !== 2) begin
+            (DURING_COMPUTE_PREFETCH ? (prefetch_miss_count !== 0) :
+                                       (prefetch_miss_count !== 2))) begin
             $display("[FAIL] prefetch counts start=%0d hit=%0d miss=%0d",
                      prefetch_start_count, prefetch_hit_count,
                      prefetch_miss_count);
+            fail = fail + 1;
+        end
+        if (DURING_COMPUTE_PREFETCH &&
+            prefetch_before_compute_done_count !== 2) begin
+            $display("[FAIL] expected during-compute prefetches, got %0d",
+                     prefetch_before_compute_done_count);
             fail = fail + 1;
         end
 

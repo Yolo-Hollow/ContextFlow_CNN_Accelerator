@@ -21,6 +21,7 @@ param(
     [switch]$RunConv0Conv9DdrDemo,
     [string]$InputPackage,
     [switch]$RawHwcIfm,
+    [switch]$RawHwcConv3,
     [switch]$RawHwcConv4,
     [switch]$RawHwcConv5,
     [switch]$RawHwcConv6,
@@ -28,8 +29,11 @@ param(
     [switch]$RawHwc3x3All,
     [switch]$EarlyDrain,
     [switch]$PassPrefetch,
+    [switch]$DuringComputePrefetch,
     [switch]$PsumStreamOverlap,
     [switch]$ContinuousPsum,
+    [switch]$ColumnPsum,
+    [switch]$BackendFullTile,
     [switch]$RunDeterministic,
     [string]$BuildDirName = "build_system_xck26_kv260"
 )
@@ -161,31 +165,43 @@ function Run-Smoke($Name, $Elf, [bool]$ProgramBit, [bool]$UseFastRun, $DataFile 
 function Get-RawHwcVariantElf($Mode) {
     $variantTags = @()
     if ($RawHwcIfm) {
-        $variantTags += "raw_hwc_1x1"
+        $variantTags += "r1x1"
+    }
+    if ($RawHwcConv3 -or $RawHwc3x3All) {
+        $variantTags += "c3"
     }
     if ($RawHwcConv4 -or $RawHwc3x3All) {
-        $variantTags += "conv4"
+        $variantTags += "c4"
     }
     if ($RawHwcConv5 -or $RawHwc3x3All) {
-        $variantTags += "conv5"
+        $variantTags += "c5"
     }
     if ($RawHwcConv6 -or $RawHwc3x3All) {
-        $variantTags += "conv6"
+        $variantTags += "c6"
     }
     if ($RawHwcConv8 -or $RawHwc3x3All) {
-        $variantTags += "conv8"
+        $variantTags += "c8"
     }
     if ($EarlyDrain) {
-        $variantTags += "early_drain"
+        $variantTags += "ed"
     }
     if ($PassPrefetch) {
-        $variantTags += "pass_prefetch"
+        $variantTags += "pf"
+    }
+    if ($DuringComputePrefetch) {
+        $variantTags += "dcpf"
     }
     if ($PsumStreamOverlap) {
-        $variantTags += "psum_stream_overlap"
+        $variantTags += "pso"
     }
     if ($ContinuousPsum) {
-        $variantTags += "continuous_psum"
+        $variantTags += "cps"
+    }
+    if ($ColumnPsum) {
+        $variantTags += "col"
+    }
+    if ($BackendFullTile) {
+        $variantTags += "full"
     }
     if ($variantTags.Count -eq 0) {
         if ($Mode -eq "conv0_conv9_ddr_demo") {
@@ -193,7 +209,7 @@ function Get-RawHwcVariantElf($Mode) {
         }
         return $Conv0Conv9BatchChainElf
     }
-    $variantName = "raw_hwc_" + ($variantTags -join "_")
+    $variantName = "rhwc_" + ($variantTags -join "_")
     return (Join-Path $Root "build_vitis_2022_2\conv_accel_r18_c16_smoke\manual_build\conv_accel_${Mode}_${variantName}_smoke.elf")
 }
 

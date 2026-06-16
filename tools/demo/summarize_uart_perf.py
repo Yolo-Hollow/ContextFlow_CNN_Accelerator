@@ -1,5 +1,6 @@
 import argparse
 import json
+import re
 from pathlib import Path
 
 
@@ -15,6 +16,51 @@ DRAINPERF_PREFIX = "DRAINPERF "
 PREFETCHPERF_PREFIX = "PREFETCHPERF "
 PSUMOVLPERF_PREFIX = "PSUMOVLPERF "
 COLLECTPERF_PREFIX = "COLLECTPERF "
+PASSPERF_PREFIX = "PASSPERF "
+PASSTRACE_PREFIX = "PASSTRACE "
+COLTRACE_PREFIX = "COLTRACE "
+
+METRIC_PREFIXES = (
+    "TILEPERF ",
+    PERF_PREFIX,
+    HWPERF_PREFIX,
+    DMASTAT_PREFIX,
+    VECTORSTAT_PREFIX,
+    STAGEPERF_PREFIX,
+    SUBPERF_PREFIX,
+    TAILSTAT_PREFIX,
+    RAWSTAT_PREFIX,
+    DRAINPERF_PREFIX,
+    PREFETCHPERF_PREFIX,
+    PSUMOVLPERF_PREFIX,
+    COLLECTPERF_PREFIX,
+    PASSPERF_PREFIX,
+    PASSTRACE_PREFIX,
+    COLTRACE_PREFIX,
+)
+
+
+def normalize_metric_lines(log_text):
+    text = log_text
+    for prefix in METRIC_PREFIXES:
+        escaped = re.escape(prefix)
+        if prefix == PERF_PREFIX:
+            # Do not split inside TILEPERF/HWPERF/STAGEPERF/etc.  A few UART
+            # captures concatenate as "...drainPERF layer=...", so only reject
+            # upper-case metric-name prefixes.
+            pattern = rf"(?<![A-Z]){escaped}"
+        else:
+            pattern = escaped
+        text = re.sub(pattern, "\n" + prefix, text)
+    return text
+
+
+def metric_lines(log_text, prefix):
+    return [
+        line.strip()
+        for line in normalize_metric_lines(log_text).splitlines()
+        if line.strip().startswith(prefix)
+    ]
 
 
 def parse_metric_line(line, prefix):
@@ -32,9 +78,8 @@ def parse_metric_line(line, prefix):
 
 def summarize_perf(log_text):
     layers = [
-        parse_metric_line(line.strip(), PERF_PREFIX)
-        for line in log_text.splitlines()
-        if line.strip().startswith(PERF_PREFIX)
+        parse_metric_line(line, PERF_PREFIX)
+        for line in metric_lines(log_text, PERF_PREFIX)
     ]
     if not layers:
         raise ValueError("UART log contains no PERF lines")
@@ -57,9 +102,8 @@ def summarize_perf(log_text):
     categories.sort(key=lambda item: item["microseconds"], reverse=True)
 
     hardware_layers = [
-        parse_metric_line(line.strip(), HWPERF_PREFIX)
-        for line in log_text.splitlines()
-        if line.strip().startswith(HWPERF_PREFIX)
+        parse_metric_line(line, HWPERF_PREFIX)
+        for line in metric_lines(log_text, HWPERF_PREFIX)
     ]
     hardware = None
     if hardware_layers:
@@ -94,9 +138,8 @@ def summarize_perf(log_text):
         }
 
     dma_layers = [
-        parse_metric_line(line.strip(), DMASTAT_PREFIX)
-        for line in log_text.splitlines()
-        if line.strip().startswith(DMASTAT_PREFIX)
+        parse_metric_line(line, DMASTAT_PREFIX)
+        for line in metric_lines(log_text, DMASTAT_PREFIX)
     ]
     dma = None
     if dma_layers:
@@ -109,9 +152,8 @@ def summarize_perf(log_text):
         }
 
     stage_layers = [
-        parse_metric_line(line.strip(), STAGEPERF_PREFIX)
-        for line in log_text.splitlines()
-        if line.strip().startswith(STAGEPERF_PREFIX)
+        parse_metric_line(line, STAGEPERF_PREFIX)
+        for line in metric_lines(log_text, STAGEPERF_PREFIX)
     ]
     stage = None
     if stage_layers:
@@ -139,9 +181,8 @@ def summarize_perf(log_text):
             )
 
     vector_layers = [
-        parse_metric_line(line.strip(), VECTORSTAT_PREFIX)
-        for line in log_text.splitlines()
-        if line.strip().startswith(VECTORSTAT_PREFIX)
+        parse_metric_line(line, VECTORSTAT_PREFIX)
+        for line in metric_lines(log_text, VECTORSTAT_PREFIX)
     ]
     vector = None
     if vector_layers:
@@ -156,9 +197,8 @@ def summarize_perf(log_text):
         }
 
     subperf_layers = [
-        parse_metric_line(line.strip(), SUBPERF_PREFIX)
-        for line in log_text.splitlines()
-        if line.strip().startswith(SUBPERF_PREFIX)
+        parse_metric_line(line, SUBPERF_PREFIX)
+        for line in metric_lines(log_text, SUBPERF_PREFIX)
     ]
     subperf = None
     if subperf_layers:
@@ -204,9 +244,8 @@ def summarize_perf(log_text):
             )
 
     tail_layers = [
-        parse_metric_line(line.strip(), TAILSTAT_PREFIX)
-        for line in log_text.splitlines()
-        if line.strip().startswith(TAILSTAT_PREFIX)
+        parse_metric_line(line, TAILSTAT_PREFIX)
+        for line in metric_lines(log_text, TAILSTAT_PREFIX)
     ]
     tailstat = None
     if tail_layers:
@@ -230,9 +269,8 @@ def summarize_perf(log_text):
         }
 
     raw_layers = [
-        parse_metric_line(line.strip(), RAWSTAT_PREFIX)
-        for line in log_text.splitlines()
-        if line.strip().startswith(RAWSTAT_PREFIX)
+        parse_metric_line(line, RAWSTAT_PREFIX)
+        for line in metric_lines(log_text, RAWSTAT_PREFIX)
     ]
     rawstat = None
     if raw_layers:
@@ -250,9 +288,8 @@ def summarize_perf(log_text):
         }
 
     drainperf_layers = [
-        parse_metric_line(line.strip(), DRAINPERF_PREFIX)
-        for line in log_text.splitlines()
-        if line.strip().startswith(DRAINPERF_PREFIX)
+        parse_metric_line(line, DRAINPERF_PREFIX)
+        for line in metric_lines(log_text, DRAINPERF_PREFIX)
     ]
     drainperf = None
     if drainperf_layers:
@@ -275,9 +312,8 @@ def summarize_perf(log_text):
             drainperf["drain_residual_cycles"] = stage["drain_cycles"] - explained
 
     prefetch_layers = [
-        parse_metric_line(line.strip(), PREFETCHPERF_PREFIX)
-        for line in log_text.splitlines()
-        if line.strip().startswith(PREFETCHPERF_PREFIX)
+        parse_metric_line(line, PREFETCHPERF_PREFIX)
+        for line in metric_lines(log_text, PREFETCHPERF_PREFIX)
     ]
     prefetchperf = None
     if prefetch_layers:
@@ -296,9 +332,8 @@ def summarize_perf(log_text):
         }
 
     psumovl_layers = [
-        parse_metric_line(line.strip(), PSUMOVLPERF_PREFIX)
-        for line in log_text.splitlines()
-        if line.strip().startswith(PSUMOVLPERF_PREFIX)
+        parse_metric_line(line, PSUMOVLPERF_PREFIX)
+        for line in metric_lines(log_text, PSUMOVLPERF_PREFIX)
     ]
     psumovlperf = None
     if psumovl_layers:
@@ -315,9 +350,8 @@ def summarize_perf(log_text):
         }
 
     collect_layers = [
-        parse_metric_line(line.strip(), COLLECTPERF_PREFIX)
-        for line in log_text.splitlines()
-        if line.strip().startswith(COLLECTPERF_PREFIX)
+        parse_metric_line(line, COLLECTPERF_PREFIX)
+        for line in metric_lines(log_text, COLLECTPERF_PREFIX)
     ]
     collectperf = None
     if collect_layers:
@@ -337,6 +371,80 @@ def summarize_perf(log_text):
             "version": max(layer.get("version", 0) for layer in collect_layers),
         }
 
+    pass_layers = [
+        parse_metric_line(line, PASSPERF_PREFIX)
+        for line in metric_lines(log_text, PASSPERF_PREFIX)
+    ]
+    passperf = None
+    if pass_layers:
+        pass_count = sum(layer["pass_count"] for layer in pass_layers)
+        fire_span = sum(layer["fire_span"] for layer in pass_layers)
+        comp_fire = (
+            summary_comp_fire
+            if (summary_comp_fire := (
+                hardware["compute_cycles"] if hardware else 0
+            ))
+            else 0
+        )
+        compute_stage = stage["compute_stage_cycles"] if stage else 0
+        passperf = {
+            "layers": pass_layers,
+            "pass_count": pass_count,
+            "start_to_first_cycles": sum(
+                layer["start_to_first"] for layer in pass_layers
+            ),
+            "fire_span_cycles": fire_span,
+            "tail_cycles": sum(layer["tail"] for layer in pass_layers),
+            "collect_wait_cycles": sum(layer["collect_wait"] for layer in pass_layers),
+            "collect_empty_cycles": sum(layer["collect_empty"] for layer in pass_layers),
+            "replay_during_compute_cycles": sum(
+                layer["replay_during_compute"] for layer in pass_layers
+            ),
+            "compute_idle_cycles": sum(layer["compute_idle"] for layer in pass_layers),
+            "version": max(layer.get("version", 0) for layer in pass_layers),
+            "avg_start_to_first": (
+                sum(layer["start_to_first"] for layer in pass_layers) / pass_count
+                if pass_count else 0.0
+            ),
+            "avg_collect_wait": (
+                sum(layer["collect_wait"] for layer in pass_layers) / pass_count
+                if pass_count else 0.0
+            ),
+            "fire_density_percent": (
+                comp_fire * 100.0 / fire_span if fire_span else 0.0
+            ),
+            "compute_util_percent": (
+                comp_fire * 100.0 / compute_stage if compute_stage else 0.0
+            ),
+        }
+
+    passtrace_layers = [
+        parse_metric_line(line, PASSTRACE_PREFIX)
+        for line in metric_lines(log_text, PASSTRACE_PREFIX)
+    ]
+    coltrace_columns = [
+        parse_metric_line(line, COLTRACE_PREFIX)
+        for line in metric_lines(log_text, COLTRACE_PREFIX)
+    ]
+    coltrace = None
+    if coltrace_columns:
+        ranked = sorted(
+            coltrace_columns,
+            key=lambda item: item.get("empty_wait", 0),
+            reverse=True,
+        )
+        coltrace = {
+            "columns": coltrace_columns,
+            "total_empty_wait": sum(
+                item.get("empty_wait", 0) for item in coltrace_columns
+            ),
+            "max_empty_wait": ranked[0].get("empty_wait", 0),
+            "worst_layer": ranked[0]["layer"],
+            "worst_col": ranked[0].get("col", 0),
+            "ranked_columns": ranked,
+            "version": max(item.get("version", 0) for item in coltrace_columns),
+        }
+
     return {
         "layer_count": len(layers),
         "total_microseconds": total_us,
@@ -354,6 +462,9 @@ def summarize_perf(log_text):
         "prefetchperf": prefetchperf,
         "psumovlperf": psumovlperf,
         "collectperf": collectperf,
+        "passperf": passperf,
+        "passtrace": passtrace_layers,
+        "coltrace": coltrace,
     }
 
 
@@ -496,6 +607,61 @@ def print_summary(summary):
             f"context_full_stall={collectperf['context_full_stall_cycles']} "
             f"column_empty_wait={collectperf['column_empty_wait_cycles']}"
         )
+    if summary["passperf"]:
+        passperf = summary["passperf"]
+        print(
+            "PASSPERF summary: "
+            f"version={passperf['version']} "
+            f"passes={passperf['pass_count']} "
+            f"start_to_first={passperf['start_to_first_cycles']} "
+            f"fire_span={passperf['fire_span_cycles']} "
+            f"tail={passperf['tail_cycles']} "
+            f"collect_wait={passperf['collect_wait_cycles']} "
+            f"collect_empty={passperf['collect_empty_cycles']} "
+            f"replay_compute={passperf['replay_during_compute_cycles']} "
+            f"compute_idle={passperf['compute_idle_cycles']} "
+            f"avg_start_to_first={passperf['avg_start_to_first']:.2f} "
+            f"avg_collect_wait={passperf['avg_collect_wait']:.2f} "
+            f"fire_density={passperf['fire_density_percent']:.2f}% "
+            f"compute_util={passperf['compute_util_percent']:.2f}%"
+        )
+    if summary["passtrace"]:
+        for trace in summary["passtrace"][:8]:
+            print(
+                "PASSTRACE sample: "
+                f"layer={trace['layer']} tile={trace.get('tile', -1)} "
+                f"cb={trace.get('cout_block', -1)} kp={trace.get('k_pass', -1)} "
+                f"weight_done={trace.get('weight_done', 0)} "
+                f"feed_start={trace.get('feed_start', 0)} "
+                f"feed_ready={trace.get('feed_ready', 0)} "
+                f"feed_done={trace.get('feed_done', 0)} "
+                f"compute_start={trace.get('compute_start', 0)} "
+                f"first_fire={trace.get('first_fire', 0)} "
+                f"last_fire={trace.get('last_fire', 0)} "
+                f"compute_done={trace.get('compute_done', 0)} "
+                f"collect_first={trace.get('collect_first', 0)} "
+                f"collect_last={trace.get('collect_last', 0)} "
+                f"pass_done={trace.get('pass_done', 0)}"
+            )
+    if summary["coltrace"]:
+        coltrace = summary["coltrace"]
+        print(
+            "COLTRACE summary: "
+            f"version={coltrace['version']} "
+            f"total_empty_wait={coltrace['total_empty_wait']} "
+            f"worst={coltrace['worst_layer']}:col{coltrace['worst_col']} "
+            f"max_empty_wait={coltrace['max_empty_wait']}"
+        )
+        for column in coltrace["ranked_columns"][:8]:
+            print(
+                "COLTRACE column: "
+                f"layer={column['layer']} col={column.get('col', -1)} "
+                f"first_wr={column.get('first_wr', 0)} "
+                f"last_wr={column.get('last_wr', 0)} "
+                f"wr_count={column.get('wr_count', 0)} "
+                f"empty_wait={column.get('empty_wait', 0)} "
+                f"missing_or={column.get('missing_or', 0)}"
+            )
 
 
 def main():

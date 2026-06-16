@@ -118,11 +118,17 @@
 `ifndef TB_PASS_PREFETCH_OVERRIDE
 `define TB_PASS_PREFETCH_OVERRIDE 0
 `endif
+`ifndef TB_DURING_COMPUTE_PREFETCH_OVERRIDE
+`define TB_DURING_COMPUTE_PREFETCH_OVERRIDE 0
+`endif
 `ifndef TB_PSUM_STREAM_OVERLAP_OVERRIDE
 `define TB_PSUM_STREAM_OVERLAP_OVERRIDE 0
 `endif
 `ifndef TB_CONTINUOUS_PSUM_OVERRIDE
 `define TB_CONTINUOUS_PSUM_OVERRIDE 0
+`endif
+`ifndef TB_COLUMN_PSUM_OVERRIDE
+`define TB_COLUMN_PSUM_OVERRIDE 0
 `endif
 `ifndef TB_CONV_ACCEL_CORE_TILE_OY_BASE
 `define TB_CONV_ACCEL_CORE_TILE_OY_BASE 0
@@ -483,13 +489,16 @@ module `TB_CONV_ACCEL_CORE_MODULE;
     integer ifm_write_count, compute_fire_count, psum_wr_count, drain_capture_count;
     integer final_raw_lane, final_raw_index;
     integer run_idx, run_pixels, run_oy_base, run_ofm_h, run_pixel_base;
+    integer coltrace_first, coltrace_last, coltrace_count, coltrace_empty;
     integer ps_tile_start_count, ps_done_seen_count, ps_done_clear_count;
     integer tail_cycles_override;
     integer raw_hwc_compute_start_level_override;
     integer early_drain_override;
     integer pass_prefetch_override;
+    integer during_compute_prefetch_override;
     integer psum_stream_overlap_override;
     integer continuous_psum_override;
+    integer column_psum_override;
     integer layer_done_pulse_count;
     integer ps_bias_service_count, ps_weight_service_count, ps_line_fill_count;
 `ifdef TB_CONV_ACCEL_CORE_CHECK_VECTOR_IFM
@@ -1258,6 +1267,10 @@ module `TB_CONV_ACCEL_CORE_MODULE;
             cfg_write(6'h06, run_pixels);
             cfg_write(6'h08, {7'd0, run_ofm_h[8:0], 7'd0, run_oy_base[8:0]});
             cfg_write(6'h09, run_pixel_base[23:0]);
+`ifdef TB_CONV_ACCEL_CORE_COLTRACE
+            cfg_write(7'h59, {1'b1, 7'd0, 8'd0, 16'd0});
+            cfg_write(7'h6e, 32'd0);
+`endif
 `ifdef TB_CONV_ACCEL_CORE_BATCH_STREAM
 `ifdef TB_CONV_ACCEL_CORE_RAW_HWC_IFM
             batch_ifm_tile_packets = 1;
@@ -1281,7 +1294,9 @@ module `TB_CONV_ACCEL_CORE_MODULE;
                 (early_drain_override ? 32'd4 : 32'd0) |
                 (pass_prefetch_override ? 32'd8 : 32'd0) |
                 (psum_stream_overlap_override ? 32'd16 : 32'd0) |
-                (continuous_psum_override ? 32'd32 : 32'd0));
+                (continuous_psum_override ? 32'd32 : 32'd0) |
+                (column_psum_override ? 32'd64 : 32'd0) |
+                (during_compute_prefetch_override ? 32'd128 : 32'd0));
 `else
             cfg_write(6'h19, 32'd1 |
                 (early_drain_override ? 32'd4 : 32'd0) |
@@ -1305,6 +1320,40 @@ module `TB_CONV_ACCEL_CORE_MODULE;
             while (cfg_read_data[1] != 1'b1 || cfg_read_data[0] != 1'b0)
                 cfg_read(6'h00, cfg_read_data);
             ps_done_seen_count = ps_done_seen_count + 1;
+`ifdef TB_CONV_ACCEL_CORE_COLTRACE
+            if (continuous_psum_override) begin
+                cfg_read(7'h6e, cfg_read_data);
+                if (!cfg_read_data[31]) begin
+                    $display("[FAIL] column trace not valid");
+                    fail = fail + 1;
+                end else pass = pass + 1;
+                for (b = 0; b < COLS; b = b + 1) begin
+                    cfg_write(7'h6e, b);
+                    cfg_read(7'h6f, cfg_read_data);
+                    coltrace_first = cfg_read_data;
+                    cfg_read(7'h70, cfg_read_data);
+                    coltrace_last = cfg_read_data;
+                    cfg_read(7'h71, cfg_read_data);
+                    coltrace_count = cfg_read_data;
+                    if (cfg_read_data != run_pixels) begin
+                        $display("[FAIL] column trace col=%0d writes=%0d exp=%0d",
+                                 b, cfg_read_data, run_pixels);
+                        fail = fail + 1;
+                    end else pass = pass + 1;
+                    cfg_read(7'h72, cfg_read_data);
+                    coltrace_empty = cfg_read_data;
+                    $display("[COLTRACE] col=%0d first_wr=%0d last_wr=%0d writes=%0d empty_wait=%0d",
+                             b, coltrace_first, coltrace_last,
+                             coltrace_count, coltrace_empty);
+                end
+                cfg_read(7'h73, cfg_read_data);
+                $display("[COLTRACE] missing_or=0x%08h", cfg_read_data);
+                cfg_read(7'h74, cfg_read_data);
+                $display("[COLTRACE] missing_first=0x%08h", cfg_read_data);
+                cfg_read(7'h75, cfg_read_data);
+                $display("[COLTRACE] missing_last=0x%08h", cfg_read_data);
+            end
+`endif
 `ifdef TB_CONV_ACCEL_CORE_BATCH_STREAM
             cfg_read(6'h1d, cfg_read_data);
             if (cfg_read_data != COUT_BLOCKS) begin
@@ -1751,8 +1800,10 @@ module `TB_CONV_ACCEL_CORE_MODULE;
         raw_hwc_compute_start_level_override = `TB_RAW_HWC_COMPUTE_START_LEVEL_OVERRIDE;
         early_drain_override = `TB_EARLY_DRAIN_OVERRIDE;
         pass_prefetch_override = `TB_PASS_PREFETCH_OVERRIDE;
+        during_compute_prefetch_override = `TB_DURING_COMPUTE_PREFETCH_OVERRIDE;
         psum_stream_overlap_override = `TB_PSUM_STREAM_OVERLAP_OVERRIDE;
         continuous_psum_override = `TB_CONTINUOUS_PSUM_OVERRIDE;
+        column_psum_override = `TB_COLUMN_PSUM_OVERRIDE;
         if (tail_cycles_override != 0) begin
             $display("[INFO] tail_cycles override=%0d", tail_cycles_override);
         end
@@ -1766,11 +1817,18 @@ module `TB_CONV_ACCEL_CORE_MODULE;
         if (pass_prefetch_override != 0) begin
             $display("[INFO] pass_prefetch override=%0d", pass_prefetch_override);
         end
+        if (during_compute_prefetch_override != 0) begin
+            $display("[INFO] during_compute_prefetch override=%0d",
+                during_compute_prefetch_override);
+        end
         if (psum_stream_overlap_override != 0) begin
             $display("[INFO] psum_stream_overlap override=%0d", psum_stream_overlap_override);
         end
         if (continuous_psum_override != 0) begin
             $display("[INFO] continuous_psum override=%0d", continuous_psum_override);
+        end
+        if (column_psum_override != 0) begin
+            $display("[INFO] column_psum override=%0d", column_psum_override);
         end
         layer_done_pulse_count = 0;
         ps_bias_service_count = 0;

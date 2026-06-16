@@ -884,3 +884,611 @@ drain_residual = STAGE_DRAIN
   (`~371.3 ms`). The collector mainly removes the explicit final drain stage
   for raw-HWC Conv5/6/8, while the dominant remaining time is still
   `compute_stage` plus feeder/replay activity.
+
+## 25. 2026-06-15 pass-level timeline diagnostic
+
+- Continuous PSUM collector is now treated as a correct but not decisive
+  optimization. The measured DDR demo remains around `0.3713 s`; true
+  `compute_fire` is still much lower than `STAGE_COMPUTE`, and
+  `COLLECT_COLUMN_EMPTY_WAIT` remains large. The next step is therefore
+  observability, not another speculative datapath rewrite.
+- Added a diagnostic-only `pass_timeline_monitor`. It observes existing
+  scheduler, feeder, compute, raw-HWC replay, and collector events but does not
+  feed back into control. External DMA streams, raw-HWC cache format, OFM
+  packets, quantization, layer schedule, and `STREAM_CFG` behavior are
+  unchanged.
+- New aggregate `PASSPERF` counters report pass count, compute-start to first
+  fire latency, first-fire to last-fire span, last-fire to compute-done tail,
+  compute-start to first collector packet latency, collector column-empty wait,
+  raw replay active during compute, and compute-stage idle cycles.
+- New optional `PASSTRACE` capture records layer-local timestamps for one
+  selected `cout_block/k_pass`: weight done, feeder start/ready/done, compute
+  start, first/last compute fire, compute done, collector first/last packet,
+  and pass done.
+- Register additions use byte offsets `0x164..0x1b4`; the register map is
+  documented in `docs/hardware_dataflow_and_registers.md`. Vitis runtime prints
+  `PASSPERF` every layer and, when built with `-TilePerfTrace`, prints
+  `PASSTRACE` samples.
+- Local validation completed:
+
+  ```text
+  Icarus: tb_pass_timeline_monitor PASS, 22/0
+  Icarus: tb_layer_config_regs PASS, 158/0
+  Icarus: tb_conv_layer_top_stream PASS, 184/0
+  Icarus: tb_conv_accel_core PASS, 93/0
+  Python: tb/test_kv260_image_demo.py PASS
+  Vitis 2022.2: experimental DDR ELF with PASSPERF/PASSTRACE printing builds
+  ```
+
+- `tools/demo/summarize_uart_perf.py` now parses `PASSPERF` and `PASSTRACE`.
+  It reports pass averages, compute utilization inside `STAGE_COMPUTE`, and
+  fire density over the first-to-last-fire span.
+- Vivado `2022.2` implementation completed in `D:/MPSoC/b_passtrace_22`.
+  The first build attempt exposed a Tcl source-list issue: the new
+  `pass_timeline_monitor.v` file must be included in both the BD/IP-packaging
+  source list and the standalone synthesis list. The Tcl lists have been fixed.
+  Final signoff is:
+
+  ```text
+  WNS=+0.193 ns, TNS=0, WHS=+0.010 ns, THS=0
+  routing errors=0
+  CLB LUTs=57197, CLB Registers=49838
+  LUT as Memory=16641
+  BRAM Tile=63, URAM=8, DSP=184
+  bit SHA256=7712344B10C36969552A9547B1CED9F834C6381B3209316D9E0001DFDA4F4B04
+  XSA SHA256=99F09A6ACC6E9D3DE287DDD8AB7BA05080F4CF887E477745D8359B9D3D076AD8
+  ```
+
+- The first board run of `b_passtrace_22` passed batch-chain, but the selected
+  trace did not remain valid for the raw-HWC continuous layers. The monitor was
+  then fixed by tracking selected trace lifetime separately from the current
+  compute lifetime, so next-pass compute fires cannot overwrite a trace before
+  the collector pops the selected pass context.
+- Vivado `2022.2` implementation of the fixed build completed in
+  `D:/MPSoC/b_passtrace_fix2_22`:
+
+  ```text
+  WNS=+0.113 ns, TNS=0, WHS=+0.010 ns, THS=0
+  route errors=0
+  CLB LUTs=57226, CLB Registers=49831
+  LUT as Memory=16638, BRAM Tile=63, URAM=8, DSP=184
+  bit SHA256=3DC26E405921DCF04057CFFC8E8997D0A3481D4EBFF9585551B34A26FE7D2FBE
+  XSA SHA256=258458C60231AE5D62CE1E4E0F9BB7D73C8F8043FEB2A0D440DF24C2ABC660AA
+  ```
+
+- Board validation of `b_passtrace_fix2_22`:
+
+  ```text
+  batch-chain log: 20260615_230847_conv0_conv9_batch_chain_COM8.log
+  DDR image0 log:  20260615_231105_conv0_conv9_ddr_demo_COM8.log
+  DDR image1 log:  20260615_231547_conv0_conv9_ddr_demo_COM8.log
+  batch-chain: PASS, RTL golden and YOLO decode match
+  image0: with_mask score=0.357321
+  image1: with_mask score=0.295050
+  ```
+
+- `PASSTRACE` is now captured for Conv5/Conv6/Conv8 tile0, `cout_block=0`,
+  `k_pass=0`. The three samples show the same structure: compute starts 9 cycles
+  before first fire, compute fires over a 52-cycle window for a 52-pixel tile,
+  but collector first packet appears about 112 cycles after compute done. The
+  aggregate `PASSPERF` counters still show the dominant unexplained bubble as
+  collector column-empty / compute-idle time:
+
+  ```text
+  COLLECTPERF column_empty_wait=11628928
+  PASSPERF compute_idle=11907808
+  PASSPERF avg_start_to_first=9.00
+  PASSPERF avg_collect_wait=1.50
+  ```
+
+- `tools/demo/summarize_uart_perf.py` was hardened to split UART logs where
+  `TILEPERF`, `PERF`, `PASSPERF`, or `PASSTRACE` records are concatenated. The
+  trace-enabled ELF prints many tile lines, so wall-clock `total_us` is inflated
+  by UART output and should not be used as the performance baseline. The
+  hardware cycle counters remain the useful source for this diagnostic run.
+
+## 26. 2026-06-15 column-level PSUM trace result
+
+- Added a targeted `coltrace_monitor` after the pass-level trace identified
+  collector column-empty behavior as the remaining unexplained bubble. The
+  monitor observes each column's PSUM FIFO writes and the collector missing
+  mask for one selected pass. It is diagnostic-only and does not feed back into
+  scheduler or datapath control.
+- New offsets `0x1b8..0x1d8` expose selected-column first/last write timestamp,
+  write count, empty-wait count, missing-column masks, trace-valid, and version.
+  Vitis prints one `COLTRACE` line per column, and
+  `tools/demo/summarize_uart_perf.py` ranks columns by empty-wait cycles.
+- Local validation completed:
+
+  ```text
+  Icarus: tb_coltrace_monitor PASS
+  Icarus: tb_psum_output_collector PASS
+  Icarus: tb_pass_timeline_monitor PASS, 23/0
+  Icarus: tb_layer_config_regs PASS, 169/0
+  Icarus: tb_conv_layer_top_stream PASS, 184/0
+  Icarus: tb_conv_accel_core PASS, 93/0
+  Python: tb/test_kv260_image_demo.py PASS
+  xsim 2022.2: Conv5/Conv6/Conv8 raw-HWC tile0 PASS
+  Vitis 2022.2: trace-enabled DDR ELF builds
+  ```
+
+- Conv5, Conv6, and Conv8 show the same selected-pass pattern. Every column
+  writes exactly 52 consecutive pixels, but column start times are separated
+  by a fixed four-cycle phase:
+
+  ```text
+  col0 first=152127 last=152178 writes=52 empty_wait=99
+  col1 first=152131 last=152182 writes=52 empty_wait=103
+  col2 first=152135 last=152186 writes=52 empty_wait=107
+  col3 first=152139 last=152190 writes=52 empty_wait=111
+  col4 first=152143 last=152194 writes=52 empty_wait=115
+  col5 first=152147 last=152198 writes=52 empty_wait=119
+  col6 first=152151 last=152202 writes=52 empty_wait=123
+  col7 first=152155 last=152206 writes=52 empty_wait=127
+  ```
+
+- This result confirms fixed systolic column propagation rather than random
+  FIFO starvation or collector throughput loss. A collector-only reorder or
+  holding register cannot make the last column arrive earlier, so the planned
+  speculative phase-compensation datapath change is stopped.
+- The practical next choices are now narrower:
+  - Low risk: increase Conv5/Conv8 raw-HWC spatial tile height from 4 to 8.
+    Their current cache limit supports 104 pixels, reducing each layer from four
+    spatial tiles to two. The fixed per-pass latency estimate suggests roughly
+    `10.4 ms` potential per layer, about `20.8 ms` combined.
+  - Higher value: redesign partial PSUM storage/consumption as per-column
+    streaming so next-K compute can follow the four-cycle column wave instead of
+    waiting for a fully assembled `COLS*2` packet. Conv6 remains the main target
+    because its current 52-pixel tile already fills the 13312-word HWC cache and
+    cannot be enlarged without more cache capacity.
+- No board build is justified for the diagnostic alone before choosing one of
+  these data-path changes. The validated `b_passtrace_fix2_22` build remains the
+  board baseline.
+
+## 27. 2026-06-16 backend full-tile HWC cache experiment
+
+- The next optimization path is to spend more of the available xck26 URAM on the
+  existing 3x3 raw-HWC cache, rather than changing the cache data semantics.
+  The current 3x3 cache is a materialized window cache. Its capacity check is:
+
+  ```text
+  required_words = tile_pixels * ceil(CIN / IFM_BANKS)
+  IFM_BANKS      = 2
+  ```
+
+- A new experimental build/runtime option `BackendFullTile` raises the intended
+  cache configuration to:
+
+  ```text
+  HWC_CACHE_AW=16
+  HWC_CACHE_DEPTH=43264
+  HWC_CACHE_STRIPES=4
+  HWC_CACHE_USE_URAM=1
+  ```
+
+  This fits the full 13x13 backend 3x3 tiles:
+
+  ```text
+  Conv5/8: 169 * ceil(256/2) = 21632 words
+  Conv6:   169 * ceil(512/2) = 43264 words
+  ```
+
+- Software now supports `-BackendFullTile` for batch-chain and DDR-demo builds.
+  With this switch, Conv5, Conv6, and Conv8 use one spatial tile of height 13
+  instead of the previous `4,4,4,1` schedule. Conv7 and Conv9 are intentionally
+  left unchanged for the first experiment so the measured difference is mainly
+  attributable to backend 3x3 tile-size amortization.
+- Local validation so far:
+
+  ```text
+  Vitis 2022.2 DDR ELF build with BackendFullTile: PASS
+  xsim Conv5 full 13x13 raw-HWC tile: PASS, 2726/0
+  xsim Conv6 full 13x13 raw-HWC tile: PASS, 2726/0
+  xsim Conv8 full 13x13 raw-HWC tile: PASS, 2726/0
+  Python tb/test_kv260_image_demo.py: PASS
+  ```
+
+- A combined full-tile xsim run with all overlap switches enabled was attempted
+  for Conv6, but the xsim process stopped progressing after design load and was
+  terminated. The non-overlap full-tile tests validate the enlarged cache
+  address/capacity path; the full overlap combination still needs board-level
+  validation after the 2022.2 implementation build.
+- Next hardware build target:
+
+  ```text
+  D:/MPSoC/b_hwcfulltile_22
+  ```
+
+- The 2022.2 implementation build completed successfully:
+
+  ```text
+  build dir: D:/MPSoC/b_hwcfulltile_22
+  Vivado:    2022.2
+  WNS=+0.177 ns, TNS=0, WHS=+0.009 ns, THS=0
+  route errors=0, fully routed nets=104277
+  CLB LUTs=58903, CLB Registers=50915
+  LUT as Memory=16551
+  BRAM Tile=63, URAM=24, DSP=184
+  bit SHA256=633839A78242AAB9F5AA575B48C6A9A17FDE574944A4E5ED7640B88301ACE15F
+  XSA SHA256=AC2228EC28291BD4239AA887E529B2BEA6562A3E86CD322699CC5135F237E43D
+  ```
+
+  This confirms the larger cache maps to 24 URAMs and still closes timing at
+  100 MHz.
+
+- Board validation completed with full programming:
+
+  ```text
+  batch-chain:
+    log=D:/MPSoC/b_hwcfulltile_22/board_smoke_logs/20260616_125655_conv0_conv9_batch_chain_COM8.log
+    result=PASS, UART detections match decode golden count=1
+
+  DDR demo image maksssksksss0.png:
+    log=D:/MPSoC/b_hwcfulltile_22/board_smoke_logs/20260616_125932_conv0_conv9_ddr_demo_COM8.log
+    total=335.564 ms
+    detection=with_mask score=0.357321
+
+  DDR demo image maksssksksss1.png:
+    log=D:/MPSoC/b_hwcfulltile_22/board_smoke_logs/20260616_130105_conv0_conv9_ddr_demo_COM8.log
+    total=335.779 ms
+    detection=with_mask score=0.295050
+  ```
+
+  The result improves the previous approximately `371.3 ms` board baseline by
+  about `35.6 ms` while preserving detection output. The full-tile experiment is
+  therefore a useful optimization, but the remaining performance counters still
+  show substantial pass-internal overhead:
+
+  ```text
+  HW busy ~= 29.58M cycles
+  compute_fire = 7.43M cycles, 25.12% of HW busy
+  feeder       ~= 10.21M cycles
+  compute_stage~= 16.23M cycles
+  drain        ~= 2.01M cycles
+  column_empty_wait ~= 3.12M cycles
+  ```
+
+  This validates the URAM-capacity direction for amortizing spatial-tile fixed
+  costs, but it does not remove the deeper array-utilization issue. The next
+  optimization should target pass-internal feeder/compute/collector structure,
+  not further materialized-cache expansion unless front-end layers are also
+  moved to larger raw-HWC tiles.
+
+## 28. 2026-06-16 column-level partial-PSUM streaming foundation
+
+- After the backend full-tile result, the remaining bottleneck is no longer
+  dominated by spatial-tile startup. The current continuous PSUM path still
+  stores and reloads partial sums as one full `COLS*2` packet per pixel:
+
+  ```text
+  array column FIFOs
+      -> psum_output_collector waits until all columns are non-empty
+      -> full packet write to psum_pingpong_buffer
+      -> psum_stream_feeder reads full packet
+      -> systolic_top skews each column by pc*4 cycles
+  ```
+
+  This preserves correctness, but it still pays the fixed column wave inside
+  every K pass and prevents the next pass from consuming early columns as soon
+  as they are available.
+
+- The next structural direction is therefore column-level partial-PSUM
+  streaming. The first step implemented here is deliberately not connected to
+  the board path yet. It adds independently testable building blocks:
+
+  ```text
+  systolic/psum_column_pingpong_buffer.v
+  systolic/psum_column_stream_feeder.v
+  tb/tb_psum_column_stream.v
+  ```
+
+- `psum_column_pingpong_buffer` splits the partial-PSUM ping-pong storage by
+  output column. Each column can be written and read independently, with the
+  same two-bank pass-to-pass ownership model.
+- `psum_column_stream_feeder` recreates the existing `pc*4` column skew by
+  delaying the read request for each column, rather than reading a full packet
+  and delaying the data afterward. This is the key interface shape needed for a
+  future collector that can write column results as soon as each column FIFO
+  produces them.
+- Local validation:
+
+  ```text
+  tb_psum_column_stream   PASS, 32 pass / 0 fail
+  tb_psum_stream_feeder   PASS, 32 pass / 0 fail
+  tb_psum_output_collector PASS
+  ```
+
+- The next implementation step is to add an opt-in top-level mode, likely a new
+  `STREAM_CFG` experiment bit, that routes non-final continuous-PSUM writes
+  into the column buffer and uses the column feeder for later K passes. The
+  first target should be a small Conv5/6/8 raw-HWC tile xsim, not immediate
+  synthesis, because this touches the data presented to the systolic array top
+  row.
+
+## 29. 2026-06-16 column-PSUM A/B and true bottleneck update
+
+- A same-bitstream A/B run was completed on
+  `D:/MPSoC/b_hwcfulltile_colpsum_22`, using the same DDR image and the same
+  backend full-tile schedule. The only runtime difference was `ColumnPsum=0`
+  versus `ColumnPsum=1`.
+
+  ```text
+  ColumnPsum=0:
+    log=D:/MPSoC/b_hwcfulltile_colpsum_22/board_smoke_logs/20260616_165023_conv0_conv9_ddr_demo_COM8.log
+    total=330.777 ms
+    busy=29.207286M cycles
+    collect column_empty_wait=3.263920M cycles
+
+  ColumnPsum=1:
+    log=D:/MPSoC/b_hwcfulltile_colpsum_22/board_smoke_logs/20260616_165142_conv0_conv9_ddr_demo_COM8.log
+    total=330.798 ms
+    busy=29.207313M cycles
+    collect column_empty_wait=0.018288M cycles
+  ```
+
+- This proves that the column-PSUM path is functionally active and that it
+  removes almost all collector column-empty wait, but that wait was not on the
+  current end-to-end critical path. The total runtime is unchanged within
+  measurement noise.
+
+- A cycle-bound analysis script was added:
+
+  ```text
+  tools/demo/analyze_cycle_bound.py
+  ```
+
+  Running it on the `ColumnPsum=1` log shows:
+
+  ```text
+  total=330.798 ms
+  HW busy=292.073 ms
+  compute_fire=74.323 ms, util=25.45%
+  feeder=91.835 ms
+  compute_stage=175.733 ms
+  compute_idle=101.410 ms
+  drain=15.227 ms
+  collect_empty=0.183 ms
+  ```
+
+- The largest remaining opportunity is therefore not the collector. It is the
+  pass transaction boundary around `ST_COMP_WAIT`. Conv6 alone contributes the
+  largest gap:
+
+  ```text
+  conv6 busy=94.072 ms
+  conv6 compute_fire=27.689 ms
+  conv6 compute_stage=85.490 ms
+  conv6 compute_idle=57.801 ms
+  conv6 feed_fill=63.600 ms
+  ```
+
+- Interpretation: once the array enters its fire window, `fire_span` density is
+  effectively full. The bubble is not low PE throughput inside the window; it
+  is pass-level waiting before/after that window. Current scheduler prefetch is
+  still conservative: `prefetch_start_now` waits for `compute_done` and the
+  feeder completion event before starting next-pass weight/feed work. This
+  means next-pass preparation is mostly paid after current-pass compute, where
+  it is counted as compute-stage idle.
+
+- Important diagnostic correction: when `ColumnPsum=1`, the
+  `PSUMOVLPERF underflow` register must report the column PSUM stream
+  underflow, not the legacy full-packet PSUM feeder underflow. The RTL
+  diagnostic mux has been corrected so future logs do not report a misleading
+  legacy underflow count while the column path is active.
+
+- Next optimization target: **safe during-compute next-pass preparation**.
+  The goal is not to overwrite PE weights early. Instead, the next pass should
+  be prefetched into decoupling queues or buffers while the current pass is
+  computing:
+
+  ```text
+  current pass compute uses current PE weights and current IFM FIFO data
+  next pass weight is filled into its staging FIFO/buffer, not loaded into PEs
+  next pass IFM replay is appended behind current-pass IFM data when FIFO
+  credits make it safe
+  after current compute completes, only the short PE weight-load/switch remains
+  ```
+
+  This respects the single active PE weight context while targeting the
+  approximately `101 ms` compute-stage idle that remains after full-tile,
+  pass-prefetch, early-drain, PSUM overlap, and column-PSUM experiments.
+
+## 30. 2026-06-16 during-compute next-pass prefetch implementation
+
+- The safe staging experiment described above has been implemented as
+  `STREAM_CFG[7] = during_compute_prefetch_enable`. The default value remains
+  `0`, so existing board-validated ELFs and prepacked IFM paths are unchanged.
+
+- The new mode only changes next-pass preparation timing. It allows the
+  scheduler to start next-K weight staging and raw-HWC replay after the current
+  pass compute has started and the current feeder/replay transaction has
+  completed. It does not load the next weights into active PEs during the
+  current compute, and it does not start the next pass compute before the
+  existing dependency checks pass.
+
+- Software support was added through the `-DuringComputePrefetch` switch in the
+  Vitis build/run scripts. The switch defines
+  `ACCEL_DURING_COMPUTE_PREFETCH=1` and sets `STREAM_CFG[7]` only for raw-HWC
+  layers.
+
+- Local validation completed:
+
+  ```text
+  Icarus selected scheduler/config regression PASS
+  tb_layer_scheduler_during_compute_prefetch PASS
+  tb_layer_config_regs PASS, 173/0
+  tb_axi_lite_cfg_bridge PASS, 99/0
+
+  xsim Conv5 full 13x13 raw-HWC tile PASS, 2726/0
+  xsim Conv6 full 13x13 raw-HWC tile PASS, 2726/0
+  xsim Conv8 full 13x13 raw-HWC tile PASS, 2726/0
+  ```
+
+- The next step is not more RTL speculation; it is a 2022.2 implementation and
+  board A/B against the current `b_hwcfulltile_colpsum_22` baseline. If total
+  DDR demo latency drops by at least about `20 ms`, this confirms that late
+  next-pass staging was on the critical path. If it drops by less than `10 ms`,
+  the remaining compute idle should be investigated as raw-HWC replay throughput
+  or a deeper compute-stage handoff issue.
+
+- 2022.2 implementation completed:
+
+  ```text
+  build dir: D:/MPSoC/b_kprefetch_22
+  WNS=+0.092 ns, TNS=0
+  WHS=+0.010 ns, THS=0
+  routing errors=0
+  CLB LUTs=84480, CLB Registers=53260
+  LUT as Memory=35502
+  BRAM Tile=63, URAM=24, DSP=184
+  bit SHA256=83219E2150352795B21DC52062FB74FAD3E55CE2DE3075BD3DBD8A71DA765D5A
+  XSA SHA256=BB36996E2AE900061779F82943CAA7D4D128B4A72A80D801E14D03D05294CA63
+  ```
+
+- The matching Vitis ELFs also build with the short variant alias:
+
+  ```text
+  conv_accel_conv0_conv9_batch_chain_rhwc_c5_c6_c8_ed_pf_dcpf_pso_cps_col_full_smoke.elf
+  conv_accel_conv0_conv9_ddr_demo_rhwc_c5_c6_c8_ed_pf_dcpf_pso_cps_col_full_smoke.elf
+  ```
+
+  The next validation step is full programming of `b_kprefetch_22`, then
+  batch-chain and two-image DDR demo A/B against the `~330.8 ms` baseline.
+
+- Board validation completed:
+
+  ```text
+  batch-chain full programming:
+    PASS, UART detections match decode golden count=1
+    log=D:/MPSoC/b_kprefetch_22/board_smoke_logs/20260616_193348_conv0_conv9_batch_chain_COM8.log
+
+  DDR demo maksssksksss0.png:
+    total=288.002 ms
+    detection=with_mask score=0.357321
+    log=D:/MPSoC/b_kprefetch_22/board_smoke_logs/20260616_193623_conv0_conv9_ddr_demo_COM8.log
+
+  DDR demo maksssksksss1.png:
+    total=287.993 ms
+    detection=with_mask score=0.295050
+    log=D:/MPSoC/b_kprefetch_22/board_smoke_logs/20260616_193752_conv0_conv9_ddr_demo_COM8.log
+  ```
+
+- Compared with the previous `b_hwcfulltile_colpsum_22` baseline of about
+  `330.8 ms`, during-compute next-pass prefetch saves about `42.8 ms`. This
+  confirms that late next-pass staging was on the critical path.
+
+- Updated cycle-bound summary for the new board run:
+
+  ```text
+  total=288.002 ms
+  HW busy=247.184 ms
+  compute_fire=74.323 ms, util=30.07%
+  feeder=99.913 ms
+  compute_stage=121.022 ms
+  compute_idle=46.699 ms
+  drain=16.467 ms
+  collect_empty=0.163 ms
+  psum_underflow=0
+  ```
+
+- The remaining largest layer-level gaps are:
+
+  ```text
+  conv6 compute_idle=30.401 ms, feed_fill=63.600 ms
+  conv5 compute_idle= 7.623 ms, feed_fill=17.873 ms
+  conv8 compute_idle= 7.623 ms, feed_fill=17.873 ms
+  ```
+
+  Because Conv0-4 still spend significant time in feeder/fill and do not yet
+  use the backend full-tile raw-HWC path, the next performance direction should
+  compare front-end raw-HWC/full-tile feasibility against a deeper replay/compute
+  overlap design for Conv5/6/8.
+
+- Follow-up front-end raw-HWC experiment:
+
+  ```text
+  switch set:
+    -RawHwcConv3 -RawHwcConv4 -RawHwcConv5 -RawHwcConv6 -RawHwcConv8
+    -RawHwcComputeStartLevel 64
+    -EarlyDrain -PassPrefetch -DuringComputePrefetch
+    -PsumStreamOverlap -ContinuousPsum -ColumnPsum
+    -BackendFullTile
+
+  generated aliases:
+    conv_accel_conv0_conv9_batch_chain_rhwc_c3_c4_c5_c6_c8_ed_pf_dcpf_pso_cps_col_full_smoke.elf
+    conv_accel_conv0_conv9_ddr_demo_rhwc_c3_c4_c5_c6_c8_ed_pf_dcpf_pso_cps_col_full_smoke.elf
+  ```
+
+  A first attempt used Conv3 `26` output rows per tile. It deadlocked because
+  `52*26=1352` vectors exceed the current `IFM_FIFO_DEPTH=1024` staging space
+  used by during-compute prefetch. The software schedule was reduced to
+  `18/18/16` Conv3 rows, so the largest tile is `52*18=936` vectors and fits
+  the FIFO while still reducing Conv3 from seven tiles to three.
+
+  Board validation with the same `D:/MPSoC/b_kprefetch_22` bitstream:
+
+  ```text
+  batch-chain full programming:
+    PASS, UART detections match decode golden count=1
+    log=D:/MPSoC/b_kprefetch_22/board_smoke_logs/20260616_205214_conv0_conv9_batch_chain_COM8.log
+
+  DDR demo maksssksksss0.png:
+    PASS, total=286.653 ms
+    log=D:/MPSoC/b_kprefetch_22/board_smoke_logs/20260616_205356_conv0_conv9_ddr_demo_COM8.log
+
+  DDR demo maksssksksss1.png:
+    PASS, total=286.646 ms
+    log=D:/MPSoC/b_kprefetch_22/board_smoke_logs/20260616_205521_conv0_conv9_ddr_demo_COM8.log
+  ```
+
+  This is functional but not a performance win versus the validated
+  Conv4/5/6/8 configuration (`282.951 ms`). Conv3 raw-HWC reduces the tile
+  count, but the materialized 3x3 raw loader pays a large load/unpack cost at
+  width 52, and Conv3 `compute_idle` rises from about `0.215 ms` to
+  `7.255 ms`. Therefore `-RawHwcConv3` remains an opt-in diagnostic switch, not
+  the recommended default. The next useful optimization should not be more
+  materialized-cache expansion for Conv3; it should target the remaining
+  Conv6/Conv4/Conv5/Conv8 compute-stage bubbles or a more efficient raw feature
+  cache/replay format.
+
+## 26. 2026-06-16 raw-HWC replay throughput optimization
+
+- RTL review of the `b_kprefetch_22` board logs showed that the large
+  `compute_stage - compute_fire` bubble is not primarily inside the PE compute
+  controller. For Conv6, `comp_active=2,770,944` is almost equal to
+  `comp_fire=2,768,896`, while `PASSPERF compute_idle=3,040,064` and
+  `replay_active_during_compute=1,670,528`. This points at raw-HWC replay and
+  scheduler staging rather than arithmetic throughput.
+- The raw-HWC cache replay path was still effectively a two-cycle vector
+  source. It issued the next URAM read only after the current vector handshake,
+  then waited another cycle before asserting `vector_valid`. This matched the
+  board counters: Conv6 `feed_push=2,768,896`, but
+  `RAWSTAT replay_active=5,537,792`.
+- `axis_hwc_tile_cache` has been changed to issue the next replay read whenever
+  the output register is empty or will be consumed in the current cycle. The
+  output pixel metadata is latched with the synchronous URAM read, so the cache
+  can present one vector per cycle when `vector_ready=1`. The AXIS input format,
+  materialized 3x3 cache layout, output vector format, quantization semantics,
+  and scheduler interface are unchanged.
+- Validation so far:
+
+  ```text
+  Icarus tb_axis_hwc_tile_cache:
+    261 pass, 0 fail
+    includes a fast-replay assertion that ready-high replay completes in
+    about num_pixels cycles instead of the old two-cycle cadence
+
+  Vivado/xsim 2022.2 tb_axis_hwc_tile_cache:
+    261 pass, 0 fail
+
+  Vivado/xsim 2022.2 Conv6 full 13x13 raw-HWC tile:
+    tb_conv_accel_core_axi_lite_axis_stream_conv6_3x3_raw_hwc_fulltile_cout16
+    2726 pass, 0 fail
+  ```
+
+- Expected board effect: this should reduce the backend raw-HWC replay cost for
+  Conv5/6/8 and Conv4. Conv6 alone has roughly `2.77M` excess replay-active
+  cycles versus one-cycle replay, so the first board target is a meaningful
+  drop in `RAWSTAT replay_active`, `SUBPERF feed_fill`, and Conv6
+  `compute_idle`. If timing still closes, this is the next bitstream to compare
+  against the current `Conv4/5/6/8` raw-HWC `282.951 ms` run.

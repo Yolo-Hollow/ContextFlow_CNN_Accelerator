@@ -70,6 +70,7 @@ module tb_layer_scheduler_k9216;
         .raw_hwc_mode(1'b0),
         .early_drain_enable(1'b0),
         .pass_prefetch_enable(1'b0),
+        .during_compute_prefetch_enable(1'b0),
         .psum_stream_overlap_enable(1'b0),
         .continuous_psum_enable(1'b0),
         .collector_ctx_ready(1'b1),

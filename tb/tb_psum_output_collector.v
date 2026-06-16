@@ -13,6 +13,7 @@ module tb_psum_output_collector;
     reg ctx_wr_bank = 1'b0;
     reg [10:0] ctx_cout_base = 11'd0;
     reg [10:0] ctx_cout_valid = 11'd0;
+    reg ctx_trace_match = 1'b0;
     wire [31:0] rd_en;
     reg [DATA_W-1:0] rd_data = {DATA_W{1'b0}};
     reg [31:0] empty = 32'hffff_ffff;
@@ -39,6 +40,7 @@ module tb_psum_output_collector;
         .ctx_num_pixels(ctx_num_pixels), .ctx_is_final(ctx_is_final),
         .ctx_wr_bank(ctx_wr_bank), .ctx_cout_base(ctx_cout_base),
         .ctx_cout_valid(ctx_cout_valid),
+        .ctx_trace_match(ctx_trace_match),
         .psum_fifo_rd_en(rd_en), .psum_fifo_rd_data(rd_data),
         .psum_fifo_empty(empty),
         .packet_valid(packet_valid), .packet_ready(packet_ready),
@@ -49,6 +51,7 @@ module tb_psum_output_collector;
         .context_start(context_start), .context_done(context_done),
         .partial_done(partial_done), .final_done(final_done),
         .context_active(), .context_wr_bank(), .context_is_final(),
+        .trace_context_active(), .trace_context_done(),
         .perf_context_push(), .perf_context_pop(),
         .perf_context_full_stall(), .perf_column_empty_wait()
     );

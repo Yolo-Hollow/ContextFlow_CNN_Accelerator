@@ -45,6 +45,7 @@ module layer_scheduler_stream #(
     input      raw_hwc_mode,
     input      early_drain_enable,
     input      pass_prefetch_enable,
+    input      during_compute_prefetch_enable,
     input      psum_stream_overlap_enable,
     input      continuous_psum_enable,
     input      collector_ctx_ready,
@@ -127,10 +128,16 @@ module layer_scheduler_stream #(
         (prefetch_started && feeder_done);
     wire prefetch_ready_now =
         prefetch_started && prefetch_weight_done_now && prefetch_feed_done_now;
-    wire prefetch_start_now =
-        busy && prefetch_enable_current && !prefetch_started &&
+    wire prefetch_start_serial_ready =
         (compute_done_seen || compute_done) &&
         (!feeder_overlap_mode || feeder_done_seen || feeder_done);
+    wire prefetch_start_during_compute_ready =
+        during_compute_prefetch_enable &&
+        compute_started_seen &&
+        (!feeder_overlap_mode || feeder_done_seen || feeder_done);
+    wire prefetch_start_now =
+        busy && prefetch_enable_current && !prefetch_started &&
+        (prefetch_start_serial_ready || prefetch_start_during_compute_ready);
     wire psum_overlap_enable_current =
         psum_stream_overlap_enable && prefetch_enable_current && prefetch_started;
     wire psum_overlap_ready_now =

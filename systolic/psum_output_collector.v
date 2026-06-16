@@ -21,6 +21,7 @@ module psum_output_collector #(
     input         ctx_wr_bank,
     input  [10:0] ctx_cout_base,
     input  [10:0] ctx_cout_valid,
+    input         ctx_trace_match,
 
     output [31:0] psum_fifo_rd_en,
     input  [COLS*PSUM_W*2-1:0] psum_fifo_rd_data,
@@ -42,6 +43,8 @@ module psum_output_collector #(
     output        context_active,
     output        context_wr_bank,
     output        context_is_final,
+    output        trace_context_active,
+    output reg    trace_context_done,
     output reg perf_context_push,
     output reg perf_context_pop,
     output     perf_context_full_stall,
@@ -49,7 +52,7 @@ module psum_output_collector #(
 );
     localparam DATA_W = COLS*PSUM_W*2;
     localparam [31:0] COL_MASK = (32'h1 << COLS) - 1;
-    localparam CTX_W = 16 + 1 + 1 + 11 + 11;
+    localparam CTX_W = 16 + 1 + 1 + 11 + 11 + 1;
 
     reg [CTX_W-1:0] ctx_mem [0:CTX_DEPTH-1];
     reg [CTX_AW:0] ctx_wptr;
@@ -68,6 +71,7 @@ module psum_output_collector #(
     reg active_wr_bank;
     reg [10:0] active_cout_base;
     reg [10:0] active_cout_valid;
+    reg active_trace_match;
     reg [15:0] rd_count;
     reg [15:0] out_count;
     reg [ADDR_W-1:0] pending_addr;
@@ -94,6 +98,7 @@ module psum_output_collector #(
     assign context_active = active;
     assign context_wr_bank = active_wr_bank;
     assign context_is_final = active_is_final;
+    assign trace_context_active = active && active_trace_match;
 
     always @(posedge clk) begin
         if (rst) begin
@@ -101,7 +106,7 @@ module psum_output_collector #(
         end else if (ctx_push) begin
             ctx_mem[ctx_wptr[CTX_AW-1:0]] <= {
                 ctx_num_pixels, ctx_is_final, ctx_wr_bank,
-                ctx_cout_base, ctx_cout_valid
+                ctx_cout_base, ctx_cout_valid, ctx_trace_match
             };
             ctx_wptr <= ctx_wptr + 1'b1;
         end
@@ -116,6 +121,7 @@ module psum_output_collector #(
             active_wr_bank <= 1'b0;
             active_cout_base <= 11'd0;
             active_cout_valid <= 11'd0;
+            active_trace_match <= 1'b0;
             rd_count <= 16'd0;
             out_count <= 16'd0;
             pending_addr <= {ADDR_W{1'b0}};
@@ -134,6 +140,7 @@ module psum_output_collector #(
             final_done <= 1'b0;
             perf_context_push <= 1'b0;
             perf_context_pop <= 1'b0;
+            trace_context_done <= 1'b0;
         end else begin
             context_start <= 1'b0;
             context_done <= 1'b0;
@@ -141,6 +148,7 @@ module psum_output_collector #(
             final_done <= 1'b0;
             perf_context_push <= ctx_push;
             perf_context_pop <= 1'b0;
+            trace_context_done <= 1'b0;
 
             if (!enable) begin
                 active <= 1'b0;
@@ -153,7 +161,7 @@ module psum_output_collector #(
                 if (!active && !ctx_empty) begin
                     {
                         active_num_pixels, active_is_final, active_wr_bank,
-                        active_cout_base, active_cout_valid
+                        active_cout_base, active_cout_valid, active_trace_match
                     } <= ctx_mem[ctx_rptr[CTX_AW-1:0]];
                     ctx_rptr <= ctx_rptr + 1'b1;
                     active <= 1'b1;
@@ -167,10 +175,12 @@ module psum_output_collector #(
                 end else if (active) begin
                     if (completing_packet) begin
                         active <= 1'b0;
+                        active_trace_match <= 1'b0;
                         packet_valid <= 1'b0;
                         hold_valid <= 1'b0;
                         read_pending <= 1'b0;
                         context_done <= 1'b1;
+                        trace_context_done <= active_trace_match;
                         partial_done <= !active_is_final;
                         final_done <= active_is_final;
                     end else begin

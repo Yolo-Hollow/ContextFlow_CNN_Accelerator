@@ -19,6 +19,7 @@ module systolic_top #(
     input  start,
     input  [15:0] num_pixels,
     input  [15:0] tail_cycles_config,
+    input  hold_compute_count_on_stall,
     output done,
     output compute_fire_out,
     output perf_comp_wload,
@@ -55,6 +56,9 @@ module systolic_top #(
     input                       psum_stream_valid,
     input                       psum_stream_compute_ready,
     input                       use_psum_stream,
+    input  [COLS*2*PSUM_W-1:0]  psum_column_stream_data,
+    input  [COLS-1:0]           psum_column_stream_valid,
+    input                       use_column_psum_stream,
 
     // ---- Weight FIFO write ports (fill externally) ----
     input  [ROWS-1:0]           wgt_fifo_wr_en,
@@ -64,7 +68,8 @@ module systolic_top #(
     // ---- PSUM FIFO read ports (drain externally) ----
     input  [31:0]               psum_fifo_rd_en,
     output [COLS*PSUM_W*2-1:0]  psum_fifo_rd_data,
-    output [31:0]               psum_fifo_empty
+    output [31:0]               psum_fifo_empty,
+    output [31:0]               psum_fifo_wr_en_dbg
 );
     // ---- Control ----
     wire ctrl_w_load, ctrl_compute_start, ctrl_pre_write;
@@ -86,7 +91,9 @@ module systolic_top #(
     ) u_ctrl (
         .clk(clk), .rst(rst), .start(start), .num_pixels(num_pixels),
         .tail_cycles_config(tail_cycles_config),
-        .compute_ready(compute_ready), .done(done),
+        .compute_ready(compute_ready),
+        .hold_compute_count_on_stall(hold_compute_count_on_stall),
+        .done(done),
         .w_load(ctrl_w_load), .w_col(ctrl_w_col),
         .compute_active(compute_active),
         .compute_fire(compute_fire),
@@ -228,7 +235,9 @@ module systolic_top #(
             assign psum_stream_valid_skewed[2*pc+1] = col_valid_out;
         end
     endgenerate
-    wire [COLS*2*PSUM_W-1:0] psum_top_init = use_psum_stream ? psum_stream_skewed : psum_top_static;
+    wire [COLS*2*PSUM_W-1:0] psum_top_init =
+        use_column_psum_stream ? psum_column_stream_data :
+        (use_psum_stream ? psum_stream_skewed : psum_top_static);
 
     // Route IFM full to correct port
     assign ifm_fifo_empty = {{(32-ROWS){1'b0}}, ifm_fifo_empty_active};
@@ -240,7 +249,16 @@ module systolic_top #(
     wire [COLS*2-1:0]        valid_v_bot;
 
     // Top-row valid: always 1 (bias or partial sum are always valid)
-    wire [COLS*2-1:0] valid_v_top = use_psum_stream ? psum_stream_valid_skewed : {COLS*2{1'b1}};
+    wire [COLS*2-1:0] column_stream_valid_expanded;
+    generate
+        for (pc = 0; pc < COLS; pc = pc + 1) begin : column_stream_valid_expand
+            assign column_stream_valid_expanded[2*pc] = psum_column_stream_valid[pc];
+            assign column_stream_valid_expanded[2*pc+1] = psum_column_stream_valid[pc];
+        end
+    endgenerate
+    wire [COLS*2-1:0] valid_v_top =
+        use_column_psum_stream ? column_stream_valid_expanded :
+        (use_psum_stream ? psum_stream_valid_skewed : {COLS*2{1'b1}});
     // Left-edge horizontal valid: IFM FIFO rd_en (data being read is valid)
     wire [ROWS-1:0]   valid_h_left = ifm_fifo_rd_valid;
 
@@ -263,6 +281,7 @@ module systolic_top #(
 
     // ---- PSUM FIFOs (32 × 48-bit) ----
     wire [31:0] psum_fifo_wr_en;
+    assign psum_fifo_wr_en_dbg = psum_fifo_wr_en;
     generate
         for (r = 0; r < COLS; r = r + 1) begin : psum_fifo_gen
             assign psum_fifo_wr_en[r] = valid_v_bot[2*r];

@@ -14,6 +14,7 @@ module systolic_ctrl #(
     input  [15:0] num_pixels,
     input  [15:0] tail_cycles_config,
     input  compute_ready,
+    input  hold_compute_count_on_stall,
     output reg done,
     output reg w_load,
     output reg [4:0] w_col,
@@ -73,8 +74,9 @@ module systolic_ctrl #(
     end
     always @(posedge clk) begin
         if (rst) compute_cnt <= 16'd0;
+        else if (state != COMPUTE) compute_cnt <= 16'd0;
         else if (compute_fire) compute_cnt <= compute_cnt + 16'd1;
-        else compute_cnt <= 16'd0;
+        else if (!hold_compute_count_on_stall) compute_cnt <= 16'd0;
     end
     always @(posedge clk) begin
         if (rst) drain_cnt <= 16'd0;

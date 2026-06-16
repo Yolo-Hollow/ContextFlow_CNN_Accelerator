@@ -169,7 +169,7 @@ Checks:
 - IFM AXIS input is uint8; internal line-buffer data is centered signed int8.
 - Window, MAC, requant, OFM writeback, TLAST, and debug counters still match the signed-IFM golden.
 
-Current result:
+Current local result:
 
 - `1169 pass, 0 fail`
 
@@ -639,10 +639,14 @@ Checks:
   `vector_ready` backpressure.
 - For `3x3`, verifies both pass-base `0` and pass-base `18` so kernel-position
   and channel mapping cross a bank chunk boundary.
+- Throughput guard: with `vector_ready` held high, replay must deliver vectors
+  at roughly one vector per cycle after startup. This catches regressions to the
+  previous two-cycle/vector synchronous-read cadence.
 
 Current result:
 
-- `259 pass, 0 fail`
+- Icarus: `261 pass, 0 fail`.
+- Vivado/xsim `2022.2`: `261 pass, 0 fail`.
 
 ### `tb_conv_accel_core_axi_lite_axis_stream_conv6_3x3_raw_hwc_ext_tile0_cout16`
 
@@ -734,6 +738,249 @@ Current result:
 - Fixed build `D:/MPSoC/b_psumcollector_fix3_22` passes KV260 batch-chain and
   two DDR image demos. Measured DDR totals are about `0.3713 s`; collector
   context-full stall and PSUM-overlap underflow are both `0`.
+
+### Pass timeline diagnostic checks
+
+Purpose:
+
+- Add diagnostic observability for the remaining pass-level bubbles after the
+  continuous PSUM collector.
+- Keep the datapath unchanged while measuring pass timing around feeder,
+  compute, raw-HWC replay, and collector events.
+- Support one selected `cout_block/k_pass` timestamp trace for Conv5/Conv6/Conv8
+  raw-HWC board runs.
+
+Checks:
+
+- `tb_pass_timeline_monitor`: artificial event sequences verify aggregate
+  counts and selected-pass timestamps for weight done, feeder events, compute
+  fire span, collector packets, and pass completion.
+- `tb_layer_config_regs`: verifies the `0x164..0x1b4` pass timeline register
+  readback path and `PASSTRACE_SELECT` write/read behavior.
+- `tb_conv_layer_top_stream` and `tb_conv_accel_core`: verify the new monitor
+  wiring does not disturb existing top-level behavior.
+- `tb/test_kv260_image_demo.py`: verifies UART parser compatibility for
+  `PASSPERF` and `PASSTRACE` lines.
+- Vitis `2022.2` build: verifies that the experimental DDR demo can be built
+  with `-TilePerfTrace -PassTraceCoutBlock 0 -PassTraceKPass 0` plus the
+  current raw-HWC/overlap/continuous-PSUM switches.
+
+Current result:
+
+- Icarus selected regression:
+
+  ```text
+  tb_pass_timeline_monitor 22 pass, 0 fail
+  tb_layer_config_regs     158 pass, 0 fail
+  tb_conv_layer_top_stream 184 pass, 0 fail
+  tb_conv_accel_core       93 pass, 0 fail
+  ```
+
+- Python UART parser test passes.
+- Vitis `2022.2` experimental DDR ELF builds successfully.
+- Vivado `2022.2` implementation for `D:/MPSoC/b_passtrace_22` completed:
+  `WNS=+0.193 ns`, `TNS=0`, `WHS=+0.010 ns`, `THS=0`, and `0` routing
+  errors. The build fixed the Tcl source-list coverage for
+  `pass_timeline_monitor.v`.
+- The first board trace build passed batch-chain but did not keep trace-valid
+  asserted for the raw-HWC continuous layers. The monitor was fixed to track the
+  selected trace lifetime separately from the current compute lifetime.
+- Vivado `2022.2` implementation for the fixed build
+  `D:/MPSoC/b_passtrace_fix2_22` completed with `WNS=+0.113 ns`, `TNS=0`,
+  `WHS=+0.010 ns`, `THS=0`, and `0` routing errors.
+- KV260 validation passed:
+
+  ```text
+  batch-chain: 20260615_230847_conv0_conv9_batch_chain_COM8.log
+  DDR image0:  20260615_231105_conv0_conv9_ddr_demo_COM8.log
+  DDR image1:  20260615_231547_conv0_conv9_ddr_demo_COM8.log
+  ```
+
+- `PASSTRACE` now captures Conv5/Conv6/Conv8 tile0 at `cout_block=0`,
+  `k_pass=0`. The samples show `compute_start -> first_fire = 9` cycles and a
+  52-cycle fire span for the 52-pixel tile, while collector first packet appears
+  about 112 cycles after compute done.
+- `tools/demo/summarize_uart_perf.py` now tolerates UART logs where metric
+  records are concatenated, which is common when `TILEPERF` tracing is enabled.
+
+### Column-level PSUM trace checks
+
+Purpose:
+
+- Test the specific hypothesis that the continuous collector is stalled by
+  unequal or irregular per-column PSUM FIFO production.
+- Observe one selected pass without feeding diagnostic signals back into the
+  data path.
+
+Checks:
+
+- `tb_coltrace_monitor`: first/last write timestamps, write count, selected
+  column empty-wait, and missing-mask capture.
+- `tb_layer_config_regs`: `0x1b8..0x1d8` readback, selected-column write, busy
+  freeze, trace-valid, and version.
+- Conv5/Conv6/Conv8 raw-HWC tile0 xsim with continuous PSUM and column trace:
+  require byte-exact output, trace-valid, and `wr_count == num_pixels` for all
+  eight columns.
+- Python UART parsing: parse and rank `COLTRACE` lines without disturbing
+  existing `PERF`, `PASSPERF`, or `PASSTRACE` summaries.
+
+Current result:
+
+```text
+tb_coltrace_monitor       PASS
+tb_psum_output_collector  PASS
+tb_pass_timeline_monitor  23 pass, 0 fail
+tb_layer_config_regs      169 pass, 0 fail
+Conv5 raw-HWC tile0       PASS, 863/0 with detailed trace
+Conv6 raw-HWC tile0       PASS
+Conv8 raw-HWC tile0       PASS
+```
+
+The selected 52-pixel pass produces 52 consecutive writes on every column.
+Column `n` begins `4*n` cycles after column 0; empty-wait increases from 99
+cycles on column 0 to 127 cycles on column 7. This is fixed array propagation,
+not random collector starvation. A collector-only phase correction is
+therefore not an accepted optimization. Future tests should target either
+larger Conv5/Conv8 spatial tiles or per-column partial-PSUM streaming.
+
+### Backend full-tile raw-HWC cache checks
+
+Purpose:
+
+- Validate the enlarged materialized 3x3 raw-HWC cache before synthesis.
+- Cover the backend layers that can use a single 13x13 spatial tile when
+  `HWC_CACHE_DEPTH=43264`.
+
+Checks:
+
+- Conv5 full 13x13 raw-HWC tile with `CIN=256`, `COUT_TOTAL=16`.
+- Conv6 full 13x13 raw-HWC tile with `CIN=512`, `COUT_TOTAL=16`; this is the
+  maximum capacity case at `169 * ceil(512/2) = 43264` materialized words.
+- Conv8 full 13x13 raw-HWC tile with `CIN=256`, `COUT_TOTAL=16`.
+- Byte-exact comparison against the external RTL-semantic golden.
+- Raw-HWC load byte count, OFM byte count, TLAST/debug counters, and AXIS error
+  counters remain correct.
+
+Current result:
+
+```text
+tb_conv_accel_core_axi_lite_axis_stream_conv5_3x3_raw_hwc_fulltile_cout16  2726 pass, 0 fail
+tb_conv_accel_core_axi_lite_axis_stream_conv6_3x3_raw_hwc_fulltile_cout16  2726 pass, 0 fail
+tb_conv_accel_core_axi_lite_axis_stream_conv8_3x3_raw_hwc_fulltile_cout16  2726 pass, 0 fail
+```
+
+Board result with the matching 2022.2 hardware build:
+
+```text
+build dir: D:/MPSoC/b_hwcfulltile_22
+batch-chain: PASS, log=20260616_125655_conv0_conv9_batch_chain_COM8.log
+DDR demo maksssksksss0.png: PASS, total=335.564 ms
+DDR demo maksssksksss1.png: PASS, total=335.779 ms
+```
+
+### During-compute next-pass prefetch checks
+
+Purpose:
+
+- Verify the experimental `STREAM_CFG[7]` path that starts next-K staging while
+  the current pass is still computing.
+- Confirm that it does not overwrite active PE weights, does not start the next
+  compute early, and leaves default behavior unchanged when disabled.
+- Cover the backend raw-HWC full-tile layers where current analysis shows the
+  largest `compute_stage - compute_fire` opportunity.
+
+Checks:
+
+- Scheduler directed test covers the old pass-prefetch behavior and the new
+  during-compute prefetch behavior.
+- AXI-Lite config tests cover readback, output bit, and busy-freeze behavior for
+  `STREAM_CFG[7]`.
+- Conv5, Conv6, and Conv8 full 13x13 raw-HWC tiles run byte-exact with:
+
+```text
+RawHwcComputeStartLevel=64
+EarlyDrain
+PassPrefetch
+DuringComputePrefetch
+PsumStreamOverlap
+ContinuousPsum
+ColumnPsum
+```
+
+Current local result:
+
+```text
+Icarus selected scheduler/config regression PASS
+tb_layer_scheduler_during_compute_prefetch PASS, 0 fail
+tb_layer_config_regs PASS, 173 pass / 0 fail
+tb_axi_lite_cfg_bridge PASS, 99 pass / 0 fail
+
+xsim Conv5 full raw-HWC tile PASS, 2726 pass / 0 fail
+xsim Conv6 full raw-HWC tile PASS, 2726 pass / 0 fail
+xsim Conv8 full raw-HWC tile PASS, 2726 pass / 0 fail
+```
+
+The xsim progress traces show `prefetch_pass` advancing during the current
+compute window when `DuringComputePrefetch` is enabled. The next required
+validation is a 2022.2 hardware build and board A/B against the current
+`b_hwcfulltile_colpsum_22` baseline.
+
+Board result with the matching 2022.2 hardware build:
+
+```text
+build dir: D:/MPSoC/b_kprefetch_22
+batch-chain: PASS
+  log=20260616_193348_conv0_conv9_batch_chain_COM8.log
+
+DDR demo maksssksksss0.png:
+  PASS, total=288.002 ms
+  log=20260616_193623_conv0_conv9_ddr_demo_COM8.log
+
+DDR demo maksssksksss1.png:
+  PASS, total=287.993 ms
+  log=20260616_193752_conv0_conv9_ddr_demo_COM8.log
+```
+
+A/B against `b_hwcfulltile_colpsum_22` shows the optimization is on the
+critical path:
+
+```text
+baseline total       ~= 330.798 ms
+during-prefetch total = 288.002 ms
+saved                 ~= 42.8 ms
+
+baseline compute_stage = 175.733 ms
+new compute_stage      = 121.022 ms
+baseline compute_idle  = 101.410 ms
+new compute_idle       = 46.699 ms
+```
+
+The remaining checks are clean: `PREFETCHPERF miss=0`, `PREFETCHPERF stall=0`,
+`PSUMOVLPERF underflow=0`, and `COLLECTPERF context_full_stall=0`.
+
+### Conv3 Raw-HWC Large-Tile Board A/B
+
+`-RawHwcConv3` was added as an experimental software-only extension using the
+existing `b_kprefetch_22` bitstream. The initial `26`-row Conv3 tile exceeded
+the during-compute prefetch staging FIFO (`52*26=1352` vectors versus
+`IFM_FIFO_DEPTH=1024`) and timed out with `ST_IFM_REQ` asserted. The validated
+schedule uses three tiles of `18/18/16` rows.
+
+Board result:
+
+```text
+batch-chain RawHwcConv3/4/5/6/8: PASS
+DDR maksssksksss0.png: 286.653 ms
+DDR maksssksksss1.png: 286.646 ms
+```
+
+This is functional but not a regression target because it is slower than the
+RawHwcConv4/5/6/8 setting (`282.951 ms`). Use it only for diagnostics unless
+the raw-HWC loader/replay format changes.
+
+The long combined xsim run still did not progress past design load in this
+workspace session, but the full-program board runs validated the combined
+full-tile, early-drain, pass-prefetch, PSUM-overlap, and continuous-PSUM mode.
 
 ## 回归命令
 

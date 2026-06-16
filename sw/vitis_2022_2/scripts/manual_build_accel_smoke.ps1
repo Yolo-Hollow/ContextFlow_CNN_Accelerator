@@ -2,6 +2,7 @@ param(
     [ValidateSet("r18_c8", "conv0_crop_pool", "conv0_crop_pool_tiles", "layer06_tile4", "layer06_tiles", "layer06_pool_tiles", "conv4_pool_tiles", "conv3_conv4_chain", "conv4_conv5_chain", "conv0_conv4_chain", "conv0_conv5_chain", "conv0_conv6_chain", "conv0_conv7_chain", "conv0_conv8_chain", "conv0_conv9_chain", "conv0_conv9_batch_chain", "conv0_conv9_ddr_demo")]
     [string]$Mode = "r18_c8",
     [switch]$RawHwcIfm,
+    [switch]$RawHwcConv3,
     [switch]$RawHwcConv4,
     [switch]$RawHwcConv5,
     [switch]$RawHwcConv6,
@@ -9,9 +10,14 @@ param(
     [switch]$RawHwc3x3All,
     [switch]$EarlyDrain,
     [switch]$PassPrefetch,
+    [switch]$DuringComputePrefetch,
     [switch]$PsumStreamOverlap,
     [switch]$ContinuousPsum,
+    [switch]$ColumnPsum,
+    [switch]$BackendFullTile,
     [switch]$TilePerfTrace,
+    [int]$PassTraceCoutBlock = 0,
+    [int]$PassTraceKPass = 0,
     [int]$RawHwcComputeStartLevel = 0,
     [int]$TailCyclesOverride = 0
 )
@@ -66,6 +72,9 @@ if ($TailCyclesOverride -ne 0) {
 $Defines += "-DACCEL_RAW_HWC_COMPUTE_START_LEVEL=$RawHwcComputeStartLevel"
 if ($TilePerfTrace) {
     $Defines += "-DACCEL_TILE_PERF_TRACE=1"
+    $Defines += "-DACCEL_PASS_TRACE_ENABLE=1"
+    $Defines += "-DACCEL_PASS_TRACE_COUT_BLOCK=$PassTraceCoutBlock"
+    $Defines += "-DACCEL_PASS_TRACE_K_PASS=$PassTraceKPass"
 }
 if ($EarlyDrain) {
     $Defines += "-DACCEL_EARLY_DRAIN=1"
@@ -73,11 +82,20 @@ if ($EarlyDrain) {
 if ($PassPrefetch) {
     $Defines += "-DACCEL_PASS_PREFETCH=1"
 }
+if ($DuringComputePrefetch) {
+    $Defines += "-DACCEL_DURING_COMPUTE_PREFETCH=1"
+}
 if ($PsumStreamOverlap) {
     $Defines += "-DACCEL_PSUM_STREAM_OVERLAP=1"
 }
 if ($ContinuousPsum) {
     $Defines += "-DACCEL_CONTINUOUS_PSUM=1"
+}
+if ($ColumnPsum) {
+    $Defines += "-DACCEL_COLUMN_PSUM=1"
+}
+if ($BackendFullTile) {
+    $Defines += "-DACCEL_BACKEND_FULL_TILE=1"
 }
 $Source = Join-Path $AppSrcDir "main.c"
 if ($Mode -eq "conv0_crop_pool" -or $Mode -eq "conv0_crop_pool_tiles") {
@@ -285,13 +303,21 @@ if ($Mode -eq "conv0_conv9_batch_chain" -or $Mode -eq "conv0_conv9_ddr_demo") {
     if ($RawHwcIfm) {
         $Defines += "-DACCEL_RAW_HWC_IFM=1"
     }
+    $EnableRawHwcConv3 = $RawHwcConv3 -or $RawHwc3x3All
     $EnableRawHwcConv4 = $RawHwcConv4 -or $RawHwc3x3All
     $EnableRawHwcConv5 = $RawHwcConv5 -or $RawHwc3x3All
     $EnableRawHwcConv6 = $RawHwcConv6 -or $RawHwc3x3All
     $EnableRawHwcConv8 = $RawHwcConv8 -or $RawHwc3x3All
-    if ($EnableRawHwcConv4 -or $EnableRawHwcConv5 -or $EnableRawHwcConv6 -or $EnableRawHwcConv8) {
+    if ($EnableRawHwcConv3 -or $EnableRawHwcConv4 -or $EnableRawHwcConv5 -or $EnableRawHwcConv6 -or $EnableRawHwcConv8) {
         $Defines += "-DACCEL_RAW_HWC_3X3=1"
-        $Defines += "-DACCEL_HWC_CACHE_DEPTH=13312"
+        if ($BackendFullTile) {
+            $Defines += "-DACCEL_HWC_CACHE_DEPTH=43264"
+        } else {
+            $Defines += "-DACCEL_HWC_CACHE_DEPTH=13312"
+        }
+    }
+    if ($EnableRawHwcConv3) {
+        $Defines += "-DACCEL_RAW_HWC_CONV3=1"
     }
     if ($EnableRawHwcConv4) {
         $Defines += "-DACCEL_RAW_HWC_CONV4=1"
@@ -370,34 +396,46 @@ Write-Host "Built $Elf"
 if ($Mode -eq "conv0_conv9_batch_chain" -or $Mode -eq "conv0_conv9_ddr_demo") {
     $VariantTags = @()
     if ($RawHwcIfm) {
-        $VariantTags += "raw_hwc_1x1"
+        $VariantTags += "r1x1"
+    }
+    if ($RawHwcConv3 -or $RawHwc3x3All) {
+        $VariantTags += "c3"
     }
     if ($RawHwcConv4 -or $RawHwc3x3All) {
-        $VariantTags += "conv4"
+        $VariantTags += "c4"
     }
     if ($RawHwcConv5 -or $RawHwc3x3All) {
-        $VariantTags += "conv5"
+        $VariantTags += "c5"
     }
     if ($RawHwcConv6 -or $RawHwc3x3All) {
-        $VariantTags += "conv6"
+        $VariantTags += "c6"
     }
     if ($RawHwcConv8 -or $RawHwc3x3All) {
-        $VariantTags += "conv8"
+        $VariantTags += "c8"
     }
     if ($EarlyDrain) {
-        $VariantTags += "early_drain"
+        $VariantTags += "ed"
     }
     if ($PassPrefetch) {
-        $VariantTags += "pass_prefetch"
+        $VariantTags += "pf"
+    }
+    if ($DuringComputePrefetch) {
+        $VariantTags += "dcpf"
     }
     if ($PsumStreamOverlap) {
-        $VariantTags += "psum_stream_overlap"
+        $VariantTags += "pso"
     }
     if ($ContinuousPsum) {
-        $VariantTags += "continuous_psum"
+        $VariantTags += "cps"
+    }
+    if ($ColumnPsum) {
+        $VariantTags += "col"
+    }
+    if ($BackendFullTile) {
+        $VariantTags += "full"
     }
     if ($VariantTags.Count -gt 0) {
-        $VariantName = "raw_hwc_" + ($VariantTags -join "_")
+        $VariantName = "rhwc_" + ($VariantTags -join "_")
         $VariantElf = Join-Path $ManualBuildDir "conv_accel_${Mode}_${VariantName}_smoke.elf"
         Copy-Item -Path $Elf -Destination $VariantElf -Force
         Write-Host "Built variant alias $VariantElf"
