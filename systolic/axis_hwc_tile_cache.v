@@ -638,8 +638,6 @@ module axis_hwc_tile_cache #(
                     replay_active <= 1'b0;
                     replay_valid <= 1'b0;
                     packet_done <= 1'b1;
-                end else begin
-                    replay_out_pixel <= replay_out_pixel + 1'b1;
                 end
             end
         end

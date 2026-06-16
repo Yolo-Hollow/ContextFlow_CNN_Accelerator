@@ -1486,9 +1486,35 @@ drain_residual = STAGE_DRAIN
     2726 pass, 0 fail
   ```
 
+- A first board attempt enabled `-DuringComputePrefetch` together with fast
+  replay. The batch-chain failed at the first raw-HWC backend layer
+  (`conv4_pool`) with byte mismatches. This was reproduced in xsim with the full
+  experimental switch set. Bisecting the switches showed:
+
+  ```text
+  Conv4 raw-HWC tile0, fast replay, tail=1 only:
+    854 pass, 0 fail
+
+  Conv4 raw-HWC tile0, fast replay, EarlyDrain + PassPrefetch +
+  PsumStreamOverlap + ContinuousPsum + ColumnPsum, without DuringComputePrefetch:
+    854 pass, 0 fail
+
+  Conv4 raw-HWC tile0, same switches plus DuringComputePrefetch:
+    first mismatch at pixel39, 101 fail
+  ```
+
+  Therefore `DuringComputePrefetch` is not part of the safe replay-throughput
+  board configuration. The likely issue is the earlier staging of next-pass IFM
+  vectors into the same FIFO once replay can run at one vector per cycle. It
+  should be debugged separately before being re-enabled.
+
 - Expected board effect: this should reduce the backend raw-HWC replay cost for
   Conv5/6/8 and Conv4. Conv6 alone has roughly `2.77M` excess replay-active
   cycles versus one-cycle replay, so the first board target is a meaningful
   drop in `RAWSTAT replay_active`, `SUBPERF feed_fill`, and Conv6
-  `compute_idle`. If timing still closes, this is the next bitstream to compare
-  against the current `Conv4/5/6/8` raw-HWC `282.951 ms` run.
+  `compute_idle`. The recommended board switch set for this comparison is
+  `RawHwcConv4/5/6/8 + EarlyDrain + PassPrefetch + PsumStreamOverlap +
+  ContinuousPsum + ColumnPsum + BackendFullTile + TailCyclesOverride=1`, with
+  `DuringComputePrefetch` disabled. If timing still closes, this is the next
+  bitstream to compare against the current `Conv4/5/6/8` raw-HWC `282.951 ms`
+  run.
