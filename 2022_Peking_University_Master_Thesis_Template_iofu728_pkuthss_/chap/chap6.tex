@@ -1,197 +1,161 @@
 \chapter{验证与实验结果}
 \label{chap:results}
 
-本章报告加速器的验证方法论、模块级与系统级仿真结果，以及面向 Xilinx Zynq UltraScale+ XCK26 器件的综合和布局布线资源评估。所有测试均通过双引擎（Icarus Verilog + Vivado XSIM）回归验证。
+本章报告本文加速器的正确性验证、板级端到端性能、优化消融、阶段计数器分析和资源时序结果。实验的重点不是将最终延迟包装为实时视频领先指标，而是验证本文提出的数据流和调度优化是否能够在真实 MPSoC 环境中降低 YOLOv3-tiny 链式推理的非计算开销，并解释性能瓶颈如何迁移。
 
-\section{验证方法论}
+\section{实验设置}
 
-加速器的验证采用双引擎分层回归策略，覆盖从 PE 级到系统级的全部设计层级：
+实验平台为 Xilinx Kria KV260，PL 器件为 XCK26，工具链为 Vivado/Vitis 2022.2。最终推荐硬件构建目录为 \texttt{D:/MPSoC/b\_kprefetch\_22}，核心时钟目标为 100 MHz。加速器参数为 ROWS=18、COLS=8、$Cout_{tile}=16$、IFM FIFO depth=1024，后端 raw-HWC full-tile cache 使用 URAM 承载 Conv5/6/8 的 $13\times13$ tile。
 
-\begin{itemize}
-    \item \textbf{Icarus Verilog 回归}（\texttt{tb/run\_iverilog\_regression.ps1}）：共 38 项短测试加 14 项长测试，覆盖各独立模块的功能验证。适合快速迭代。
-    \item \textbf{Vivado XSIM 回归}（\texttt{tcl/run\_xsim\_regression.tcl}）：共 24 项集成测试，覆盖全流水线、多级分块、AXI 接口和背压场景。适合长时序全系统验证。
-\end{itemize}
+最终推荐软件配置为 \texttt{conv0\_conv9\_ddr\_demo}，开启 RawHwcConv4/5/6/8、early drain、pass prefetch、partial-PSUM overlap、continuous PSUM、backend full-tile 和 during-compute prefetch。验证路径包含两类：第一类是 batch-chain 模式，对 Conv0--Conv9 每层输出与 RTL semantic golden 做 bit-exact 比较；第二类是 DDR image demo，将 $416\times416\times3$ 图像包写入 DDR，由硬件执行十层推理并在 A53 侧进行 YOLO decode。
 
-每个测试均包含与 golden/reference 参考结果的自动比对断言，测试结果要求 0 Fail。
+\section{正确性验证}
 
-\section{模块级验证}
-
-模块级验证覆盖所有核心组件的独立功能，部分关键结果汇总于表~\ref{tab:module_tests}。
+本文采用从模块到板级的多层验证。RTL 层面使用 Icarus Verilog 和 Vivado XSIM 覆盖 PE、array、feeder、AXI loader、PSUM buffer、collector、AXI-Lite bridge 和端到端 conv top。系统层面使用外部 golden 数据验证真实 Conv0、Layer06/Conv3、Conv4 以及后端 Conv5/6/8 raw-HWC tile。板级层面使用 KV260 batch-chain 和 DDR image demo 验证完整链路。
 
 \begin{table}[htb]
 \centering
-\caption{关键模块级验证结果}
-\label{tab:module_tests}
-\begin{tabular}{lcc}
+\caption{关键正确性验证结果}
+\label{tab:correctness}
+\begin{tabular}{p{0.23\textwidth}p{0.49\textwidth}p{0.18\textwidth}}
 \toprule
-\textbf{测试模块} & \textbf{Pass 数} & \textbf{Fail 数} \\
+验证对象 & 覆盖内容 & 结果 \\
 \midrule
-tb\_systolic\_pe                           & -- & 0 \\
-tb\_systolic\_array\_small                 & -- & 0 \\
-tb\_layer\_config\_regs                    & 20  & 0 \\
-tb\_line\_stream\_ctrl                     & 11  & 0 \\
-tb\_line\_stream\_ctrl\_tile               & 11  & 0 \\
-tb\_window\_feeder                         & 300 & 0 \\
-tb\_window\_feeder\_pad1                   & 832 & 0 \\
-tb\_window\_feeder\_stride2                & 139 & 0 \\
-tb\_ofm\_writeback                         & 22  & 0 \\
-tb\_axi\_lite\_cfg\_bridge                 & 37  & 0 \\
-tb\_bias\_weight\_stream\_loader           & 70  & 0 \\
-tb\_ifm\_line\_stream\_loader              & 61  & 0 \\
-tb\_axis\_ifm\_line\_loader                & 55  & 0 \\
-tb\_axis\_bias\_weight\_loader             & 72  & 0 \\
-tb\_axis\_ofm\_byte\_writer                & 11  & 0 \\
-tb\_ofm\_packet\_fifo                      & 39  & 0 \\
+Conv0 crop + pool & 真实输入 crop、卷积、LUT、pool、OFM packet & 0 mismatch \\
+Layer06/conv3 pool & $52\times52\times64 \rightarrow 52\times52\times128$ & XSIM 与板级通过 \\
+Conv4 pool & $26\times26\times128 \rightarrow 13\times13\times256$ & XSIM 与板级通过 \\
+Conv5/6/8 raw-HWC & 后端 full-tile raw-HWC + overlap 配置 & XSIM 2726/0 \\
+Conv0--Conv9 batch-chain & 十层链式 RTL semantic golden & PASS \\
+DDR image demo & 动态图像输入与 YOLO decode & 两张图像 PASS \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-其中 \texttt{tb\_line\_stream\_ctrl\_tile} 专门验证空间分块的行请求正确性：在 $tile\_oy\_base=2$, $tile\_ofm\_h=3$, $stride=1$, $pad=1$ 条件下，Feeder 仅请求 IFM 行 $1\sim5$（而非从第 0 行开始的无效填充行）。
+需要强调的是，链式 golden 与单层 standalone golden 不可混用。由于前级硬件量化、激活和池化语义会影响后级输入，Conv5 之后的 expected output 必须由同一条 RTL semantic chain 生成。本文在 batch-chain 中逐层保存硬件输出并比较，从而验证层间数据重排、feature buffer 切换和检测头输出的一致性。
 
-\section{系统级验证}
+\section{端到端性能与优化消融}
 
-系统级验证覆盖了全流水线、多级分块和 AXI 接口的端到端场景。表~\ref{tab:system_tests}列出关键集成测试的结果。所有测试均以 0 Fail 通过。
+表~\ref{tab:ablation} 汇总了主要板级优化版本的端到端 DDR demo 延迟。所有结果均来自 KV260 板级运行，输入图像和模型链路保持一致。不同版本的目标不是形成严格产品发布序列，而是展示本文优化如何逐步降低非计算开销。
 
 \begin{table}[htb]
 \centering
-\caption{关键系统级验证结果}
-\label{tab:system_tests}
-\begin{tabular}{lcc}
+\caption{端到端 DDR demo 优化消融}
+\label{tab:ablation}
+\begin{tabular}{p{0.27\textwidth}p{0.43\textwidth}p{0.18\textwidth}}
 \toprule
-\textbf{测试模块} & \textbf{Pass} & \textbf{描述} \\
+版本或优化阶段 & 主要变化 & 典型延迟 \\
 \midrule
-tb\_systolic\_top\_feeder\_singlepass     & 73   & 单 K Pass Feeder 链路 \\
-tb\_systolic\_top\_feeder\_multipass      & 288  & 多 K Pass PSUM 反馈链路 \\
-tb\_systolic\_top\_feeder\_cout\_blocks   & 144  & Cout 分块权重重载链路 \\
-tb\_conv\_accel\_core\_realistic\_small   & 1163 & 寄存器核全链路 \\
-tb\_conv\_accel\_core\_cout64\_fulltile   & 75   & 64 通道完整 Tile \\
-tb\_conv\_accel\_core\_cout128\_blocks    & 139  & 128 通道双 Block \\
-tb\_conv\_accel\_core\_spatial\_tile      & 443  & 单 Spatial Tile 非零基址 \\
-tb\_conv\_accel\_core\_spatial\_multitile & 1163 & 3-Tile 空间拼接 (3+3+2) \\
-tb\_conv\_accel\_core\_ps\_driver         & 1163 & PS 调度契约全覆盖 \\
-tb\_conv\_accel\_core\_axi\_lite\_ps\_driver & 1163 & AXI-Lite PS Driver \\
-tb\_conv\_accel\_core\_axi\_lite\_axis\_stream\_ps\_driver & 1165 & AXI-Stream PS Driver \\
-tb\_conv\_accel\_core\_axi\_lite\_full\_stream\_backpressure & 1165 & OFM 背压全链路 \\
+Batch/DDR baseline & batch stream，DDR 图像 demo 初版 & $\approx 1.18$ s \\
+Weight 64-bit loader & 预打包权重与 64-bit PL 解包 & $\approx 0.861$ s \\
+Drainpipe & 流水化 PSUM drain writer & $\approx 0.646$ s \\
+Early drain + pass prefetch & 提前 drain 与下一 K pass 预取 & $\approx 0.387$ s \\
+Continuous PSUM collector & 非 final pass 持续写 partial-PSUM & $\approx 0.371$ s \\
+Backend full-tile & Conv5/6/8 使用 $13\times13$ full tile & $\approx 0.335$ s \\
+During-compute prefetch & 当前 compute 中准备下一 K pass & $\approx 0.288$ s \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\subsection{典型测试场景}
-
-\texttt{tb\_conv\_accel\_core\_ps\_driver} 和其 AXI 版本覆盖的测试场景配置为：
-
-\begin{itemize}
-    \item IFM/OFM 尺寸：$8 \times 8$
-    \item 输入通道数 $C_{in} = 16$，$K_{total} = 144$
-    \item K Pass 数随资源配置变化：$K_{TILE}=32$ 时为 5，$K_{TILE}=18$ 时为 8
-    \item $C_{out}=18$；测试集合覆盖 $COUT_{TILE}=8$ 的 3 个 Cout Block 场景，以及 $COUT_{TILE}=32$ 的最终资源配置场景
-    \item 空间分块：3 个 Tile，行数分别为 $3 + 3 + 2$
-    \item PS 调度检查项：Tile start/done/clear 次数、Bias/Weight/Line Fill 服务次数
-    \item OFM 比对：全局 OFM 内存与 golden/reference 卷积完全一致
-\end{itemize}
-
-背压测试额外验证了在 OFM Stream Ready 短时拉低的情况下，后处理流水线暂停-恢复后数据完整性不受影响。
-
-\section{XCK26 综合结果}
-
-在 Xilinx Zynq UltraScale+ XCK26（xck26-sfvc784-2LV-c）器件上，以 100 MHz 核心时钟为目标，分别对四种阵列配置进行了综合评估。综合脚本为 \texttt{tcl/run\_synth\_xck26.tcl}。
-
-表~\ref{tab:synth_comparison}汇总了四种配置的综合资源占用对比。
+最终 \texttt{b\_kprefetch\_22} 构建完成 full-programming batch-chain 验证，日志中 UART detections 与 decode golden 匹配。两张 DDR image demo 的结果如表~\ref{tab:ddr_demo} 所示。
 
 \begin{table}[htb]
 \centering
-\caption{XCK26 四种配置综合资源对比（100 MHz）}
-\label{tab:synth_comparison}
-\begin{tabular}{lcccccc}
+\caption{最终 DDR image demo 结果}
+\label{tab:ddr_demo}
+\begin{tabular}{llll}
 \toprule
-\textbf{配置} & \textbf{K} & \textbf{Cout} & \textbf{LUT} & \textbf{DSP} & \textbf{BRAM} & \textbf{WNS} \\
- & & & (117,120) & (1,248) & (144) & \\
+图像 & 总延迟 & 检测结果 & 日志 \\
 \midrule
-32×32 (5B)  & 32 & 64  & 197\% & 93\%  & 62\% & +1.81 ns \\
-32×16 (5B)  & 32 & 32  & 106\% & 46\%  & 31\% & +1.87 ns \\
-16×16 (5B)  & 16 & 32  & 61\%  & 26\%  & 31\% & +2.14 ns \\
-18×16 (2B)  & 18 & 32  & 62\%  & 28\%  & 31\% & +0.26 ns\textsuperscript{*} \\
-\bottomrule
-\end{tabular}
-\footnotesize \textsuperscript{*} 18×16 的 WNS 为布局布线后数据，其余为综合后数据。B = Bank 数。
-\end{table}
-
-\subsection{32×32 配置}
-
-$ROWS=32, COLS=32$ 的满规模配置资源超限明显，LUT 占用率达 197\%，无法装入 XCK26。100 MHz 下 Setup 时序裕量 +1.81 ns 表明时序有改善空间，但资源是硬约束瓶颈。
-
-\subsection{32×16 配置}
-
-$ROWS=32, COLS=16$ 保留了 $K_{TILE}=32$（每个 K Pass 吞吐不变），输出通道数缩减为 $COUT_{TILE}=32$。DSP 占用率降至 46\%，但 LUT 占用率 105.77\% 仍略超器件容量，约超标 5.8 个百分点。该配置在功能上成立，综合后的 opt\_design 未进一步改观，需要 RTL 级 LUT 优化后方可落地。
-
-\subsection{16×16 配置}
-
-$ROWS=16, COLS=16$（$K_{TILE}=16$, $COUT_{TILE}=32$）综合后的 LUT 占用率 60.62\%，DSP 占用率 25.88\%，BRAM 占用率 30.90\%。Setup 时序富裕 +2.14 ns。这是最稳妥的可落地配置，代价是 K Pass 数翻倍（K 覆盖能力从 32 降至 16）。
-
-\subsection{18×16 配置——最终选定方案}
-
-为进一步逼近资源利用率上限同时保持可路由性，选取折中配置 $ROWS=18, COLS=16$（$K_{TILE}=18$, $COUT_{TILE}=32$），并将行缓存 Bank 数从 5 缩减为 2（匹配 YOLOv3-tiny 典型 3 通道输入的 Bank 交错需求）。
-
-\textbf{布局布线结果：}
-
-\begin{itemize}
-    \item LUT：73,075（62.39\%），Registers：61,738（26.36\%）
-    \item BRAM Tile：44.5（30.90\%），DSP48E2：355（28.45\%）
-    \item Setup 最差负裕量 WNS = +0.262 ns（TNS = 0.000 ns）
-    \item Hold 最差负裕量 WHS = +0.011 ns（THS = 0.000 ns）
-    \item 完全路由：118,309 nets 全部通过，0 routing errors
-\end{itemize}
-
-18×16 配置相比 16×16 增加了 3.36 个百分点的 LUT 开销和 2.57 个百分点的 DSP 开销（对应 2 行 × 16 列 × 2 通道 = 64 次/c 附加乘加），同时将 K Pass 数相对 16×16 缩短了约 12.5\%（$32/18 \approx 1.78$ vs $32/16 = 2.0$ 的加速趋势，实际收益取决于 $K_{total}$ 对齐情况）。
-
-\section{结果分析与讨论}
-
-\subsection{资源瓶颈分析}
-
-LUT 是四种配置中的主要资源瓶颈。最大 LUT 消耗者分析表明，32×32 和 32×16 配置下的 LUT 主要集中在：
-
-\begin{itemize}
-    \item 脉动阵列内部的 Valid 偏斜链和 SRL 移位寄存器（\texttt{com\_shift\_reg} 的 SRL 风格实现占用大量 LUT）。
-    \item 窗口提取器的 32-lane IFM 并行逻辑。
-    \item 32/64 路 PSUM FIFO 的分布式 RAM 开销。
-\end{itemize}
-
-后续 LUT 优化建议：用有效计数或集中式延迟控制替代分布式 SRL 链；将 activation Leaky LUT 和 packet FIFO 做成可裁剪配置，对非必要场景关闭或裁剪；优化 Systolic Array 内部双 INT8 DSP 封装的旁路逻辑。
-
-\subsection{时序分析}
-
-18×16 布局布线后 Setup 裕量 +0.262 ns 在 100 MHz 目标下可满足时序收敛。Hold 裕量仅 +0.011 ns，在完整 Block Design 集成后需结合真实 AXI Interconnect 时钟域交叉和 PLL 位置复核系统级时序。32×16 和 16×16 的综合后 Setup 裕量（+1.87 ns, +2.14 ns）表明这些配置对 Fmax 的容忍度更高，潜在可探索更高频率运行。
-
-\subsection{计算性能估算}
-
-18×16 配置在 100 MHz 下理论峰值吞吐为 $18 \times 16 \times 2 \times 100\text{ MHz} = 57.6$ GOPS（INT8）。对于 YOLOv3-tiny 的典型卷积层（如 416×416 输入的 3×3 卷积），实际有效吞吐受到以下因素影响：K Pass 数（取决于 $C_{in}$）、权重重载开销（取决于 $C_{out}$ 和 $COUT_{TILE}$ 的比例）、流水线填充/排空气泡以及 PS/DMA 服务延迟。在 3-Tile Spatial 分块、$C_{in}=16$, $C_{out}=18$ 的小规模测试场景下，完整推理仿真在 307,160 ns 内完成。该数值主要用于验证调度链路、AXI 边界和空间拼接正确性，不宜直接外推为整网代表性性能；实际有效吞吐应结合各层 MAC 数、启动次数和 DMA 服务时序逐层统计。
-
-\subsection{与其他工作的定性对比}
-
-表~\ref{tab:comparison}将本文工作与学术界代表性 FPGA CNN 加速器进行了定性对比。
-
-\begin{table}[htb]
-\centering
-\caption{与代表性工作的定性对比}
-\label{tab:comparison}
-\begin{tabular}{lcccc}
-\toprule
-\textbf{特性} & \textbf{Angel-Eye~\cite{guo2019angel}} & \textbf{S2A~\cite{wei2017automated}} & \textbf{本文} \\
-\midrule
-架构类型        & 单引擎卷积 & 脉动阵列 & 脉动阵列 \\
-精度            & INT16/INT8 & INT8 & INT8 \\
-权重驻留        & --  & 否  & 是 \\
-PSUM 反馈       & 未公开 & 无  & 片上反馈缓冲 \\
-验证深度        & 单层   & 模块级 & 60+ 项系统级 \\
-XCK26 综合+布线 & 无     & 无    & 4 种配置全评估 \\
-AXI-Stream 边界 & 示意   & 无    & AXI-Lite + 4路 AXI-Stream \\
-后处理流水线    & 分离   & 无    & 片内集成 \\
+maksssksksss0.png & 288.002 ms & with\_mask, score=0.357321 & 20260616\_193623 \\
+maksssksksss1.png & 287.993 ms & with\_mask, score=0.295050 & 20260616\_193752 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-本文加速器在以下方面具有特色：（1）从 DSP 原语到 AXI-Stream 边界的全链路硬件实现；（2）三级分块策略的系统级验证与调度契约固化；（3）四种阵列配置的完整 XCK26 综合与布局布线数据，为工程部署提供了清晰的资源-性能折中选择。
+该结果约为 3.5 FPS，不应表述为通用实时检测领先性能。本文将其解释为在资源受限 XCK26 上，通过数据流与调度优化将早期约 1.18 s 的完整链式推理降低到约 0.29 s，获得约 4.1 倍端到端加速。
+
+\section{阶段计数器分析}
+
+仅报告端到端延迟无法说明优化来源。表~\ref{tab:stage_breakdown} 给出最终 DDR demo 的关键硬件计数器换算时间。可以看到，最终硬件 busy 时间约为 247.184 ms，端到端 total 与 PL busy 之间的差额来自 A53 runtime、DMA 管理、cache maintenance、OFM 重排和 YOLO decode 等软件侧开销。
+
+\begin{table}[htb]
+\centering
+\caption{最终版本关键阶段计数器}
+\label{tab:stage_breakdown}
+\begin{tabular}{lr}
+\toprule
+指标 & 时间 \\
+\midrule
+Total DDR demo & 288.002 ms \\
+HW busy & 247.184 ms \\
+compute\_fire & 74.323 ms \\
+feeder stage & 99.913 ms \\
+compute stage & 121.022 ms \\
+compute idle in stage & 46.699 ms \\
+drain stage & 16.467 ms \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+这些计数器说明，经过 drainpipe 和 continuous PSUM 后，drain 已不再是主要瓶颈；经过 backend full-tile 和 during-compute prefetch 后，剩余开销主要分布在 feeder/replay 和 compute stage idle。换言之，下一步优化不应继续单纯扩大阵列，而应继续提高 raw-HWC replay 吞吐、减少 compute stage 内部空泡，并评估 OFM debug packet 对软件重排的影响。
+
+\section{资源与时序}
+
+表~\ref{tab:resource} 给出最终推荐硬件构建的实现资源与时序。该版本在 Vivado 2022.2 下完成布局布线，WNS 为正，说明 100 MHz 目标可闭合。
+
+\begin{table}[htb]
+\centering
+\caption{最终推荐构建资源与时序}
+\label{tab:resource}
+\begin{tabular}{lr}
+\toprule
+项目 & 数值 \\
+\midrule
+Build directory & \texttt{D:/MPSoC/b\_kprefetch\_22} \\
+CLB LUTs & 84480 \\
+CLB Registers & 53260 \\
+BRAM Tile & 63 \\
+URAM & 24 \\
+DSP & 184 \\
+WNS & +0.092 ns \\
+TNS & 0 ns \\
+WHS & +0.010 ns \\
+Routing errors & 0 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+资源结果体现了本文优化的代价。raw-HWC full-tile cache 引入 URAM 以减少后端 tile 启动开销；continuous PSUM collector 和性能计数器增加 LUT/FF；during-compute prefetch 增加调度与队列控制逻辑。整体上，设计仍能装入 XCK26 并闭合 100 MHz，但 LUT 使用已经较高，继续增加 column-level PSUM 或更深 overlap 时需要谨慎评估资源和时序裕量。
+
+\section{与相关工作的定性比较}
+
+表~\ref{tab:qualitative_compare} 从研究重点角度比较本文与代表性工作。由于不同论文使用的模型、输入尺寸、器件、频率、量化策略和是否计入软件后处理差异较大，本文不进行不公平的绝对 FPS 横向排名。
+
+\begin{table}[htb]
+\centering
+\caption{与代表性工作的定性比较}
+\label{tab:qualitative_compare}
+\begin{tabular}{p{0.18\textwidth}p{0.24\textwidth}p{0.22\textwidth}p{0.25\textwidth}}
+\toprule
+特征 & Angel-Eye~\cite{guo2019angeleye} & S2A~\cite{wei2017s2a} & 本文 \\
+\midrule
+主要目标 & 自动化映射流程 & systolic array 生成 & MPSoC 链式推理优化 \\
+网络粒度 & 多模型映射 & 阵列综合 & YOLOv3-tiny Conv0--Conv9 \\
+数据流讨论 & 编译映射为主 & 阵列结构为主 & DMA/IFM/PSUM/pass 调度 \\
+板级端到端 & 有 & 非重点 & KV260 DDR image demo \\
+性能解释 & 较少 & 较少 & stage/pass/counter 诊断 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+本文的优势在于系统闭环和瓶颈解释；不足在于通用性和绝对吞吐仍有限。当前 runtime 针对 YOLOv3-tiny 单尺度静态调度，不是通用 CNN 编译器；OFM 输出仍采用 debug packet 格式，验证友好但带宽效率不足；功耗数据尚未形成板级实测，后续可结合 Vivado power estimate 或外部功耗计进行能效评估。
+
+\section{局限性与后续工作}
+
+本文仍存在以下局限。第一，最终延迟约 288 ms，不能宣称实时视频级性能领先。其价值在于证明优化路径和系统完整性，而不是与 GPU/NPU 进行绝对性能竞争。第二，OFM debug packet 以每字节一个带地址 packet 的方式输出，便于验证但降低 DMA 带宽效率；后续应设计连续 HWC burst 写回。第三，raw-HWC cache 对层形状敏感，Conv3 实验说明并非所有层都适合启用该路径。第四，column-level PSUM 仍处于探索阶段，需要完整 top-level xsim 和板级 A/B 后才能作为正式优化。
+
+后续工作可从四个方向展开：一是将 OFM 输出迁移为连续 HWC DMA burst，减少软件重排；二是继续优化 raw-HWC replay 吞吐和 compute stage idle；三是完善 column-level PSUM feedback，使 partial sum 按列粒度更早进入下一 pass；四是补充功耗实测和更广泛模型验证，提升论文结论的可比性和可推广性。
 
 \section{本章小结}
 
-本章通过 60 余项 Icarus/XSIM 仿真验证、四种 XCK26 综合配置对比以及 18×16 配置的完整布局布线分析，论证了本文提出的权重驻留脉动阵列加速器在功能正确性、时序可行性和资源可控性三个维度上均具备工程可实现性。当前 LUT 优化和 OFM 高带宽 Route B 是后续工作重点。
+本章给出了本文加速器的正确性、性能、资源和限制分析。实验表明，本文设计能够在 KV260/XCK26 上完成真实 Conv0--Conv9 链式推理，并通过 batch stream、raw-HWC cache、backend full-tile、continuous PSUM 和 during-compute prefetch 将端到端 DDR demo 延迟降低到约 0.29 s。性能计数器进一步说明，优化后瓶颈已从 PSUM drain 和权重加载转移到 feeder/replay 与 compute idle，为后续工作提供了明确方向。

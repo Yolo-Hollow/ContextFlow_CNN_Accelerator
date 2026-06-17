@@ -3,52 +3,34 @@
 
 \section{研究背景与意义}
 
-近年来，卷积神经网络（Convolutional Neural Network, CNN）在图像分类、目标检测、语义分割等计算机视觉任务中取得了突破性进展。从 AlexNet、VGG 到 ResNet、EfficientNet，网络模型的深度和复杂度持续增长，检测精度不断提升。然而，高性能模型的参数量和计算量也随之急剧膨胀，这对资源受限的边缘嵌入式平台构成了严峻挑战。
+卷积神经网络（Convolutional Neural Network, CNN）已经成为目标检测、图像分类和语义理解等视觉任务的核心计算模型。YOLO 系列检测器将候选框生成和类别预测整合为单阶段推理流程，在边缘端实时感知任务中具有较好的工程适配性~\cite{redmon2016yolo,redmon2018yolov3}。其中 YOLOv3-tiny 通过减少层数和通道规模降低计算量，适合在嵌入式平台上部署。
 
-在边缘计算场景中，无人机视觉、智能安防、自动驾驶等应用对实时目标检测提出了严格的延迟与功耗约束。若直接采用通用 CPU 或 GPU 部署 CNN 模型，前者计算吞吐能力不足，后者功耗过高难以满足嵌入式热约束。FPGA（Field Programmable Gate Array）以其可重构性、低功耗特性和丰富的片上 DSP 计算资源，成为边缘侧 CNN 推理加速的重要硬件平台。
+边缘端部署面对的约束与数据中心不同。通用 CPU 的吞吐有限，嵌入式 GPU 或专用 NPU 虽然性能较高，但在功耗、可定制性、接口灵活性和可验证性方面并不总是满足定制系统需求。FPGA/MPSoC 平台同时包含处理系统（Processing System, PS）和可编程逻辑（Programmable Logic, PL），能够让软件负责图像输入、调度和后处理，让硬件承担规则密集的卷积计算。因此，基于 FPGA 的 CNN 加速器仍然是边缘智能系统中的重要研究方向~\cite{qiu2016going,guo2019angeleye}。
 
-YOLO（You Only Look Once）系列算法作为单阶段目标检测器的代表，在实时性方面具有天然优势。其中，YOLOv3-tiny 作为 YOLOv3 的轻量化版本，在保持一定检测精度的前提下大幅减少了参数量和计算量，是边缘端目标检测的理想选择。本文将针对简化版 YOLOv3-tiny 模型的卷积层计算瓶颈，基于 FPGA 平台设计一款高效的硬件加速器。
+然而，真实 CNN 网络的端到端加速并不等同于构造一个高峰值 MAC 阵列。以 YOLOv3-tiny 单尺度链路为例，网络包含 3x3 卷积、1x1 卷积、池化、量化、激活和检测头；每一层还要经过输入通道展开、输出通道分块、空间 tile 分块和多轮 K pass 累加。若数据搬运、部分和反馈或 pass 边界调度处理不当，硬件阵列会在等待权重、等待 IFM replay、等待 partial-PSUM drain 或等待 DMA 完成时产生大量空泡。本文关注的核心问题正是：\textbf{如何在资源受限的 MPSoC 上，面向真实 YOLOv3-tiny 链式推理降低非计算开销，并使优化效果能够被板级实验和性能计数器解释。}
 
 \section{国内外研究现状}
 
-CNN 推理加速器的研究可根据计算架构大致分为单引擎卷积和脉动阵列两大类。
+CNN 加速器的研究大致经历了从算子级流水线到空间阵列架构的发展。Kung 提出的 systolic architecture 通过规则 PE 网络在相邻单元之间传递数据，为矩阵乘和卷积计算提供了高复用的硬件组织方式~\cite{kung1982systolic}。Google TPU 使用大规模 systolic array 获得高吞吐推理性能~\cite{jouppi2017tpu}。Eyeriss 系列则从能量效率角度系统讨论了 row-stationary 数据流和层级存储复用~\cite{chen2016eyeriss,chen2019eyerissv2}。Sze 等人的综述对 DNN 加速器的数据流、存储层次和能效权衡进行了系统总结~\cite{sze2017efficient}。
 
-单引擎卷积架构以粗粒度算子（如 3×3 卷积核）为基本计算单元，通过循环展开和流水线并行完成卷积运算，代表性工作包括清华大学的 Angel-Eye~\cite{guo2019angel} 等。此类方案控制逻辑相对简单，但对不同卷积参数（通道数、步长、填充）的灵活性受限。
+在 FPGA 方向，Qiu 等人较早展示了在嵌入式 FPGA 上部署 CNN 的完整流程~\cite{qiu2016going}；Angel-Eye 进一步提出从模型到 FPGA 映射的设计流程~\cite{guo2019angeleye}；S2A 和 RTL compilation 相关工作关注从高层描述生成 systolic array 或模块化 RTL~\cite{wei2017s2a,ma2018rtlcompiler}。针对 YOLOv3-tiny 的轻量化 FPGA 加速器也已有报道~\cite{ding2022tinyyolo}。这些工作说明 FPGA 对 CNN 推理具有可行性，但许多研究更强调模型映射、阵列生成或单层性能，对真实链式推理中的 DMA 交互、IFM 打包、partial-PSUM 反馈和 pass 级调度开销讨论较少。
 
-脉动阵列架构自 H. T. Kung 于 1982 年提出以来~\cite{kung1982systolic}，凭借其规整的二维网格互联和高效的权重/数据复用，在大规模矩阵乘法计算中展现了卓越的数据重用率和吞吐效率。Google 的 TPU~\cite{jouppi2017tpu} 采用 256×256 的权重驻留脉动阵列，通过大规模二维乘法器网格实现了极高的推理吞吐。MIT 的 Eyeriss 系列~\cite{chen2016eyeriss, chen2017eyerissv2} 则提出了行静态（Row Stationary）数据流，在能量效率方面做出了重要贡献。学术综述~\cite{sze2017efficient} 对 DNN 加速器的数据流分类（权重驻留、输出驻留、输入驻留、行静态）进行了系统总结。
-
-在 FPGA CNN 加速领域，已有多个工作探索了脉动阵列或类脉动阵列架构。Qiu 等人的工作~\cite{qiu2016going} 和 Ma 等人的工作~\cite{ma2018scalable} 均可归入卷积加速模板化方法。Wei 等人~\cite{wei2017automated} 提出了面向 FPGA 的自动化脉动阵列综合框架。然而，多数方案仍在以下方面存在局限：（1）对 INT8 细粒度量化的硬件原生支持不足；（2）接口设计停留在仿真层面，缺乏完整的 AXI-Stream 数据面闭环；（3）未提供从模块级到系统级的完整 FPGA 综合与布线验证数据。
+本文的工作不以绝对 FPS 领先为目标，而是以一个可复现的 MPSoC 端到端系统为载体，研究真实 YOLO 链式推理中的数据流和调度瓶颈。相比仅报告理论吞吐或单层仿真的工作，本文更强调硬件 RTL、Vitis runtime、外部 golden、板级 batch-chain 验证、DDR 图像输入和性能计数器之间的一致闭环。
 
 \section{本文主要工作}
 
-针对上述问题，本文面向 Xilinx Zynq UltraScale+ XCK26 平台，设计并实现了一款基于权重驻留脉动阵列的轻量级 CNN INT8 加速器 IP，主要工作包括：
+围绕上述问题，本文完成的主要工作如下。
 
 \begin{enumerate}
-    \item \textbf{权重驻留脉动阵列核心}：设计了 18 行 × 16 列的参数化二维脉动阵列。处理单元（PE）利用 Xilinx DSP48E2 的 (A+D)×B 运算模式实现单 DSP 双 INT8 乘法结果生成，每列支持 2 个输出通道，单阵列支持 32 路并行输出通道计算。
+    \item \textbf{设计并实现面向真实 YOLOv3-tiny 链式推理的卷积加速器架构。} 加速器基于 INT8 systolic array，支持 3x3 卷积、原生 1x1 卷积、INT32 partial-PSUM、逐通道重量化、activation LUT、2x2 maxpool 和 OFM 写回；系统接口采用 AXI-Lite 配置和四路 AXI-Stream/DMA 数据通路，能够与 A53 bare-metal runtime 协同执行 Conv0--Conv9。
 
-    \item \textbf{完整数据流与分块策略}：设计了 K 维度（输入通道展开维度）分块、输出通道（Cout）分块和空间（Spatial）分块三级分块策略，在寄存器位宽、片上缓冲容量和外部调度约束内覆盖不同规模 3×3 卷积层的分时多轮累加。引入片上部分和反馈缓冲，实现权重驻留下的多轮累加语义。
+    \item \textbf{提出面向真实层的数据流优化方法。} 针对频繁 DMA 启动和软件打包开销，本文实现 batch stream 与预打包权重布局；针对后端层 IFM 重排开销，设计 raw-HWC tile cache，使软件传输自然 HWC tile，由硬件按 K pass 和卷积窗口顺序重放；进一步通过 backend full-tile 调度减少 13x13 后端层的空间 tile 固定开销。
 
-    \item \textbf{后处理流水线}：实现了 INT8 重量化模块、旁路/ReLU/Leaky ReLU 多模式激活模块和基于 HWC 地址的 OFM 写回模块，形成完整的卷积层输出至外部存储的闭合链路。
+    \item \textbf{优化多 K pass 卷积中的 partial-PSUM 反馈和 pass 级调度。} 本文实现流水化 PSUM drain、early drain、continuous PSUM collector、partial-PSUM overlap 和 pass-level prefetch，使当前 pass 的计算、部分和写回、下一 pass 的权重/IFM 准备尽可能重叠，同时保持 AXI 数据格式和软件 ABI 稳定。
 
-    \item \textbf{AXI 标准接口}：设计了 AXI-Lite 配置寄存器桥，以及 64-bit AXI-Stream 四路数据搬运接口（偏置、权重、IFM 行、OFM 字节流），支持 TVALID/TREADY/TLAST/TKEEP 全握手协议。
-
-    \item \textbf{系统验证与资源评估}：基于 Icarus Verilog 与 Vivado XSIM 构建了双引擎回归验证流程，累计通过 60 余项测试。在 XCK26 器件上完成了 18×16 配置的完整布局布线，实现 100 MHz 时序收敛。
+    \item \textbf{建立从 RTL 到 KV260 板级运行的验证和性能诊断体系。} 本文使用 Icarus Verilog、Vivado XSIM、外部 RTL golden、链式 semantic golden 和 Vitis board smoke 构成多层验证流程；在硬件中加入 stage、sub-stage、raw-HWC、prefetch、collector、pass timeline 等计数器，用于定位性能瓶颈和解释优化收益。
 \end{enumerate}
 
 \section{论文组织结构}
 
-本论文共分为六章，组织结构如下：
-
-第一章为绪论，介绍 CNN 加速的研究背景、国内外研究现状及本文的主要贡献。
-
-第二章为背景与相关工作，介绍卷积运算基础、脉动阵列架构分类、INT8 量化原理、FPGA CNN 加速器相关工作以及目标平台 Zynq UltraScale+ XCK26 的基本特性。
-
-第三章为加速器硬件架构设计，重点阐述处理单元（PE）设计、二维脉动阵列结构、行缓存与窗口提取模块、权重加载与偏置注入机制、部分和反馈路径以及后处理流水线的详细硬件实现。
-
-第四章为数据流与分块策略，系统介绍卷积到分块 GEMM 的映射方法、K 分块/Cout 分块/空间分块的三级分块调度、层调度有限状态机以及 PS/DMA 视角的软件调度契约。
-
-第五章为接口设计与系统集成，介绍 AXI-Lite 配置寄存器接口设计、64-bit AXI-Stream 数据搬运接口的打包协议与实现、OFM 输出流 TLAST 生成逻辑以及 OFM 背压链设计。
-
-第六章为验证与实验结果，报告 Icarus Verilog 和 Vivado XSIM 双回归的模块级与系统级验证结果，以及 32×32、32×16、16×16、18×16 四种配置在 XCK26 上的综合与布局布线资源对比，并对结果进行分析与讨论。
-
-最后为总结与展望。
+本文共分为六章。第一章介绍研究背景、相关研究现状和本文贡献。第二章给出卷积计算、INT8 量化、systolic array、YOLOv3-tiny 层结构和 MPSoC 平台基础。第三章介绍加速器系统架构，包括 PS/PL 协同、AXI 边界、systolic core、后处理流水线和 OFM 输出路径。第四章讨论数据流与分块调度优化，包括 K/COUT/spatial tiling、batch stream、预打包权重、raw-HWC cache 和 backend full-tile。第五章介绍 partial-PSUM 反馈、pass-level prefetch、系统集成和性能计数器。第六章给出正确性验证、板级端到端性能、消融实验、资源时序结果和局限性讨论。

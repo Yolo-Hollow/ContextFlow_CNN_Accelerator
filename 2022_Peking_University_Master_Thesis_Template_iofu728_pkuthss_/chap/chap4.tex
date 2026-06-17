@@ -1,282 +1,104 @@
-\chapter{数据流与分块策略}
+\chapter{数据流与分块调度优化}
 \label{chap:dataflow}
 
-本章系统阐述加速器的数据流组织和三级分块调度策略，包括卷积到分块 GEMM 的映射方法、K 分块/Cout 分块/Spatial 分块的三级调度、层调度有限状态机以及 PS/DMA 调度契约。
-
-\section{卷积到分块 GEMM 的映射}
-
-如第~\ref{chap:related}章所述，卷积运算可经 im2col 展开转化为 GEMM 形式。然而对于 YOLOv3-tiny 中的典型卷积层（如 $C_{in}=512$, $C_{out}=1024$, $K_h=K_w=3$），展开后的矩阵维度 $K_{total} \times C_{out}$ 可达 $4608 \times 1024$，远超脉动阵列的物理规模（$K_{TILE}=18$, $COUT_{TILE}=32$）。因此，本文采用三级分块策略将大规模 GEMM 分解为可装入阵列的子矩阵序列：
-
+本章讨论本文针对真实 YOLOv3-tiny 层提出的数据流与调度优化。若只考虑阵列峰值，卷积层似乎可以由 $MACs / Peak$ 估算延迟；但在 MPSoC 板级运行中，实际时间还包含权重加载、IFM 打包、DMA 启动、tile 边界同步、缓存重放和 OFM 重排。因此，本文将优化目标定义为降低非计算开销：
 \begin{equation}
-\text{OFM}[p, c_{out}] = \text{Bias}[c_{out}] +
-\sum_{t=0}^{K_{\mathrm{passes}}-1}\ \sum_{r=0}^{K_{TILE}-1}
-\text{IFM}[p, tK_{TILE}+r] \cdot W[tK_{TILE}+r, c_{out}]
-\label{eq:tiled_gemm}
+T_{noncomp}=T_{layer}-T_{compute\_fire}.
 \end{equation}
+其中 $T_{compute\_fire}$ 表示阵列真正接受一个输出 pixel 计算的周期数，其余部分均属于等待、搬运、反馈或边界开销。
 
-分块的三个维度分别为：（1）K 维度——将 $K_{total}$ 个展开 IFM lane 按 $K_{TILE}$ 粒度切分；（2）Cout 维度——将输出通道按 $COUT_{TILE}$ 粒度切分；（3）Spatial 维度——将 OFM 空间像素按输出行范围切分。
+\section{三维分块调度}
 
-\begin{figure}[htbp]
-\centering
-\begin{tikzpicture}[
-    >=Latex,
-    every node/.style={font=\small},
-    matrixbox/.style={
-        draw,
-        thick,
-        minimum width=72mm,
-        minimum height=42mm
-    },
-    tilebox/.style={
-        draw,
-        thick,
-        fill=gray!10
-    },
-    dashline/.style={
-        dashed,
-        line width=0.8pt
-    },
-    dimarrow/.style={
-        <->,
-        thick
-    },
-    label/.style={
-        font=\small,
-        align=center
-    },
-    smalllabel/.style={
-        font=\scriptsize,
-        align=center
-    }
-]
+本文使用 K 维、输出通道和空间三维分块。K 维分块由 ROWS 决定，最终配置 ROWS=18，因此 $K_{tile}=18$。输出通道分块由 COLS 决定，每列产生两个输出 lane，最终配置 COLS=8，因此 $Cout_{tile}=16$。空间分块由 tile 的输出行范围决定，用于限制片上 IFM/OFM buffer 和单次 AXI DMA 长度。
 
-% ===================== Weight matrix =====================
-\coordinate (A) at (0,0);
-\coordinate (B) at (7.2,0);
-\coordinate (C) at (7.2,4.2);
-\coordinate (D) at (0,4.2);
-
-\draw[thick] (A) rectangle (C);
-
-\node[label] at (3.6,4.55) {权重矩阵 $W$};
-\node[smalllabel] at (3.6,4.22) {$K_{\mathrm{total}} \times C_{\mathrm{out}}$};
-
-% ===================== One tile =====================
-\draw[tilebox] (0,2.65) rectangle (2.1,4.2);
-\node[label] at (1.05,3.42) {One Tile};
-
-% ===================== K passes =====================
-\draw[dashline] (0,2.65) -- (7.2,2.65);
-\draw[dashline] (0,1.35) -- (7.2,1.35);
-
-\node[label, right=2mm] at (7.2,3.43) {Pass 0};
-\node[label, right=2mm] at (7.2,2.00) {Pass 1};
-\node[label, right=2mm] at (7.2,0.70) {$\cdots$};
-
-% ===================== Cout blocks =====================
-\draw[dashline] (2.1,0) -- (2.1,4.2);
-\draw[dashline] (4.4,0) -- (4.4,4.2);
-
-\node[label] at (1.05,4.85) {Block 0};
-\node[label] at (3.25,4.85) {Block 1};
-\node[label] at (5.80,4.85) {$\cdots$};
-
-% ===================== Dimension arrows =====================
-\draw[dimarrow] (-0.45,0) -- (-0.45,4.2);
-\node[label, rotate=90] at (-0.85,2.1) {$K_{\mathrm{total}}$};
-
-\draw[dimarrow] (0,-0.45) -- (7.2,-0.45);
-\node[label] at (3.6,-0.85) {$C_{\mathrm{out}}$};
-
-\draw[dimarrow] (0,4.38) -- (2.1,4.38);
-\node[smalllabel, above=1mm] at (1.05,4.38) {$COUT_{\mathrm{TILE}}$};
-
-\draw[dimarrow] (-0.20,2.65) -- (-0.20,4.2);
-\node[smalllabel, left=1mm] at (-0.20,3.43) {$K_{\mathrm{TILE}}$};
-
-% ===================== Spatial tiles =====================
-\begin{scope}[xshift=9.3cm, yshift=0.15cm]
-    \draw[thick] (0,0) rectangle (1.2,3.9);
-    \draw[dashline] (0,2.6) -- (1.2,2.6);
-    \draw[dashline] (0,1.3) -- (1.2,1.3);
-
-    \node[smalllabel] at (0.6,3.25) {Tile 0};
-    \node[smalllabel] at (0.6,1.95) {Tile 1};
-    \node[smalllabel] at (0.6,0.65) {$\cdots$};
-
-    \node[label, right=4mm] at (1.2,1.95) {Spatial\\Tiles};
-    \node[smalllabel, right=4mm] at (1.2,0.95) {按输出行切分};
-\end{scope}
-
-% ===================== Legend =====================
-\node[smalllabel, align=left] at (5.5,-1.55) {
-    K 分块：沿纵向切分，多 Pass 累加 \quad
-    Cout 分块：沿横向切分，逐 Block 替换权重 \quad
-    Spatial 分块：按输出行范围切分
-};
-
-\end{tikzpicture}
-\caption{三级分块策略示意图：K 维度、Cout 维度与 Spatial 维度}
-\label{fig:tiling_strategy}
-\end{figure}
-
-\section{K 分块多轮累加}
-
-K 分块将 $K_{total} = C_{in} \times K_h \times K_w$ 个展开输入维度切分为 $K\_passes = \lceil K_{total} / K_{TILE} \rceil$ 个连续子块，每个 K Pass 在一个 $K_{TILE} \times COUT_{TILE}$ 子矩阵上完成乘加运算。K Pass 间的 PSUM 通过片上反馈缓冲传递：
-
-\begin{enumerate}
-    \item \textbf{Pass \#0}：注入 Bias 作为初始累加值，计算第一组 $K_{TILE}$ 个输入 lane 的乘加。若当前不是最终 Pass，则 PSUM 经 Drain 后存入反馈缓冲。
-    \item \textbf{Pass \#1 至 Pass \#(K\_passes-2)}：从反馈缓冲读取上轮 PSUM 注入阵列顶部作为初始值，继续累加当前 K 子块。结果再次写回反馈缓冲。
-    \item \textbf{最终 Pass}：从反馈缓冲读取上轮 PSUM，执行最后一组有效输入 lane 的乘加。结果直接发送至 Requant $\rightarrow$ Activation $\rightarrow$ Writeback 后处理链路。
-\end{enumerate}
-
-当 $K_{total}$ 不是 $K_{TILE}$ 的整倍数时，最后 K Pass 仅包含 $K_{total} \bmod K_{TILE}$ 个有效输入 lane，其余 lane 的 IFM 输入恒为零，PSUM 仅加上零增量后继续向下传播。
-
-对于典型的 YOLOv3-tiny 中间层（$C_{in}=16, K_h=K_w=3$），$K_{total}=144$。以 $K_{TILE}=32$ 为例需要 5 个 K Pass，以 $K_{TILE}=18$ 为例需要 8 个 K Pass。K Pass 数与延迟成线性正比，与硬件资源（阵列行数）成反比。
-
-\section{输出通道（Cout）分块}
-
-当 $C_{out} > COUT_{TILE}$ 时，输出通道按 $COUT_{TILE}$ 粒度切分为连续块。Cout 分块的处理逻辑如下：
-
-\begin{enumerate}
-    \item 对每个 $cout\_base \in \{0, COUT_{TILE}, 2 \cdot COUT_{TILE}, \dots\}$，加载对应权重子矩阵（$K_{TILE} \times COUT_{TILE}$）。
-    \item 遍历所有 K Pass 完成该 Cout Block 的完整累加。
-    \item 在最终 Pass 后，OFM 写回时以 $(cout\_base + lane)$ 计算写回通道地址，不同 Cout Block 写到同一像素的不同通道范围。
-\end{enumerate}
-
-关键优化：不同 Cout Block 在数学上共享同一 Spatial Tile 的 IFM 行和窗口坐标序列，因此外部调度可复用相同的 IFM 地址生成规则和行填充服务逻辑，仅需替换权重 tile 并重新执行 K Pass 循环。当前 RTL 为降低片上缓存容量和控制复杂度，仍按 Cout Block 重放窗口流；该设计优先保证权重驻留阵列的规整性，而不是将所有 IFM 窗口在片上跨 Cout Block 长时间缓存。
-
-对于 YOLOv3-tiny 最后层（$C_{out}=1024$），以最终选定的 $COUT_{TILE}=32$ 配置为例需要 32 个 Cout Block；若采用早期 32×32 阵列对应的 $COUT_{TILE}=64$ 配置，则需要 16 个 Cout Block。每个 Block 均需重新加载权重 tile 并完成全部 K Pass 循环。
-
-\section{空间（Spatial）分块}
-
-对于大尺寸特征图，片上 PSUM 缓冲容量和行缓存深度不足以容纳完整 OFM。空间分块将 OFM 按输出行切分为多个 Spatial Tile。
-
-空间分块的四个配置参数为：
-
-\begin{itemize}
-    \item \texttt{tile\_oy\_base}：Tile 在全局 OFM 的起始输出行。
-    \item \texttt{tile\_ofm\_h}：Tile 覆盖的输出行数（0 表示完整 OFM 高度）。
-    \item \texttt{tile\_pixel\_base}：Tile 在 HWC OFM 中的全局像素起始下标，通常 $= tile\_oy\_base \times OFM\_W$。
-    \item \texttt{num\_pixels}：Tile 输出像素总数，通常 $= tile\_ofm\_h \times OFM\_W$。
-\end{itemize}
-
-OFM 写回的全局地址计算公式（详见第~\ref{chap:architecture}章）保证了不同 Spatial Tile 的 OFM 数据在全局内存中按地址范围拼接，无需 PS 侧做额外重组。
-
-以 8×8 OFM 分为 3 个 Spatial Tile 的典型场景为例：
-\begin{itemize}
-    \item Tile \#0：行 0-2, 覆盖 3×8=24 pixels, $tile\_pixel\_base=0$。
-    \item Tile \#1：行 3-5, 覆盖 3×8=24 pixels, $tile\_pixel\_base=24$。
-    \item Tile \#2：行 6-7, 覆盖 2×8=16 pixels, $tile\_pixel\_base=48$。
-\end{itemize}
-
-\section{层调度有限状态机}
-
-层调度器（Layer Scheduler Stream）以有限状态机（FSM）协调三级分块的完整执行流程。FSM 的主要状态及转移关系如下：
-
-\begin{enumerate}
-    \item \textbf{IDLE}：等待外部写入 CTRL.start 脉冲。start 置位后跳转至 BIAS\_LOAD。
-    \item \textbf{BIAS\_LOAD}：发起 bias 加载请求，等待偏置流传输完成。完成后跳转至 WEIGHT\_LOAD。
-    \item \textbf{WEIGHT\_LOAD}：发起权重加载请求，等待权重 Tile 传输完成。完成后跳转至 LINE\_FILL。
-    \item \textbf{LINE\_FILL}：根据当前 $oy$ 范围和 K Pass 的展开基地址向 Window Feeder 发出行填充请求。收到 Line Buffer 的窗口就绪信号后跳转至 COMPUTE。
-    \item \textbf{COMPUTE}：使能阵列 IFM FIFO 读，启动窗口流推进。$\text{num\_pixels}$ 个像素全部流过后跳转。若非最终 K Pass 则跳转至 PSUM\_DRAIN；若为最终 K Pass 则跳转至 FINAL\_DRAIN。
-    \item \textbf{PSUM\_DRAIN}：从 PSUM FIFO 排出 $\text{num\_pixels}$ 个 PSUM 包存入反馈缓冲。完成后更新 K Pass 计数器，跳转回 WEIGHT\_LOAD 执行下一 K Pass。
-    \item \textbf{FINAL\_DRAIN}：将最终 PSUM 包排出并推入后处理流水线（Requant $\rightarrow$ Activation $\rightarrow$ Writeback）。完成所有像素后检查当前 Spatial Tile 内的 Cout Block 循环状态：
-    \begin{itemize}
-        \item 若还有未处理的 Cout Block，更新 $cout\_base$ 跳转回 BIAS\_LOAD。
-        \item 若当前 Spatial Tile 的所有 Cout Block 已完成，跳转至 DONE。
-        \item 后续 Spatial Tile 由外部 PS/DMA 调度器重新写入 Tile 配置并再次发出 start 脉冲。
-    \end{itemize}
-    \item \textbf{DONE}：置位 STATUS.done\_sticky 标志，等待外部写入 CTRL.clear\_done 清除后跳转至 IDLE。
-\end{enumerate}
+图~\ref{fig:tiling_schedule} 给出三维调度关系。每个 spatial tile 内，调度器先遍历输出通道块，再对当前输出通道块执行所有 K pass。首个 K pass 从 bias 初始化 partial sum，非首 pass 读取上一轮 partial-PSUM，final pass 输出到后处理流水线。
 
 \begin{figure}[htb]
 \centering
+\resizebox{0.86\textwidth}{!}{%
 \begin{tikzpicture}[
-    state/.style = {rectangle, draw=black, thick, rounded corners=2pt, minimum width=1.8cm, minimum height=0.7cm, font=\footnotesize, align=center, fill=black!3},
-    arr/.style = {->, >=stealth, thick},
-    cond/.style = {font=\scriptsize, fill=white, inner sep=1pt},
+    node distance=6mm,
+    blk/.style={draw, rounded corners=1pt, align=center, minimum width=28mm, minimum height=7mm},
+    bus/.style={-Latex, thick}
 ]
-    % Row 1: loading chain
-    \node[state] (idle) at (0,0) {IDLE};
-    \node[state] (bias) at (2.5,0) {Bias Load};
-    \node[state] (weight) at (5.0,0) {Weight Load};
-    \node[state] (line) at (7.5,0) {Line Fill};
-    % Row 2: compute + drain
-    \node[state] (comp) at (7.5,-2.5) {Compute};
-    \node[state] (pdrain) at (5.0,-2.5) {PSUM Drain};
-    \node[state] (fdrain) at (2.5,-2.5) {Final Drain};
-    \node[state] (done) at (0,-2.5) {DONE};
-
-    % Forward: IDLE -> ... -> COMPUTE
-    \draw[arr] (idle) -- (bias) node[cond, above, midway] {start};
-    \draw[arr] (bias) -- (weight);
-    \draw[arr] (weight) -- (line);
-    \draw[arr] (line.south) -- ++(0,-0.3) -| (comp.north);
-
-    % COMPUTE -> PSUM Drain (non-final K)
-    \draw[arr] (comp.west) -- ++(-0.6,0) |- (pdrain.north) node[cond, pos=0.6, left] {non-final K};
-
-    % COMPUTE -> Final Drain (final K)
-    \draw[arr] (comp.west) -- ++(-2.8,0) |- (fdrain.north) node[cond, pos=0.3, left] {final K};
-
-    % PSUM Drain -> Weight Load (K loop)
-    \draw[arr, blue!60] (pdrain.west) -- ++(-0.6,0) |- (weight.north) node[cond, pos=0.4, above, sloped] {next K};
-
-    % Final Drain -> Bias Load (Cout loop)
-    \draw[arr] (fdrain.west) -- ++(-1.0,0) |- (bias.north) node[cond, pos=0.3, above, sloped] {next Cout};
-
-    % Final Drain -> DONE
-    \draw[arr] (fdrain.south) -- (done.north) node[cond, midway, right] {全部完成};
-
-    % DONE -> IDLE
-    \draw[arr] (done.west) -- ++(-0.8,0) |- (idle.south) node[cond, pos=0.7, left] {clear};
-
-    % Annotations
-    \draw[arr, dashed, gray] (-0.8, 0.8) -- (idle.north);
-    \node[gray] at (-0.8, 1.0) {\footnotesize CTRL.start};
-    \node[gray] at (done.south) [below=0.2cm] {\footnotesize done sticky};
-
-    % Group box for loading states
-    \begin{scope}[on background layer]
-    \node[rectangle, draw=gray!50, dashed, inner sep=8pt, fit=(bias)(weight)(line)] (load_box) {};
-    \node[gray] at (load_box.north) [above=2pt] {\footnotesize 服务请求阶段};
-    \end{scope}
+\node[blk] (tile) {spatial tile};
+\node[blk, below=of tile] (cout) {for each Cout block};
+\node[blk, below=of cout] (k) {for each K pass};
+\node[blk, below left=of k] (load) {load weight\\feed IFM};
+\node[blk, below=of k] (comp) {compute};
+\node[blk, below right=of k] (drain) {partial/final\\PSUM drain};
+\draw[bus] (tile) -- (cout);
+\draw[bus] (cout) -- (k);
+\draw[bus] (k) -- (load);
+\draw[bus] (load) -- (comp);
+\draw[bus] (comp) -- (drain);
+\draw[bus] (drain.east) .. controls +(16mm,0) and +(16mm,0) .. node[right]{next K pass} (k.east);
 \end{tikzpicture}
-\caption{层调度器有限状态机状态转移图}
-\label{fig:scheduler_fsm}
+}
+\caption{K/Cout/spatial 三维调度关系}
+\label{fig:tiling_schedule}
 \end{figure}
 
-\section{PS/DMA 调度契约}
+该调度方式的优点是通用性强，可覆盖从 Conv0 到 Conv9 的不同层形状；缺点是当 $N_{kpass}$ 和 $N_{cout}$ 较大时，pass 边界开销会被重复放大。后续优化均围绕减少这些重复开销展开。
 
-从系统软件（PS 侧 ARM Cortex-A53）和 DMA 控制器的视角，一次完整的卷积层推理遵循以下调度契约：
+\section{Batch Stream}
 
-\begin{enumerate}
-    \item \textbf{初始化量化参数}：通过 AXI-Lite 向量化寄存器写入每路输出通道的 mult、shift、zp 参数。
-    \item \textbf{写入 Layer 级配置}：FM/OFM 尺寸、stride、pad、k\_total、cout\_total、activation\_mode。
-    \item \textbf{Spatial Tile 循环}（对每个 Tile 执行）：
-    \begin{enumerate}[(a)]
-        \item 写 Tile 配置：num\_pixels、tile\_oy\_base、tile\_ofm\_h、tile\_pixel\_base。
-        \item 写 CTRL.start 启动 Tile。
-        \item 服务 bias\_load\_req：按当前 $cout\_base$ 发送对应偏置。
-        \item 服务 weight\_load\_req：按当前 $cout\_base$ 和 $k\_pass$ 发送对应权重块。
-        \item 服务 feeder\_fill\_req：按请求的 $f_y$ 和 $k\_pass$ 发送 IFM 行数据。
-        \item 轮询 STATUS.done\_sticky 直至为 1。
-        \item 写 CTRL.clear\_done 清除完成标志。
-    \end{enumerate}
-    \item 验证 OFM 与 golden/reference 卷积结果一致。
-\end{enumerate}
+早期 per-request 模式中，硬件每需要一个 bias block、weight tile 或 IFM line 时向软件发出请求，软件随后打包数据、启动 DMA 并等待完成。这种方式适合小型 smoke test，但在 Conv6 等真实层中会产生数万次服务事件，A53 侧开销和 DMA 启动开销会淹没阵列计算。
 
-经验证的调度契约关键检查项包括：Tile 启动次数、Done 观测次数、Done Clear 次数、Bias 服务次数（$= Tile\_count \times Cout\_blocks$）、Weight 服务次数（$= Tile\_count \times Cout\_blocks \times K\_passes$），以及 Line Fill 服务次数（由 Feeder 按窗口需要动态发起，大于 0）。
+Batch stream 将每个 spatial tile 所需的 bias、weight 和 IFM 数据预先打包成连续 AXI stream。软件在 tile 开始时分别启动三路输入 DMA，硬件通过 packet count 恢复内部边界，只在整个 stream 末尾依赖 TLAST。该方式带来两个直接收益：第一，DMA 启动次数从每个请求一次降低为每个 tile 每类输入一次；第二，AXI backpressure 由 PL 自然吸收，软件不需要在 pass 内频繁轮询硬件请求。
 
-\section{分块对性能与资源的影响}
+STREAM\_CFG bit0 控制 batch mode。对应的 BIAS\_PACKETS、WEIGHT\_PACKETS 和 IFM\_PACKETS 寄存器用于配置期望 packet 数，硬件完成后通过只读 counter 回报完成数。软件在每个 tile 结束时比较 expected/completed，保证 stream 边界没有丢包或多包。
 
-三级分块参数的选择在性能和资源之间存在直接的折中关系：
+\section{预打包权重布局}
 
-\begin{itemize}
-    \item $K_{TILE}$ 越大，单 K Pass 覆盖的输入维度越多，总 Pass 数减少，延迟降低；但阵列行数（ROWS）增大，DSP 和 LUT 开销近似线性增长。
-    \item $COUT_{TILE}$ 越大，单 Cout Block 覆盖的输出通道越多，权重重载次数减少；但阵列列数（COLS）增大，DSP 数量翻番（每列 2 通道）。
-    \item Spatial Tile 数增加会给调度引入额外启动开销，但对片上 SRAM 的需求降低。实际部署时，Spatial Tile 的大小主要由 PSUM 缓冲深度和 OFM Packet FIFO 容量共同决定。
-\end{itemize}
+权重数据天然以模型格式保存，通常按输出通道、输入通道和 kernel 维度组织；而硬件消费顺序是 $Cout block \rightarrow K pass \rightarrow lane \rightarrow channel$。若每次运行时由 A53 重新排列权重，会造成明显的软件时间开销。
 
-综合 XCK26 的资源约束（详见第~\ref{chap:results}章），当前选定 $K_{TILE}=18, COUT_{TILE}=32$ 作为平衡性能与资源的最优实际配置。
+本文在构建 Vitis header 时直接生成硬件消费顺序的权重数组。这样 batch mode 下 weight DMA 可以直接读取 ELF 只读段中的连续数组，不再需要运行时 scratch copy 或 repack。PL 端 weight loader 使用 64-bit AXI beat，一拍写入多个 byte bank，进一步降低 weight load 等待。该优化不改变外部 ABI，只改变软件生成数据的排列方式和 PL loader 的内部写入粒度。
+
+\section{Raw-HWC Tile Cache}
+
+IFM 输入存在两种路径。第一种是 prepacked IFM stream：软件提前把每个 K pass 需要的 IFM lane 按硬件顺序打包。该方式 PL 简单，但 A53 侧打包成本较高。第二种是 raw-HWC stream：软件发送自然 HWC tile，PL 在片上缓存后按 pass 和窗口顺序 replay。本文引入 raw-HWC tile cache 以降低后端层的软件打包压力。
+
+图~\ref{fig:raw_hwc_cache} 对比两种路径。prepacked 路径把重排压力放在软件；raw-HWC 路径把重排压力转移到 PL cache/replay，但可减少 A53 逐 pass 复制和索引开销。对 3x3 层，cache materializes 每个输出 pixel 的 3x3 窗口，并按 18 lane 输出给阵列；对 1x1 层，cache 按连续通道向量 replay。
+
+\begin{figure}[htb]
+\centering
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}[
+    node distance=7mm and 10mm,
+    blk/.style={draw, rounded corners=1pt, align=center, minimum width=26mm, minimum height=8mm},
+    bus/.style={-Latex, thick}
+]
+\node[blk] (sw1) {software\\prepack IFM};
+\node[blk, right=of sw1] (dma1) {AXI DMA};
+\node[blk, right=of dma1] (core1) {systolic\\IFM FIFO};
+\node[blk, below=12mm of sw1] (sw2) {software\\raw HWC tile};
+\node[blk, right=of sw2] (dma2) {AXI DMA};
+\node[blk, right=of dma2] (cache) {raw-HWC\\tile cache};
+\node[blk, right=of cache] (core2) {systolic\\IFM FIFO};
+\draw[bus] (sw1) -- (dma1);
+\draw[bus] (dma1) -- node[above]{prepacked vectors} (core1);
+\draw[bus] (sw2) -- (dma2);
+\draw[bus] (dma2) -- node[above]{HWC bytes} (cache);
+\draw[bus] (cache) -- node[above]{replayed vectors} (core2);
+\end{tikzpicture}
+}
+\caption{prepacked IFM stream 与 raw-HWC tile cache 对比}
+\label{fig:raw_hwc_cache}
+\end{figure}
+
+raw-HWC 并非对所有层都收益为正。其收益取决于 tile 容量、输入通道数、replay 吞吐和 compute overlap。本文最终将 raw-HWC 作为后端 Conv4/5/6/8 的主要优化路径；Conv3 raw-HWC 虽然可功能通过，但由于 tile/FIFO 容量和 replay 开销，板级结果不优于推荐配置，因此作为边界分析而非默认路径。
+
+\section{Backend Full-Tile 调度}
+
+Conv5、Conv6 和 Conv8 的空间尺寸均为 $13\times13$。早期调度将这些层拆成 $4+4+4+1$ 行 spatial tile，可以降低片上缓存容量需求，但每个 tile 都需要重复启动 bias、weight、IFM 和 OFM 流程。随着 raw-HWC cache 使用 URAM 扩容，后端层可以使用完整 $13\times13$ tile，从而减少 tile 边界固定成本。
+
+Backend full-tile 的容量条件可近似写为
+\begin{equation}
+tile\_pixels \times \left\lceil\frac{C_{in}}{2}\right\rceil \le HWC\_CACHE\_DEPTH.
+\end{equation}
+在最终 full-tile build 中，Conv5/8 需要 $13\times13\times\lceil256/2\rceil=21632$ 个 materialized word，Conv6 需要 $13\times13\times\lceil512/2\rceil=43264$ 个 materialized word。该容量由 HWC cache 的 URAM 实现承担，换取更少的 spatial tile 启动次数。
+
+\section{数据流优化小结}
+
+本章优化的共同目标是减少 $T_{noncomp}$。Batch stream 降低 DMA 启动和软件服务次数；预打包权重消除运行时 weight repack；raw-HWC cache 将 IFM 重排从 A53 移到 PL 并为后续 overlap 创造条件；backend full-tile 降低后端层空间 tile 固定开销。下一章将进一步讨论多 K pass 场景中 partial-PSUM feedback 和 pass-level prefetch 的调度优化。

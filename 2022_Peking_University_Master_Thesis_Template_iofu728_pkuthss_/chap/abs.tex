@@ -1,11 +1,13 @@
 \chapter*{摘要}
 \markboth{摘要}{}
 
-卷积神经网络（CNN）在计算机视觉领域取得了显著成就，然而其庞大的计算量对嵌入式平台上的实时推理提出了严峻挑战。为满足边缘设备上目标检测算法的低延迟与低功耗需求，本文面向 Zynq UltraScale+ XCK26 FPGA 平台，设计了一款基于权重驻留脉动阵列的轻量级卷积神经网络 INT8 加速器，目标应用为简化 YOLOv3-tiny 模型。
+边缘端目标检测要求在有限功耗和有限片上资源下完成较低延迟的卷积神经网络推理。FPGA 与 MPSoC 平台具有可定制数据通路、丰富片上存储和灵活软硬件协同的优势，适合部署轻量级目标检测网络。然而，在真实网络端到端运行中，加速器性能并不只取决于乘加阵列规模；DMA 启动、输入特征图重排、权重加载、部分和反馈、多轮 K pass 同步以及软硬件调度空泡都会显著降低阵列有效利用率。
 
-本文加速器采用 18 行 × 16 列的二维权重驻留脉动阵列作为核心计算单元，利用 DSP48E2 的 (A+D)×B 运算模式实现单 DSP 双 INT8 乘法结果生成。架构上设计了参数化多 Bank 行缓存与 3×3 窗口提取器，以支持步长和填充可配置的卷积窗口流；通过 K 维度分块、输出通道分块和空间分块三级分块策略，在寄存器位宽、片上缓冲容量和外部调度约束内覆盖不同规模卷积层的分时多轮累加；引入片上部分和反馈缓冲，实现权重驻留下的多轮累加语义。在系统接口层面，设计并实现了 AXI-Lite 配置寄存器桥、64-bit AXI-Stream 四路数据搬运接口以及后处理流水线（重量化、激活、HWC 地址写回），形成完整的数据面与控制面闭环。
+本文面向 Xilinx Kria KV260 / XCK26 平台，设计并实现了一种用于 YOLOv3-tiny 单尺度链式推理的 INT8 卷积加速器。硬件采用参数化 systolic array 作为卷积核心，支持 3x3 卷积、原生 1x1 卷积、INT32 部分和累加、逐通道重量化、查表激活、池化以及 AXI-Lite/AXI-Stream 系统接口。软件侧基于 Vitis bare-metal runtime 负责层描述、空间 tile 调度、DMA 启动、量化参数配置、输出重排和 YOLO decode，从而形成从 DDR 图像输入到 Conv0--Conv9 输出解析的完整 PS/PL 协同链路。
 
-本文基于 Icarus Verilog 与 Vivado XSIM 构建了双引擎回归验证流程，累计通过 60 余项模块级与系统级仿真测试。XCK26 综合结果表明，18×16 配置下资源占用为 LUT 62\%、DSP 28\%、BRAM 31\%，完成布局布线后 100 MHz 核心时钟满足 WNS = +0.26 ns 的时序约束，验证了该架构的工程可实现性。
+围绕真实 YOLO 层的非计算开销，本文进一步提出并实现了多级数据流与调度优化。首先，通过 batch stream 和预打包权重布局减少每个 tile 内的 DMA 启动与运行时重排开销；其次，引入 raw-HWC tile cache，使软件能够传输自然 HWC tile，由硬件在片上完成 1x1/3x3 向量重放，并在后端层使用 full-tile 调度降低空间 tile 启动开销；再次，针对多 K pass 卷积中的 partial-PSUM 反馈瓶颈，实现了流水化 drain、early drain、continuous PSUM collector 和 pass-level prefetch，使权重准备、IFM replay、部分和反馈与当前 pass 计算尽可能重叠。本文同时设计了阶段、子阶段、pass 级和列级性能计数器，用于解释瓶颈迁移和验证优化有效性。
+
+实验结果表明，所设计系统在 KV260 上完成 Conv0--Conv9 batch-chain bit-exact 验证，并在两张 DDR 动态图像上得到稳定的 YOLO decode 结果。最终推荐实现采用 Vivado/Vitis 2022.2、100 MHz 时钟、ROWS=18、COLS=8、COUT\_TILE=16 的配置，在 D:/MPSoC/b\_kprefetch\_22 构建中完成布局布线，资源占用为 84480 个 CLB LUT、53260 个 CLB Register、63 个 BRAM Tile、24 个 URAM 和 184 个 DSP。两张图像的端到端 DDR demo 延迟约为 288 ms。该结果并不定位为实时视频性能领先，而是证明在资源受限 MPSoC 上，围绕数据流、部分和反馈和 pass 级调度的系统优化能够将早期约 1.18 s 的链式推理延迟降低到约 0.29 s，并给出可解释的瓶颈分析路径。
 
 \medskip
-\noindent\textbf{关键词：}卷积神经网络，脉动阵列，FPGA加速，INT8量化，AXI-Stream
+\noindent\textbf{关键词：}YOLOv3-tiny，MPSoC，FPGA 加速器，systolic array，数据流优化，partial-PSUM，INT8 量化

@@ -1,113 +1,92 @@
 \chapter{背景与相关工作}
 \label{chap:related}
 
-本章介绍与本文设计相关的基础理论与技术背景，包括卷积运算的数学定义及其 GEMM 转化、脉动阵列架构分类、INT8 量化原理、FPGA CNN 加速器相关工作以及目标硬件平台。
+本章介绍本文设计所依赖的基础概念，包括卷积计算模型、INT8 量化、systolic array 数据流、YOLOv3-tiny 单尺度网络结构、MPSoC 平台特征以及 FPGA CNN 加速器相关研究。与传统背景介绍不同，本章重点服务于后文的数据流与调度优化：真实网络的性能瓶颈来自层形状、K pass 数量、输出通道分块、空间 tile、部分和反馈和 PS/PL 数据搬运的共同作用。
 
-\section{卷积神经网络与卷积运算}
+\section{卷积计算与分块表示}
 
-\subsection{标准卷积运算}
-
-标准卷积层是 CNN 中最核心的计算算子。给定输入特征图（Input Feature Map, IFM） $I \in \mathbb{R}^{C_{in} \times H \times W}$、卷积核 $W \in \mathbb{R}^{C_{out} \times C_{in} \times K_h \times K_w}$ 和偏置 $B \in \mathbb{R}^{C_{out}}$，输出特征图（Output Feature Map, OFM） $O \in \mathbb{R}^{C_{out} \times H_{out} \times W_{out}}$ 的计算公式为：
-
+给定输入特征图 $I \in \mathbb{R}^{H \times W \times C_{in}}$、权重 $W \in \mathbb{R}^{K_h \times K_w \times C_{in} \times C_{out}}$ 和偏置 $B$，标准二维卷积可以表示为
 \begin{equation}
-O[c_{out}][y][x] = B[c_{out}] + \sum_{c_{in}=0}^{C_{in}-1} \sum_{k_y=0}^{K_h-1} \sum_{k_x=0}^{K_w-1} I[c_{in}][y \cdot S + k_y - P][x \cdot S + k_x - P] \cdot W[c_{out}][c_{in}][k_y][k_x]
+O[y,x,c_o] = B[c_o] + \sum_{c_i=0}^{C_{in}-1} \sum_{k_y=0}^{K_h-1} \sum_{k_x=0}^{K_w-1}
+I[yS+k_y-P, xS+k_x-P, c_i] \cdot W[k_y,k_x,c_i,c_o],
 \label{eq:conv2d}
 \end{equation}
-
-其中，$S$ 为步长（Stride），$P$ 为填充（Padding），$H_{out} = (H + 2P - K_h) / S + 1$，$W_{out} = (W + 2P - K_w) / S + 1$。
-
-YOLOv3-tiny 网络中主要使用 3×3 卷积（$K_h=K_w=3$）和 1×1 卷积（通道变换层）。本文加速器专门针对 3×3 卷积的硬件友好展开进行了优化；从数学形式上看，1×1 卷积可通过将 3×3 卷积核中非中心位置权重置零来映射为特例，但当前 RTL 实现与验证主要围绕 3×3 窗口流展开，1×1 的专用调度优化属于后续可扩展方向。
-
-\subsection{卷积到 GEMM 的映射}
-
-卷积运算可以通过 im2col（Image to Column）变换转化为矩阵乘法（GEMM）形式。将 IFM 中与每个滑动窗口位置对应的 $C_{in} \times K_h \times K_w$ 个元素展开为一行，将 $C_{out}$ 组卷积核分别展开为一列，即可将式~\ref{eq:conv2d}转化为：
-
+其中 $S$ 为 stride，$P$ 为 padding。将卷积窗口和输入通道展开后，可得到 GEMM 形式：
 \begin{equation}
-\text{OFM}[p, c_{out}] = \text{Bias}[c_{out}] + \sum_{k=0}^{K_{total}-1} \text{IFM}[p, k] \cdot W[k, c_{out}]
+O[p,c_o] = B[c_o] + \sum_{k=0}^{K_{total}-1} X[p,k] \cdot W[k,c_o],
+\quad K_{total}=C_{in}K_hK_w .
 \label{eq:gemm}
 \end{equation}
 
-其中，$p = oy \times W_{out} + ox$ 为输出像素的一维坐标，$K_{total} = C_{in} \times K_h \times K_w$ 为展开后的输入维度。这一映射将 6 层嵌套循环（输出通道、输出高度、输出宽度、输入通道、卷积核高度、卷积核宽度）约简为标准的矩阵乘法问题，极大便利了硬件加速器设计。
-
-\section{脉动阵列架构}
-
-\subsection{基本概念}
-
-脉动阵列（Systolic Array）是一种由规整排列的处理单元（Processing Element, PE）组成的二维计算网格。数据以脉动方式在相邻 PE 间逐周期传递，每个 PE 在每个时钟周期执行固定模式的乘加运算。脉动阵列的主要优点包括：
-
-\begin{enumerate}
-    \item \textbf{规整性}：所有 PE 结构相同，适合 VLSI/FPGA 大规模阵列化实现。
-    \item \textbf{数据复用}：权重、输入和部分和在阵列中以脉动传播，大幅减少对全局存储的带宽需求。
-    \item \textbf{可扩展性}：通过改变阵列行列数即可调整计算吞吐与资源开销的折中。
-\end{enumerate}
-
-\subsection{数据流分类}
-
-根据 Sze 等人~\cite{sze2017efficient}的分类体系，脉动阵列的数据流可按权重、输入和部分和的驻留策略分为以下四类：
-
-\begin{enumerate}
-    \item \textbf{权重驻留（Weight-Stationary）}：每个 PE 存储一个或多个权重值，IFM 在行方向流动，PSUM 在列方向流动。代表作为 Google TPU~\cite{jouppi2017tpu}。优点是权重从外部内存加载后驻留在 PE 中，适合权重重用率较高的场景。
-
-    \item \textbf{输出驻留（Output-Stationary）}：每个 PE 负责累加一个输出像素的所有乘积累积，IFM 和权重在阵列中流动。优点是部分和驻留在 PE 内，避免了 PSUM 的片外存储需求。
-
-    \item \textbf{输入驻留（Input-Stationary）}：每个 PE 存储一个 IFM 元素，权重在阵列中流动。适合 IFM 数据量较小的场景。
-
-    \item \textbf{行静态（Row-Stationary）}：Eyeriss~\cite{chen2016eyeriss} 提出的数据流，在 1D PE 行维度保持 IFM 元素驻留，在 2D PE 列维度保持 filter 行元素驻留，以最大化本地数据复用并最小化数据搬运能量。
-\end{enumerate}
-
-本文选择权重驻留数据流，原因如下：（1）YOLOv3-tiny 的 3×3 卷积核权重总量相对有限，适合驻留在 PE 内部；（2）权重驻留方案的控制逻辑更为简洁，有利于 FPGA 实现中减少 LUT 开销；（3）在 K 分块多轮累加场景下，权重可在多个 PSUM 反馈轮次间保持驻留不变，减少了权重重载次数。
-
-\section{INT8 量化}
-
-神经网络的量化是指将浮点权重和激活值映射到低位宽整数的过程。Jacob 等人提出的整数量化方案~\cite{jacob2018quantization}将推理过程完全转换为整数运算：
-
+本文硬件按照三个维度组织计算：$K$ 维分块、输出通道分块和空间分块。若 systolic array 每次处理 $K_{tile}$ 个展开通道，则一个卷积层需要
 \begin{equation}
-q = \text{clamp}\left(\text{round}\left(\frac{r}{S}\right) + Z,\ q_{min},\ q_{max}\right)
+N_{kpass}=\left\lceil \frac{K_{total}}{K_{tile}} \right\rceil
+\end{equation}
+轮 K pass。若每个输出通道块包含 $Cout_{tile}$ 个通道，则输出通道块数为
+\begin{equation}
+N_{cout}=\left\lceil \frac{C_{out}}{Cout_{tile}} \right\rceil .
+\end{equation}
+真实层的调度规模由 $N_{tile}\times N_{cout}\times N_{kpass}$ 决定。后端层如 $13\times13\times512 \rightarrow 13\times13\times1024$ 虽然空间尺寸较小，但 $K_{total}$ 和 $N_{cout}$ 很大，因此容易暴露 pass 边界和 partial-PSUM 反馈瓶颈。
+
+\section{INT8 量化与后处理}
+
+边缘 CNN 推理通常采用 INT8 量化降低存储带宽和乘加资源消耗。浮点值 $r$ 与量化整数 $q$ 之间可表示为~\cite{jacob2018quantization}
+\begin{equation}
+q=\mathrm{clamp}\left(\mathrm{round}\left(\frac{r}{S}\right)+Z,q_{min},q_{max}\right),
 \label{eq:quant}
 \end{equation}
-
-其中 $r$ 为浮点值，$S$ 为缩放因子（Scale），$Z$ 为零点（Zero Point），$q_{min}$ 和 $q_{max}$ 为量化范围（对于 INT8 为 -128 和 127）。
-
-在推理时，卷积计算完全以整数完成：
-
+其中 $S$ 为 scale，$Z$ 为 zero point。卷积内部使用 INT8 输入和权重，乘加结果累加到 INT32 partial sum。输出时通过逐通道 multiplier、shift 和 output zero point 完成重量化：
 \begin{equation}
-q_{out} = Z_{out} + \frac{S_w S_{in}}{S_{out}} \sum (q_w - Z_w)(q_{in} - Z_{in})
-\label{eq:int8conv}
+q_{out}=\mathrm{clamp}\left(\left((psum \cdot m) \gg s\right)+Z_{out},0,255\right).
+\label{eq:requant}
 \end{equation}
 
-其中，预计算的乘数因子 $\frac{S_w S_{in}}{S_{out}}$ 可转化为定点乘加移位操作。本文加速器通过重量化（Requantization）模块，以每一路输出通道一个 16-bit 乘数因子加 4-bit 移位量的参数化方式实现了此量化方案。
+本文加速器将重量化、activation LUT 和可选 maxpool 集成在 PL 端，从而减少每层输出回到软件后再处理的开销。A53 软件只负责写入每个输出通道 lane 的量化参数和 activation LUT 字节。
 
-\section{FPGA CNN 加速器相关工作}
+\section{Systolic Array 与数据流}
 
-FPGA CNN 加速器的研究可追溯至 Qiu 等人~\cite{qiu2016going}的工作，该文首次系统性地探索了在嵌入式 FPGA 上部署 CNN 的完整设计流程。随后 Guo 等人在此基础上发布了 Angel-Eye 工具链~\cite{guo2019angel}，实现了从 Caffe 模型到 FPGA 比特流的自动化映射。
+Systolic array 由规则排列的处理单元（Processing Element, PE）组成，数据在相邻 PE 之间按节拍传播，适合矩阵乘和卷积等规则计算~\cite{kung1982systolic}。不同驻留策略会形成不同数据流：weight-stationary 将权重保持在 PE 内部，input-stationary 保持输入局部性，output-stationary 保持 partial sum，row-stationary 则试图综合利用多类数据复用~\cite{sze2017efficient,chen2016eyeriss}。
 
-在脉动阵列 FPGA 实现方面，Wei 等人~\cite{wei2017automated}提出了自动化脉动阵列综合框架，支持从高层描述生成针对不同 FPGA 器件的 RTL 代码。Ding 等人~\cite{ding2022tinyyolo}报道了一款面向 YOLOv3-tiny 的轻量级 FPGA CNN 加速器设计。然而，这些工作大多侧重于高层设计空间探索或单一模块优化，缺乏从 PE 级 DSP 原语到顶层 AXI-Stream 系统接口的端到端闭环设计和验证数据。
+本文采用 weight-stationary 风格。每个 K pass 开始前，软件或 batch stream 将当前 $K_{tile}\times Cout_{tile}$ 权重块送入片上权重存储；随后 IFM/window 向量流入阵列，PE 执行 INT8 乘法并累加到 INT32 partial sum。该选择的优点是权重加载和阵列计算语义清晰，便于在 RTL 中实现稳定的 AXI-Stream 边界；代价是多 K pass 层需要显式 partial-PSUM 反馈路径。
 
-\section{Zynq UltraScale+ XCK26 平台}
+\section{YOLOv3-tiny 单尺度网络}
 
-本文目标平台为 Xilinx Kria K26 核心 FPGA 器件 XCK26（具体型号 xck26-sfvc784-2LV-c），属于 Zynq UltraScale+ MPSoC 系列。其主要逻辑资源如表~\ref{tab:xck26-resources}所示。
+本文面向的模型是 YOLOv3-tiny 的单尺度链路。输入为 $416\times416\times3$ 量化 RGB 图像，硬件链式执行 Conv0 到 Conv9，最终输出 $13\times13\times24$ 检测头。表~\ref{tab:yolo_layers} 给出本文 runtime 使用的层级形状和调度规模。
 
 \begin{table}[htb]
 \centering
-\caption{XCK26 (sfvc784-2LV-c) 主要逻辑资源}
-\label{tab:xck26-resources}
-\begin{tabular}{lc}
+\caption{Conv0--Conv9 单尺度链路层参数}
+\label{tab:yolo_layers}
+\begin{tabular}{lrrrrrr}
 \toprule
-\textbf{资源类型} & \textbf{可用数量} \\
+层名 & IFM & $C_{in}$ & $C_{out}$ & Kernel & K passes & Cout blocks \\
 \midrule
-系统逻辑单元 (SLC) & 约 256K \\
-CLB LUT          & 117,120 \\
-CLB 触发器       & 234,240 \\
-Block RAM Tile   & 144 (36Kb 等效) \\
-DSP48E2 Slice    & 1,248 \\
-用户 I/O         & 468 \\
-\midrule
-内部互联总线      & AXI4-Lite / AXI4-Stream / AXI4-MM \\
-PS 侧处理器       & Quad-core ARM Cortex-A53 \\
+conv0\_pool & $416\times416$ & 3 & 16 & 3x3 & 2 & 1 \\
+conv1\_pool & $208\times208$ & 16 & 32 & 3x3 & 8 & 2 \\
+conv2\_pool & $104\times104$ & 32 & 64 & 3x3 & 16 & 4 \\
+conv3\_pool & $52\times52$ & 64 & 128 & 3x3 & 32 & 8 \\
+conv4\_pool & $26\times26$ & 128 & 256 & 3x3 & 64 & 16 \\
+conv5 & $13\times13$ & 256 & 512 & 3x3 & 128 & 32 \\
+conv6 & $13\times13$ & 512 & 1024 & 3x3 & 256 & 64 \\
+conv7 & $13\times13$ & 1024 & 256 & 1x1 & 57 & 16 \\
+conv8 & $13\times13$ & 256 & 512 & 3x3 & 128 & 32 \\
+conv9 & $13\times13$ & 512 & 24 & 1x1 & 29 & 2 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-XCK26 的 DSP48E2 是一款高性能乘累加原语，支持 27×18-bit 乘法器和 48-bit 累加器~\cite{xilinx2023dsp}。其关键特性之一是通过 (A+D)×B 的预加法运算模式，可以在单个 DSP 内完成两项独立乘法的合并计算，为本文的双 INT8 乘累加 PE 设计提供了硬件基础。
+从表中可以看到，后端 13x13 层虽然空间尺寸固定，但 K passes 和 Cout blocks 显著增加，是本文优化 partial-PSUM、raw-HWC replay 和 pass-level prefetch 的主要目标。
 
-硬件平台的另一关键特性是完备的 AXI 互联体系。Zynq UltraScale+ 的处理系统（Processing System, PS）与可编程逻辑（Programmable Logic, PL）之间通过 AXI 接口实现高带宽低延迟的数据与控制交互~\cite{arm2021axi, xilinx2023axi}。本文加速器设计的 AXI-Lite 配置接口和 AXI-Stream 数据接口即为后续 PS/DMA 协同调度的直接对接边界。
+\section{MPSoC 平台与 AXI 接口}
+
+Kria KV260 使用 Xilinx Zynq UltraScale+ MPSoC，包含 ARM Cortex-A53 PS 和 XCK26 PL 逻辑资源。PS/PL 之间通过 AXI4-Lite、AXI4-Stream 和 AXI4-MM 互连进行控制和数据搬运~\cite{arm2021axi,xilinx2022zynq}。本文采用 AXI-Lite 作为寄存器配置接口，并使用四路 AXI DMA：bias、weight、IFM 三路从 DDR 到 PL，OFM 一路从 PL 到 DDR。
+
+AXI-Stream 的 TVALID/TREADY 握手机制有利于处理 PL 内部背压，但也要求 RTL 对 TLAST、TKEEP、packet count 和 DMA length 做严格约束。本文的 batch stream、raw-HWC cache 和 OFM debug stream 都建立在该边界之上。
+
+\section{相关工作比较}
+
+现有 FPGA CNN 加速器工作在自动化映射、阵列生成、模型压缩和单层吞吐上取得了大量成果~\cite{qiu2016going,guo2019angeleye,wei2017s2a,ma2018rtlcompiler,ding2022tinyyolo}。与这些工作相比，本文的差异主要在三个方面。
+
+首先，本文以完整 Conv0--Conv9 链式推理作为验证对象，而不仅是单层或合成测试。每层输出都需要作为下一层输入，golden 数据也必须遵循同一条 RTL semantic 链路。其次，本文关注真实 MPSoC 部署中的数据搬运问题，包含 A53 runtime、AXI DMA、DDR 图像包、OFM packet 重排和 YOLO decode。最后，本文通过性能计数器对瓶颈迁移进行解释，强调优化为什么有效以及下一步瓶颈在哪里，而不是只报告单个最终延迟。
+
+因此，本文的贡献更接近系统型和数据流优化型研究：在资源受限的可编程平台上，将真实 CNN 链路、RTL 数据通路、软件调度和板级性能诊断统一起来。
