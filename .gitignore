@@ -55,7 +55,7 @@ demo_output/
 !release/**/*.xsa
 !release/**/*.bit
 
-# LaTeX generated files. Keep source .tex/.bib, figures, and curated final PDFs.
+# LaTeX generated files.
 *.aux
 *.toc
 *.out
@@ -68,7 +68,6 @@ demo_output/
 *.run.xml
 *.lof
 *.lot
-# Non-handoff PDFs generated during thesis/presentation drafting. The final
-# thesis PDF kept in git is main.pdf.
-2022_Peking_University_Master_Thesis_Template_iofu728_pkuthss_/thesis.pdf
-2022_Peking_University_Master_Thesis_Template_iofu728_pkuthss_/hardware_ip_presentation_manuscript.pdf
+# The local LaTeX project is not part of the handoff repository. Only the
+# curated root-level Thesis.pdf is tracked.
+2022_Peking_University_Master_Thesis_Template_iofu728_pkuthss_/

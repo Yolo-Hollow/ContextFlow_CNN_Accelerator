@@ -41,8 +41,7 @@ golden/                  小型回归 golden 数据的版本管理规则
 repro/                   最小模型数据、测试图片和期望输出
 release/kv260_hwcreplay_22/
                          最终交付的 XSA 与 bitstream
-2022_Peking_University_Master_Thesis_Template_iofu728_pkuthss_/
-                         论文源文件和最新 PDF
+Thesis.pdf               最新论文 PDF
 ```
 
 ## 最终硬件产物
@@ -147,10 +146,10 @@ PyTorch checkpoint 不纳入本交付仓库。
 
 ## 论文 PDF
 
-最新论文 PDF 位于：
+最新论文 PDF 位于仓库根目录：
 
 ```text
-2022_Peking_University_Master_Thesis_Template_iofu728_pkuthss_/main.pdf
+Thesis.pdf
 ```
 
 ## 后续工作
