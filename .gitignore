@@ -13,9 +13,6 @@ build_xsim/
 build_synth_xck26/
 build_bd_*/
 build_system_*/
-!build_system_kv260_carrier/
-build_system_kv260_carrier/*
-!build_system_kv260_carrier/conv_accel_ps_dma_minimal.xsa
 build_vitis_2022_2*/
 /build_vitis_*.tcl
 clockInfo.txt
@@ -45,3 +42,33 @@ golden/tmp/
 golden/external/
 tools/golden/output/
 demo_output/
+
+# Personal editor/agent settings
+.vscode/
+.claude/
+*.code-workspace
+
+# Vivado/Vitis generated handoff files are ignored by default. Curated final
+# artifacts are kept explicitly under release/.
+*.xsa
+*.bit
+!release/**/*.xsa
+!release/**/*.bit
+
+# LaTeX generated files. Keep source .tex/.bib, figures, and curated final PDFs.
+*.aux
+*.toc
+*.out
+*.synctex.gz
+*.fdb_latexmk
+*.fls
+*.xdv
+*.bbl
+*.blg
+*.run.xml
+*.lof
+*.lot
+# Non-handoff PDFs generated during thesis/presentation drafting. The final
+# thesis PDF kept in git is main.pdf.
+2022_Peking_University_Master_Thesis_Template_iofu728_pkuthss_/thesis.pdf
+2022_Peking_University_Master_Thesis_Template_iofu728_pkuthss_/hardware_ip_presentation_manuscript.pdf
