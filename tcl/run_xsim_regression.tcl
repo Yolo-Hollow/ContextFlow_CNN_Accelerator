@@ -14,6 +14,12 @@ set psum_stream_overlap 0
 set continuous_psum 0
 set column_psum 0
 set coredbg 0
+set hwc_replay_pipeline_enable 1
+set hwc_cache_extra_read_latency 0
+set hwc_replay_extra_wait_cycles 0
+set hwc_cache_use_uram -1
+set hwc_cache_stripes -1
+set ifm_pingpong_fifo_enable 1
 for {set i 0} {$i < [llength $argv]} {incr i} {
     set arg [lindex $argv $i]
     if {$arg eq "-top"} {
@@ -49,6 +55,24 @@ for {set i 0} {$i < [llength $argv]} {incr i} {
         set column_psum 1
     } elseif {$arg eq "-coredbg"} {
         set coredbg 1
+    } elseif {$arg eq "-hwc_replay_pipeline_enable"} {
+        incr i
+        set hwc_replay_pipeline_enable [lindex $argv $i]
+    } elseif {$arg eq "-hwc_cache_extra_read_latency"} {
+        incr i
+        set hwc_cache_extra_read_latency [lindex $argv $i]
+    } elseif {$arg eq "-hwc_replay_extra_wait_cycles"} {
+        incr i
+        set hwc_replay_extra_wait_cycles [lindex $argv $i]
+    } elseif {$arg eq "-hwc_cache_use_uram"} {
+        incr i
+        set hwc_cache_use_uram [lindex $argv $i]
+    } elseif {$arg eq "-hwc_cache_stripes"} {
+        incr i
+        set hwc_cache_stripes [lindex $argv $i]
+    } elseif {$arg eq "-ifm_pingpong_fifo_enable"} {
+        incr i
+        set ifm_pingpong_fifo_enable [lindex $argv $i]
     } else {
         error "unknown argument: $arg"
     }
@@ -164,6 +188,7 @@ set tests {
     {tb_conv_accel_core_axi_lite_axis_stream_r18_c8_b2_conv5_ext_tail_cout16 tb/tb_conv_accel_core_axi_lite_axis_stream_r18_c8_b2_conv5_ext_tail_cout16.v diagnostic}
     {tb_conv_accel_core_axi_lite_axis_stream_r18_c8_b2_conv5_ext_tail tb/tb_conv_accel_core_axi_lite_axis_stream_r18_c8_b2_conv5_ext_tail.v diagnostic}
     {tb_conv_accel_core_axi_lite_axis_stream_conv4_3x3_raw_hwc_ext_tile0_cout16 tb/tb_conv_accel_core_axi_lite_axis_stream_conv4_3x3_raw_hwc_ext_tile0_cout16.v diagnostic}
+    {tb_conv_accel_core_axi_lite_axis_stream_conv4_3x3_raw_hwc_fulltile_cout256 tb/tb_conv_accel_core_axi_lite_axis_stream_conv4_3x3_raw_hwc_fulltile_cout256.v diagnostic}
     {tb_conv_accel_core_axi_lite_axis_stream_conv4_3x3_raw_hwc_ext_tile3_cout16 tb/tb_conv_accel_core_axi_lite_axis_stream_conv4_3x3_raw_hwc_ext_tile3_cout16.v diagnostic}
     {tb_conv_accel_core_axi_lite_axis_stream_conv6_3x3_raw_hwc_ext_tile0_cout16 tb/tb_conv_accel_core_axi_lite_axis_stream_conv6_3x3_raw_hwc_ext_tile0_cout16.v diagnostic}
     {tb_conv_accel_core_axi_lite_axis_stream_conv6_3x3_raw_hwc_fulltile_cout16 tb/tb_conv_accel_core_axi_lite_axis_stream_conv6_3x3_raw_hwc_fulltile_cout16.v diagnostic}
@@ -293,6 +318,32 @@ foreach test $tests {
     if {$coredbg != 0} {
         puts $fh "`define TB_CONV_ACCEL_CORE_PROGRESS_COREDBG 1"
     }
+    puts $fh "`undef TB_CONV_ACCEL_CORE_HWC_REPLAY_PIPELINE_ENABLE"
+    puts $fh "`undef TB_CONV_ACCEL_CORE_HWC_CACHE_EXTRA_READ_LATENCY"
+    puts $fh "`undef TB_CONV_ACCEL_CORE_HWC_REPLAY_EXTRA_WAIT_CYCLES"
+    puts $fh "`undef TB_CONV_ACCEL_CORE_HWC_CACHE_USE_URAM"
+    puts $fh "`undef TB_CONV_ACCEL_CORE_HWC_CACHE_STRIPES"
+    puts $fh "`undef TB_CONV_ACCEL_CORE_IFM_PINGPONG_FIFO_ENABLE"
+    puts $fh "`undef TB_HWC_REPLAY_PIPELINE_ENABLE"
+    puts $fh "`undef TB_HWC_CACHE_EXTRA_READ_LATENCY"
+    puts $fh "`undef TB_HWC_REPLAY_EXTRA_WAIT_CYCLES"
+    puts $fh "`undef TB_HWC_CACHE_USE_URAM"
+    puts $fh "`undef TB_HWC_CACHE_STRIPES"
+    puts $fh "`define TB_CONV_ACCEL_CORE_HWC_REPLAY_PIPELINE_ENABLE $hwc_replay_pipeline_enable"
+    puts $fh "`define TB_CONV_ACCEL_CORE_HWC_CACHE_EXTRA_READ_LATENCY $hwc_cache_extra_read_latency"
+    puts $fh "`define TB_CONV_ACCEL_CORE_HWC_REPLAY_EXTRA_WAIT_CYCLES $hwc_replay_extra_wait_cycles"
+    if {$hwc_cache_use_uram >= 0} {
+        puts $fh "`define TB_CONV_ACCEL_CORE_HWC_CACHE_USE_URAM $hwc_cache_use_uram"
+        puts $fh "`define TB_HWC_CACHE_USE_URAM $hwc_cache_use_uram"
+    }
+    if {$hwc_cache_stripes >= 0} {
+        puts $fh "`define TB_CONV_ACCEL_CORE_HWC_CACHE_STRIPES $hwc_cache_stripes"
+        puts $fh "`define TB_HWC_CACHE_STRIPES $hwc_cache_stripes"
+    }
+    puts $fh "`define TB_CONV_ACCEL_CORE_IFM_PINGPONG_FIFO_ENABLE $ifm_pingpong_fifo_enable"
+    puts $fh "`define TB_HWC_REPLAY_PIPELINE_ENABLE $hwc_replay_pipeline_enable"
+    puts $fh "`define TB_HWC_CACHE_EXTRA_READ_LATENCY $hwc_cache_extra_read_latency"
+    puts $fh "`define TB_HWC_REPLAY_EXTRA_WAIT_CYCLES $hwc_replay_extra_wait_cycles"
     close $fh
     exec {*}$xvlog -sv -L work -i [file join $root tb] -log $xvlog_log {*}$srcs >@ stdout 2>@ stderr
     exec {*}$xelab -debug typical -top $top -snapshot $snapshot -log $xelab_log >@ stdout 2>@ stderr

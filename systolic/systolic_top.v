@@ -13,6 +13,7 @@ module systolic_top #(
     parameter WGT_FIFO_DEPTH = 64,  parameter WGT_FIFO_AW = 6,
     parameter PSUM_FIFO_DEPTH = 1024, parameter PSUM_FIFO_AW = 10,
     parameter TAIL_CYCLES_CONFIG = `SYSTOLIC_TAIL_CYCLES_CONFIG,
+    parameter IFM_PINGPONG_FIFO_ENABLE = 1,
     parameter USE_DMA_IFM = 1   // 1: DMA line buffer, 0: manual IFM FIFO fill
 ) (
     input  clk, rst,
@@ -31,6 +32,9 @@ module systolic_top #(
     // ---- Manual IFM FIFO fill (USE_DMA_IFM=0) ----
     input  [ROWS-1:0]           ifm_fifo_wr_en,
     input  [ROWS*IFM_W-1:0]     ifm_fifo_wr_data,
+    input                       ifm_pingpong_enable,
+    input                       ifm_wr_bank,
+    input                       ifm_rd_bank,
     output [ROWS-1:0]           ifm_fifo_full_legacy,
 
     // ---- DMA / line buffer interface (USE_DMA_IFM=1) ----
@@ -177,23 +181,71 @@ module systolic_top #(
         end
     endgenerate
 
+    wire [ROWS-1:0] ifm_full_bank0;
+    wire [ROWS-1:0] ifm_fifo_empty_bank0;
+    wire [ROWS*IFM_W-1:0] ifm_fifo_rd_data_bank0;
     wire [ROWS-1:0] ifm_full_active;
     wire [ROWS-1:0] ifm_fifo_empty_active;
+    wire [ROWS*IFM_W-1:0] ifm_fifo_rd_data_active;
     wire [ROWS-1:0] ifm_fifo_rd_en_active;
     generate
-        for (r = 0; r < ROWS; r = r + 1) begin : ifm_fifo_gen
-            assign ifm_fifo_rd_en_active[r] = ifm_rd_stagger[r] && !ifm_fifo_empty_active[r];
+        if (IFM_PINGPONG_FIFO_ENABLE != 0) begin : ifm_fifo_pingpong_impl
+            wire [ROWS-1:0] ifm_full_bank1;
+            wire [ROWS-1:0] ifm_fifo_empty_bank1;
+            wire [ROWS*IFM_W-1:0] ifm_fifo_rd_data_bank1;
+            assign ifm_full_active =
+                (ifm_pingpong_enable && ifm_wr_bank) ? ifm_full_bank1 : ifm_full_bank0;
+            assign ifm_fifo_empty_active =
+                (ifm_pingpong_enable && ifm_rd_bank) ?
+                ifm_fifo_empty_bank1 : ifm_fifo_empty_bank0;
+            assign ifm_fifo_rd_data_active =
+                (ifm_pingpong_enable && ifm_rd_bank) ?
+                ifm_fifo_rd_data_bank1 : ifm_fifo_rd_data_bank0;
+            for (r = 0; r < ROWS; r = r + 1) begin : ifm_fifo_gen
+                assign ifm_fifo_rd_en_active[r] =
+                    ifm_rd_stagger[r] && !ifm_fifo_empty_active[r];
 
-            systolic_fifo #(.WIDTH(IFM_W), .DEPTH(IFM_FIFO_DEPTH), .AW(IFM_FIFO_AW))
-            u_ifm_fifo (.clk(clk), .rst(rst),
-                .wr_en(USE_DMA_IFM ? we_ifm_valid : ifm_fifo_wr_en[r]),
-                .rd_en(ifm_fifo_rd_en_active[r]),
-                .data_in(USE_DMA_IFM ? we_ifm_data[(r+1)*IFM_W-1 : r*IFM_W]
-                                     : ifm_fifo_wr_data[(r+1)*IFM_W-1 : r*IFM_W]),
-                .data_out(ifm_fifo_rd_data[(r+1)*IFM_W-1 : r*IFM_W]),
-                .empty(ifm_fifo_empty_active[r]), .full(ifm_full_active[r]));
+                systolic_fifo #(.WIDTH(IFM_W), .DEPTH(IFM_FIFO_DEPTH), .AW(IFM_FIFO_AW))
+                u_ifm_fifo_bank0 (.clk(clk), .rst(rst),
+                    .wr_en(USE_DMA_IFM ? we_ifm_valid :
+                           (ifm_fifo_wr_en[r] &&
+                            (!ifm_pingpong_enable || !ifm_wr_bank))),
+                    .rd_en(ifm_fifo_rd_en_active[r] &&
+                           (!ifm_pingpong_enable || !ifm_rd_bank)),
+                    .data_in(USE_DMA_IFM ? we_ifm_data[(r+1)*IFM_W-1 : r*IFM_W]
+                                         : ifm_fifo_wr_data[(r+1)*IFM_W-1 : r*IFM_W]),
+                    .data_out(ifm_fifo_rd_data_bank0[(r+1)*IFM_W-1 : r*IFM_W]),
+                    .empty(ifm_fifo_empty_bank0[r]), .full(ifm_full_bank0[r]));
+                systolic_fifo #(.WIDTH(IFM_W), .DEPTH(IFM_FIFO_DEPTH), .AW(IFM_FIFO_AW))
+                u_ifm_fifo_bank1 (.clk(clk), .rst(rst),
+                    .wr_en(!USE_DMA_IFM && ifm_pingpong_enable &&
+                           ifm_wr_bank && ifm_fifo_wr_en[r]),
+                    .rd_en(ifm_pingpong_enable && ifm_rd_bank &&
+                           ifm_fifo_rd_en_active[r]),
+                    .data_in(ifm_fifo_wr_data[(r+1)*IFM_W-1 : r*IFM_W]),
+                    .data_out(ifm_fifo_rd_data_bank1[(r+1)*IFM_W-1 : r*IFM_W]),
+                    .empty(ifm_fifo_empty_bank1[r]), .full(ifm_full_bank1[r]));
+            end
+        end else begin : ifm_fifo_legacy_impl
+            assign ifm_full_active = ifm_full_bank0;
+            assign ifm_fifo_empty_active = ifm_fifo_empty_bank0;
+            assign ifm_fifo_rd_data_active = ifm_fifo_rd_data_bank0;
+            for (r = 0; r < ROWS; r = r + 1) begin : ifm_fifo_gen
+                assign ifm_fifo_rd_en_active[r] =
+                    ifm_rd_stagger[r] && !ifm_fifo_empty_active[r];
+
+                systolic_fifo #(.WIDTH(IFM_W), .DEPTH(IFM_FIFO_DEPTH), .AW(IFM_FIFO_AW))
+                u_ifm_fifo (.clk(clk), .rst(rst),
+                    .wr_en(USE_DMA_IFM ? we_ifm_valid : ifm_fifo_wr_en[r]),
+                    .rd_en(ifm_fifo_rd_en_active[r]),
+                    .data_in(USE_DMA_IFM ? we_ifm_data[(r+1)*IFM_W-1 : r*IFM_W]
+                                         : ifm_fifo_wr_data[(r+1)*IFM_W-1 : r*IFM_W]),
+                    .data_out(ifm_fifo_rd_data_bank0[(r+1)*IFM_W-1 : r*IFM_W]),
+                    .empty(ifm_fifo_empty_bank0[r]), .full(ifm_full_bank0[r]));
+            end
         end
     endgenerate
+    assign ifm_fifo_rd_data = ifm_fifo_rd_data_active;
     assign perf_comp_ifm_underflow = |(ifm_rd_stagger & ifm_fifo_empty_active);
 
     reg [ROWS-1:0] ifm_fifo_rd_valid;
@@ -282,6 +334,12 @@ module systolic_top #(
     // ---- PSUM FIFOs (32 × 48-bit) ----
     wire [31:0] psum_fifo_wr_en;
     assign psum_fifo_wr_en_dbg = psum_fifo_wr_en;
+    generate
+        if (COLS < 32) begin : psum_unused_bits
+            assign psum_fifo_wr_en[31:COLS] = {(32-COLS){1'b0}};
+            assign psum_fifo_empty[31:COLS] = {(32-COLS){1'b1}};
+        end
+    endgenerate
     generate
         for (r = 0; r < COLS; r = r + 1) begin : psum_fifo_gen
             assign psum_fifo_wr_en[r] = valid_v_bot[2*r];

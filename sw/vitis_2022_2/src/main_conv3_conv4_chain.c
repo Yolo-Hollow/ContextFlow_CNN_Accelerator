@@ -812,6 +812,26 @@ static void log_printf(const char *fmt, ...)
 #define trace_printf(...) xil_printf(__VA_ARGS__)
 #endif
 
+static uint32_t fnv1a32_bytes(const uint8_t *data, uint32_t bytes)
+{
+    uint32_t hash = 2166136261U;
+    for (uint32_t i = 0U; i < bytes; ++i) {
+        hash ^= (uint32_t)data[i];
+        hash *= 16777619U;
+    }
+    return hash;
+}
+
+static void print_byte_prefix(const char *tag, const uint8_t *data, uint32_t bytes)
+{
+    uint32_t count = (bytes < 32U) ? bytes : 32U;
+    xil_printf("%s", tag);
+    for (uint32_t i = 0U; i < count; ++i) {
+        xil_printf(" %lu", (unsigned long)data[i]);
+    }
+    xil_printf("\r\n");
+}
+
 static inline void wr32(uint32_t base, uint32_t off, uint32_t v)
 {
     Xil_Out32(base + off, v);
@@ -1237,6 +1257,31 @@ static int pack_batch_ifm_stream(
         src = layer->ifm_u8 +
               (uint32_t)first_fy * layer->fm_w * layer->cin;
         memcpy((void *)(UINTPTR)address, src, total_bytes);
+#if ACCEL_TILE_PERF_TRACE
+        uint32_t src_hash = fnv1a32_bytes(src, total_bytes);
+        uint32_t dst_hash =
+            fnv1a32_bytes((const uint8_t *)(UINTPTR)address, total_bytes);
+        xil_printf(
+            "RAWIFM layer=%s oy=%lu h=%lu first_y=%d last_y=%d "
+            "pixels=%lu cache_words=%lu bytes=%lu src=0x%08lx dst=0x%08lx "
+            "src_fnv=0x%08lx dst_fnv=0x%08lx\r\n",
+            layer->name,
+            (unsigned long)tile->tile_oy_base,
+            (unsigned long)tile->tile_ofm_h,
+            first_fy,
+            last_fy,
+            (unsigned long)tile->tile_pixels,
+            (unsigned long)required_cache_words,
+            (unsigned long)total_bytes,
+            (unsigned long)(UINTPTR)src,
+            (unsigned long)address,
+            (unsigned long)src_hash,
+            (unsigned long)dst_hash);
+        print_byte_prefix(
+            "RAWIFM_PREFIX",
+            (const uint8_t *)(UINTPTR)address,
+            total_bytes);
+#endif
         stream->words = (uint64_t *)(UINTPTR)address;
         stream->bytes = total_bytes;
         stream->packets = packets;
@@ -2609,30 +2654,33 @@ static int configure_layer(const chain_layer_t *layer)
     wr32(ACCEL_BASE_ADDR, ACCEL_ACT_CFG, 2U);
     wr32(ACCEL_BASE_ADDR, ACCEL_IFM_ZP, layer->input_zero_point);
     wr32(ACCEL_BASE_ADDR, ACCEL_POOL_CFG, (layer->pool_stride << 2) | layer->pool_enable);
-    wr32(
-        ACCEL_BASE_ADDR,
-        ACCEL_TAIL_CONFIG,
+    uint32_t tail_config =
         ((ACCEL_RAW_HWC_COMPUTE_START_LEVEL & 0xffffU) << 16) |
-        (ACCEL_TAIL_CYCLES_OVERRIDE & 0xffffU));
-    wr32(
-        ACCEL_BASE_ADDR,
-        ACCEL_STREAM_CFG,
-        ACCEL_BATCH_STREAM ?
-            (ACCEL_STREAM_CFG_BATCH |
-             (layer_uses_raw_hwc(layer) ?
-              ACCEL_STREAM_CFG_RAW_HWC : 0U) |
-             (ACCEL_EARLY_DRAIN ? ACCEL_STREAM_CFG_EARLY_DRAIN : 0U) |
-             ((ACCEL_PASS_PREFETCH && layer_uses_raw_hwc(layer)) ?
-              ACCEL_STREAM_CFG_PASS_PREFETCH : 0U) |
-             ((ACCEL_PSUM_STREAM_OVERLAP && layer_uses_raw_hwc(layer)) ?
-              ACCEL_STREAM_CFG_PSUM_STREAM_OVERLAP : 0U) |
-             ((ACCEL_CONTINUOUS_PSUM && layer_uses_raw_hwc(layer)) ?
-              ACCEL_STREAM_CFG_CONTINUOUS_PSUM : 0U) |
-             ((ACCEL_COLUMN_PSUM && layer_uses_raw_hwc(layer)) ?
-              ACCEL_STREAM_CFG_COLUMN_PSUM : 0U) |
-             ((ACCEL_DURING_COMPUTE_PREFETCH && layer_uses_raw_hwc(layer)) ?
-              ACCEL_STREAM_CFG_DURING_COMPUTE_PREFETCH : 0U)) :
-            0U);
+        (ACCEL_TAIL_CYCLES_OVERRIDE & 0xffffU);
+    uint32_t stream_cfg = ACCEL_BATCH_STREAM ?
+        (ACCEL_STREAM_CFG_BATCH |
+         (layer_uses_raw_hwc(layer) ?
+          ACCEL_STREAM_CFG_RAW_HWC : 0U) |
+         (ACCEL_EARLY_DRAIN ? ACCEL_STREAM_CFG_EARLY_DRAIN : 0U) |
+         ((ACCEL_PASS_PREFETCH && layer_uses_raw_hwc(layer)) ?
+          ACCEL_STREAM_CFG_PASS_PREFETCH : 0U) |
+         ((ACCEL_PSUM_STREAM_OVERLAP && layer_uses_raw_hwc(layer)) ?
+          ACCEL_STREAM_CFG_PSUM_STREAM_OVERLAP : 0U) |
+         ((ACCEL_CONTINUOUS_PSUM && layer_uses_raw_hwc(layer)) ?
+          ACCEL_STREAM_CFG_CONTINUOUS_PSUM : 0U) |
+         ((ACCEL_COLUMN_PSUM && layer_uses_raw_hwc(layer)) ?
+          ACCEL_STREAM_CFG_COLUMN_PSUM : 0U) |
+         ((ACCEL_DURING_COMPUTE_PREFETCH && layer_uses_raw_hwc(layer)) ?
+          ACCEL_STREAM_CFG_DURING_COMPUTE_PREFETCH : 0U)) :
+        0U;
+    wr32(ACCEL_BASE_ADDR, ACCEL_TAIL_CONFIG, tail_config);
+    wr32(ACCEL_BASE_ADDR, ACCEL_STREAM_CFG, stream_cfg);
+    xil_printf(
+        "LAYERCFG layer=%s stream_cfg=0x%08lx tail_cfg=0x%08lx raw_hwc=%lu\r\n",
+        layer->name,
+        (unsigned long)stream_cfg,
+        (unsigned long)tail_config,
+        (unsigned long)layer_uses_raw_hwc(layer));
     wr32(
         ACCEL_BASE_ADDR,
         ACCEL_PASSTRACE_SELECT,
@@ -2769,6 +2817,11 @@ static int run_layer(chain_layer_t *layer)
                  (unsigned long)total_weight, (unsigned long)total_ifm);
     XTime_GetTime(&begin);
     if (compare_layer_ofm(layer) != 0) {
+        XTime_GetTime(&layer_end);
+        layer_perf.layer_total = layer_end - layer_begin;
+        xil_printf("%s compare failed; dumping accumulated hardware counters\r\n",
+                   layer->name);
+        print_layer_perf(layer);
         return -1;
     }
     XTime_GetTime(&end);

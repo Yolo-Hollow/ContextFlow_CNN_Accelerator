@@ -978,6 +978,65 @@ This is functional but not a regression target because it is slower than the
 RawHwcConv4/5/6/8 setting (`282.951 ms`). Use it only for diagnostics unless
 the raw-HWC loader/replay format changes.
 
+### Optimized single-core A53 INT8 CPU baseline
+
+Purpose:
+
+- Provide a CPU-only software baseline for the single-scale YOLOv3-tiny path.
+- Keep the comparison independent of PL accelerator, AXI DMA, AXI-Lite
+  registers, `STREAM_CFG`, and hardware tile scheduling.
+- Reuse the same RTL-semantic Conv0->Conv9 golden data and software YOLO decode
+  path used by the hardware chain.
+
+Build:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/manual_build_cpu_yolo_baseline.ps1
+```
+
+Output:
+
+```text
+build_vitis_2022_2/conv_accel_r18_c16_smoke/manual_build/cpu_yolo_baseline.elf
+```
+
+Checks:
+
+- Run the ELF on Cortex-A53 #0 through the existing XSCT download flow with
+  `-skip_bit` or `-fast`; no PL programming is required for this CPU-only path.
+- Require every `CPU_LAYER` line to report `golden_mismatch=0`.
+- Compare the UART `DET` output against the Conv9 decode golden with
+  `tools/golden/compare_yolo_uart.py`.
+
+Board result on `COM8`:
+
+```text
+first correctness-oriented OIHW C baseline:
+  CPU_TOTAL ~= 50.33 s
+
+cache + -O3 only:
+  CPU_TOTAL ~= 49.97 s
+
+KCO scalar optimized C:
+  CPU_TOTAL ~= 2.52 s
+
+current default build:
+  log=build_vitis_2022_2/cpu_yolo_board_logs/20260617_114841_cpu_yolo_kco_scalar_a53_COM8.log
+  CPU_TOTAL us=2540175
+  layer_us=2506628
+  decode_us=19530
+  all layer golden_mismatch=0
+  DET with_mask score=0.357321
+  compare_yolo_uart.py PASS, count=1
+```
+
+The current default uses KCO weight layout (`[ci][ky][kx][out_channel]`) and
+single-thread optimized scalar C with `-O3 -mcpu=cortex-a53`. The optional
+`-UseNeon` build was tested but measured slower (`CPU_TOTAL ~= 2.78 s`) because
+the simple row-accumulate intrinsic path adds more accumulator load/store
+traffic than it saves on Cortex-A53. Keep scalar KCO as the software baseline
+unless a blocked NEON microkernel or multi-core runtime is implemented.
+
 The long combined xsim run still did not progress past design load in this
 workspace session, but the full-program board runs validated the combined
 full-tile, early-drain, pass-prefetch, PSUM-overlap, and continuous-PSUM mode.

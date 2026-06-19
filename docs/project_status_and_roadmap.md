@@ -1518,3 +1518,213 @@ drain_residual = STAGE_DRAIN
   `DuringComputePrefetch` disabled. If timing still closes, this is the next
   bitstream to compare against the current `Conv4/5/6/8` raw-HWC `282.951 ms`
   run.
+
+## 27. 2026-06-17 optimized single-core A53 INT8 CPU baseline
+
+- A CPU-only single-scale YOLOv3-tiny baseline was added for Cortex-A53 board
+  comparison. It runs Conv0 through Conv9, software YOLO decode, thresholding,
+  class-aware NMS, and DET printing without using the PL accelerator, AXI DMA,
+  AXI-Lite registers, `STREAM_CFG`, or hardware tile scheduling.
+- The baseline is built as an independent Vitis bare-metal ELF:
+
+  ```powershell
+  powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/manual_build_cpu_yolo_baseline.ps1
+  ```
+
+  The output ELF is:
+
+  ```text
+  build_vitis_2022_2/conv_accel_r18_c16_smoke/manual_build/cpu_yolo_baseline.elf
+  ```
+
+- The implementation uses the same RTL-semantic chain golden data and
+  `yolo_decode.c`. The generated CPU data header stores weights in KCO layout
+  (`[ci][ky][kx][out_channel]`), so each output pixel reuses one centered IFM
+  value while accumulating all output channels. This replaced the first
+  correctness-oriented OIHW loop that recomputed each output channel
+  independently.
+- Board validation on `COM8`:
+
+  ```text
+  original simple C baseline:  CPU_TOTAL ~= 50.33 s
+  cache + -O3 only:            CPU_TOTAL ~= 49.97 s
+  KCO scalar optimized C:      CPU_TOTAL ~=  2.52 s
+  current default A53 build:   CPU_TOTAL ~=  2.54 s
+  optional NEON attempt:       CPU_TOTAL ~=  2.78 s
+  ```
+
+  The hand-written NEON row-accumulate path is kept behind the optional
+  `-UseNeon` build switch but is not the default because it was slower on A53
+  than the optimized scalar KCO loop.
+- Current default board result:
+
+  ```text
+  log=build_vitis_2022_2/cpu_yolo_board_logs/20260617_114841_cpu_yolo_kco_scalar_a53_COM8.log
+  CPU_TOTAL us=2540175
+  layer_us=2506628
+  decode_us=19530
+  all CPU_LAYER golden_mismatch=0
+  DET with_mask score=0.357321
+  compare_yolo_uart.py PASS, count=1
+  ```
+
+- The largest remaining CPU layer is still Conv6:
+
+  ```text
+  head_conv6_3x3 us=887010
+  ```
+
+  This optimized single-core A53 INT8 baseline is now the recommended software
+  baseline for PL speedup comparisons. Further CPU optimization should target a
+  proper blocked microkernel or multi-core A53 execution rather than the tested
+  simple NEON accumulator.
+
+## 28. 2026-06-18 raw-HWC replay latency diagnosis
+
+- Conv4 full-tile board failure has been narrowed away from ping-pong IFM FIFO,
+  tail cycles, and software input packaging:
+
+  ```text
+  New 64K URAM bit with IFM_PINGPONG_FIFO_ENABLE=0:
+    Conv4 still fails at the first output bytes.
+
+  Same ELF on historical b_hwcfulltile_22 URAM bit:
+    Conv4 full compare passes.
+  ```
+
+  This means raw-HWC URAM itself is not the problem. The likely hardware-side
+  suspect is the fast raw-HWC replay path added after the historical passing
+  bitstream, or its interaction with the current cache geometry/synthesis.
+
+- `axis_hwc_tile_cache` now has diagnostic replay parameters:
+
+  ```text
+  HWC_REPLAY_PIPELINE_ENABLE
+    1: current fast replay, can issue/read every cycle.
+    0: legacy conservative replay, waits for read data before vector_valid.
+
+  CACHE_EXTRA_READ_LATENCY
+    Simulation/diagnostic data-path delay injection for the cache bank output.
+
+  HWC_REPLAY_EXTRA_WAIT_CYCLES
+    Wait-only replay valid delay for legacy mode. This is the safer hardware
+    knob if an implemented URAM path presents data later than the RTL wrapper
+    assumed, because it does not insert an extra data-path register.
+  ```
+
+  The parameters are connected through `conv_accel_core_axi_lite_axis_stream`
+  and the xsim/Vivado build scripts.
+
+- RTL xsim results:
+
+  ```text
+  tb_axis_hwc_tile_cache, fast replay, latency0:
+    261 pass, 0 fail
+
+  tb_axis_hwc_tile_cache, fast replay, CACHE_EXTRA_READ_LATENCY=1:
+    expected failure, first replay vector reads stale/zero data
+    227 pass, 34 fail
+
+  tb_axis_hwc_tile_cache, legacy replay, CACHE_EXTRA_READ_LATENCY=1:
+    261 pass, 0 fail
+
+  tb_axis_hwc_tile_cache, legacy replay, HWC_REPLAY_EXTRA_WAIT_CYCLES=1:
+    261 pass, 0 fail
+  ```
+
+- Conv4 exact RTL xsim results, using full-tile COUT256, COLS=8, URAM=1, and
+  IFM ping-pong disabled:
+
+  ```text
+  fast replay, latency0:
+    43286 pass, 0 fail
+
+  fast replay, CACHE_EXTRA_READ_LATENCY=1:
+    expected failure
+    first compare failures start at tile0 pixel0 cout0
+    25243 pass, 18043 fail
+
+  legacy replay, CACHE_EXTRA_READ_LATENCY=1:
+    43286 pass, 0 fail
+  ```
+
+- Interpretation: ordinary RTL simulation still passes because the cache model
+  is a one-cycle synchronous memory. Once one extra read-data cycle is injected,
+  the fast replay path immediately misaligns vector data and metadata; the
+  legacy replay path covers it. The next board diagnostic should therefore
+  synthesize a conservative replay bitstream, preferably first with
+  `HWC_REPLAY_PIPELINE_ENABLE=0` and, if needed, a second wait-only variant with
+  `HWC_REPLAY_EXTRA_WAIT_CYCLES=1`.
+
+## 29. 2026-06-18 board replay/timing diagnostic follow-up
+
+- Built and tested the conservative replay diagnostic bitstream:
+
+  ```text
+  build_dir: D:/b/rlw1
+  HWC_CACHE_DEPTH=65536
+  HWC_CACHE_STRIPES=4
+  HWC_CACHE_USE_URAM=1
+  HWC_REPLAY_PIPELINE_ENABLE=0
+  HWC_REPLAY_EXTRA_WAIT_CYCLES=1
+  IFM_PINGPONG_FIFO_ENABLE=0
+  PL clock: 100 MHz
+  ```
+
+  Implementation completed and met timing:
+
+  ```text
+  WNS=0.033 ns
+  WHS=0.010 ns
+  route errors=0
+  URAM=32/64
+  BRAM tile=63/144
+  DSP=184
+  ```
+
+  Board result on COM8 still failed at Conv4 tile0:
+
+  ```text
+  log=D:/b/rlw1/board_smoke_logs/20260618_041228_conv0_conv9_batch_chain_COM8.log
+  conv4_pool batch tile[0] oy=0 h=26 b=16 w=1024 i=1
+  conv4_pool mismatch[0] byte=1 pixel=0 oy=0 ox=0 oc=1 got=15 exp=17
+  conv4_pool mismatch_count=16195 max_abs_diff=46 total=43264
+  ```
+
+- To separate logic from marginal 100 MHz timing, built the same conservative
+  replay design at 80 MHz:
+
+  ```text
+  build_dir: D:/b/rlw80
+  PL clock: 80 MHz
+  HWC_REPLAY_PIPELINE_ENABLE=0
+  HWC_REPLAY_EXTRA_WAIT_CYCLES=1
+  IFM_PINGPONG_FIFO_ENABLE=0
+  ```
+
+  Implementation margin improved substantially:
+
+  ```text
+  WNS=2.117 ns
+  WHS=0.011 ns
+  route errors=0
+  ```
+
+  Board result remained the same:
+
+  ```text
+  log=D:/b/rlw80/board_smoke_logs/20260618_045815_conv0_conv9_batch_chain_COM8.log
+  conv4_pool batch tile[0] oy=0 h=26 b=16 w=1024 i=1
+  conv4_pool mismatch[0] byte=1 pixel=0 oy=0 ox=0 oc=1 got=15 exp=17
+  conv4_pool mismatch_count=16195 max_abs_diff=46 total=43264
+  ```
+
+- Conclusion: the board failure is not explained by fast replay issuing one
+  read per cycle, not fixed by adding a replay wait cycle, not caused by
+  ping-pong IFM FIFO, and not likely to be a simple 100 MHz timing-margin issue.
+  The next highest-value debug path is to diff the current raw-HWC/vector IFM
+  RTL against the historical passing `b_hwcfulltile_22` design, with emphasis on
+  cache addressing/striping, vector IFM FIFO semantics, and Conv4 full-tile
+  COUT256 pass control. Add board-visible Conv4 tile0 signatures before compare
+  exits, because the current failure exits before RAWSTAT/PASSPERF for Conv4 is
+  printed.

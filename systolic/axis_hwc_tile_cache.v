@@ -58,7 +58,8 @@ module axis_hwc_tile_cache_bank #(
     parameter CACHE_AW = 12,
     parameter CACHE_DEPTH = (1 << CACHE_AW),
     parameter CACHE_STRIPES = 1,
-    parameter USE_URAM = 0
+    parameter USE_URAM = 0,
+    parameter EXTRA_READ_LATENCY = 0
 ) (
     input clk,
     input rst,
@@ -72,9 +73,13 @@ module axis_hwc_tile_cache_bank #(
 );
     localparam STRIPE_DEPTH =
         (CACHE_DEPTH + CACHE_STRIPES - 1) / CACHE_STRIPES;
+    wire [71:0] rd_data_raw;
+    reg [71:0] rd_data_d1;
+    reg [71:0] rd_data_d2;
 
     generate
         if (CACHE_STRIPES == 4) begin : striped_storage
+            localparam STRIPE_ADDR_W = CACHE_AW - 2;
             wire [71:0] stripe_rd_data [0:3];
             reg [1:0] rd_stripe;
 
@@ -88,7 +93,7 @@ module axis_hwc_tile_cache_bank #(
             genvar stripe;
             for (stripe = 0; stripe < 4; stripe = stripe + 1) begin : stripes
                 axis_hwc_tile_cache_slice #(
-                    .ADDR_W(CACHE_AW),
+                    .ADDR_W(STRIPE_ADDR_W),
                     .DEPTH(STRIPE_DEPTH),
                     .USE_URAM(USE_URAM)
                 ) u_slice (
@@ -96,19 +101,74 @@ module axis_hwc_tile_cache_bank #(
                     .rst(rst),
                     .wr_en(wr_en && (wr_addr[1:0] == stripe)),
                     .wr_byte_en(wr_byte_en),
-                    .wr_addr(wr_addr >> 2),
+                    .wr_addr(wr_addr[CACHE_AW-1:2]),
                     .wr_data(wr_data),
                     .rd_en(rd_en && (rd_addr[1:0] == stripe)),
-                    .rd_addr(rd_addr >> 2),
+                    .rd_addr(rd_addr[CACHE_AW-1:2]),
                     .rd_data(stripe_rd_data[stripe])
                 );
             end
 
-            assign rd_data =
+            assign rd_data_raw =
                 (rd_stripe == 2'd0) ? stripe_rd_data[0] :
                 (rd_stripe == 2'd1) ? stripe_rd_data[1] :
                 (rd_stripe == 2'd2) ? stripe_rd_data[2] :
                                       stripe_rd_data[3];
+        end else if (CACHE_STRIPES == 16) begin : striped16_storage
+            localparam STRIPE_ADDR_W = CACHE_AW - 4;
+            wire [71:0] stripe_rd_data [0:15];
+            reg [3:0] rd_stripe;
+            reg [71:0] rd_data_mux;
+
+            always @(posedge clk) begin
+                if (rst)
+                    rd_stripe <= 4'd0;
+                else if (rd_en)
+                    rd_stripe <= rd_addr[3:0];
+            end
+
+            genvar stripe16;
+            for (stripe16 = 0; stripe16 < 16; stripe16 = stripe16 + 1) begin : stripes
+                localparam [3:0] STRIPE_IDX = stripe16[3:0];
+                axis_hwc_tile_cache_slice #(
+                    .ADDR_W(STRIPE_ADDR_W),
+                    .DEPTH(STRIPE_DEPTH),
+                    .USE_URAM(USE_URAM)
+                ) u_slice (
+                    .clk(clk),
+                    .rst(rst),
+                    .wr_en(wr_en && (wr_addr[3:0] == STRIPE_IDX)),
+                    .wr_byte_en(wr_byte_en),
+                    .wr_addr(wr_addr[CACHE_AW-1:4]),
+                    .wr_data(wr_data),
+                    .rd_en(rd_en && (rd_addr[3:0] == STRIPE_IDX)),
+                    .rd_addr(rd_addr[CACHE_AW-1:4]),
+                    .rd_data(stripe_rd_data[stripe16])
+                );
+            end
+
+            always @* begin
+                case (rd_stripe)
+                    4'd0:  rd_data_mux = stripe_rd_data[0];
+                    4'd1:  rd_data_mux = stripe_rd_data[1];
+                    4'd2:  rd_data_mux = stripe_rd_data[2];
+                    4'd3:  rd_data_mux = stripe_rd_data[3];
+                    4'd4:  rd_data_mux = stripe_rd_data[4];
+                    4'd5:  rd_data_mux = stripe_rd_data[5];
+                    4'd6:  rd_data_mux = stripe_rd_data[6];
+                    4'd7:  rd_data_mux = stripe_rd_data[7];
+                    4'd8:  rd_data_mux = stripe_rd_data[8];
+                    4'd9:  rd_data_mux = stripe_rd_data[9];
+                    4'd10: rd_data_mux = stripe_rd_data[10];
+                    4'd11: rd_data_mux = stripe_rd_data[11];
+                    4'd12: rd_data_mux = stripe_rd_data[12];
+                    4'd13: rd_data_mux = stripe_rd_data[13];
+                    4'd14: rd_data_mux = stripe_rd_data[14];
+                    default: rd_data_mux = stripe_rd_data[15];
+                endcase
+            end
+
+            assign rd_data_raw = rd_data_mux;
         end else begin : unstriped_storage
             axis_hwc_tile_cache_slice #(
                 .ADDR_W(CACHE_AW),
@@ -123,10 +183,25 @@ module axis_hwc_tile_cache_bank #(
                 .wr_data(wr_data),
                 .rd_en(rd_en),
                 .rd_addr(rd_addr),
-                .rd_data(rd_data)
+                .rd_data(rd_data_raw)
             );
         end
     endgenerate
+
+    always @(posedge clk) begin
+        if (rst) begin
+            rd_data_d1 <= 72'd0;
+            rd_data_d2 <= 72'd0;
+        end else begin
+            rd_data_d1 <= rd_data_raw;
+            rd_data_d2 <= rd_data_d1;
+        end
+    end
+
+    assign rd_data =
+        (EXTRA_READ_LATENCY == 0) ? rd_data_raw :
+        (EXTRA_READ_LATENCY == 1) ? rd_data_d1 :
+                                    rd_data_d2;
 endmodule
 
 // Experimental raw-HWC IFM tile cache for native 1x1 and directed 3x3 tiles.
@@ -158,7 +233,10 @@ module axis_hwc_tile_cache #(
     parameter CACHE_AW = 12,
     parameter CACHE_DEPTH = (1 << CACHE_AW),
     parameter CACHE_STRIPES = 1,
-    parameter CACHE_USE_URAM = 0
+    parameter CACHE_USE_URAM = 0,
+    parameter HWC_REPLAY_PIPELINE_ENABLE = 1,
+    parameter CACHE_EXTRA_READ_LATENCY = 0,
+    parameter HWC_REPLAY_EXTRA_WAIT_CYCLES = 0
 ) (
     input  clk,
     input  rst,
@@ -222,6 +300,8 @@ module axis_hwc_tile_cache #(
     reg replay_active;
     reg replay_valid;
     reg req_armed;
+    reg replay_read_en_legacy;
+    reg [1:0] replay_read_wait;
     reg [15:0] replay_rd_pixel;
     reg [15:0] replay_out_pixel;
     reg [8:0] replay_rd_rel_y;
@@ -270,12 +350,25 @@ module axis_hwc_tile_cache #(
     wire replay_last_out_pixel = (replay_out_pixel + 1'b1 == num_pixels);
     wire replay_rd_done = (replay_rd_pixel == num_pixels);
     wire replay_output_fire = replay_valid && vector_ready;
-    wire replay_can_issue_read =
-        replay_active && !replay_rd_done &&
+    wire replay_pipe_mode = (HWC_REPLAY_PIPELINE_ENABLE != 0);
+    wire replay_can_issue_read_pipe =
+        replay_pipe_mode && replay_active && !replay_rd_done &&
         (!replay_valid || vector_ready);
-    wire replay_read_en = replay_can_issue_read;
+    wire replay_read_en = replay_pipe_mode ?
+        replay_can_issue_read_pipe : replay_read_en_legacy;
     wire [15:0] replay_pixel = replay_out_pixel;
     wire source_byte_done = kernel_1x1 || (load_kernel_pos == 4'd8);
+    localparam integer CACHE_EXTRA_READ_LATENCY_CLAMP =
+        (CACHE_EXTRA_READ_LATENCY <= 0) ? 0 :
+        (CACHE_EXTRA_READ_LATENCY == 1) ? 1 : 2;
+    localparam integer HWC_REPLAY_EXTRA_WAIT_CLAMP =
+        (HWC_REPLAY_EXTRA_WAIT_CYCLES <= 0) ? 0 :
+        (HWC_REPLAY_EXTRA_WAIT_CYCLES == 1) ? 1 : 2;
+    localparam integer REPLAY_LEGACY_WAIT_INIT_INT =
+        1 + CACHE_EXTRA_READ_LATENCY_CLAMP + HWC_REPLAY_EXTRA_WAIT_CLAMP;
+    wire [1:0] replay_legacy_wait_init =
+        (REPLAY_LEGACY_WAIT_INIT_INT <= 1) ? 2'd1 :
+        (REPLAY_LEGACY_WAIT_INIT_INT == 2) ? 2'd2 : 2'd3;
 
     wire [1:0] load_ky = load_kernel_pos / 3;
     wire [1:0] load_kx = load_kernel_pos % 3;
@@ -405,7 +498,8 @@ module axis_hwc_tile_cache #(
         .CACHE_AW(CACHE_AW),
         .CACHE_DEPTH(CACHE_DEPTH),
         .CACHE_STRIPES(CACHE_STRIPES),
-        .USE_URAM(CACHE_USE_URAM)
+        .USE_URAM(CACHE_USE_URAM),
+        .EXTRA_READ_LATENCY(CACHE_EXTRA_READ_LATENCY)
     ) u_cache_group0 (
         .clk(clk),
         .rst(rst || stream_reset),
@@ -422,7 +516,8 @@ module axis_hwc_tile_cache #(
         .CACHE_AW(CACHE_AW),
         .CACHE_DEPTH(CACHE_DEPTH),
         .CACHE_STRIPES(CACHE_STRIPES),
-        .USE_URAM(CACHE_USE_URAM)
+        .USE_URAM(CACHE_USE_URAM),
+        .EXTRA_READ_LATENCY(CACHE_EXTRA_READ_LATENCY)
     ) u_cache_group1 (
         .clk(clk),
         .rst(rst || stream_reset),
@@ -456,6 +551,8 @@ module axis_hwc_tile_cache #(
             replay_active <= 1'b0;
             replay_valid <= 1'b0;
             req_armed <= 1'b1;
+            replay_read_en_legacy <= 1'b0;
+            replay_read_wait <= 2'd0;
             replay_rd_pixel <= 16'd0;
             replay_out_pixel <= 16'd0;
             replay_rd_rel_y <= 9'd0;
@@ -484,8 +581,15 @@ module axis_hwc_tile_cache #(
         end else begin
             packet_done <= 1'b0;
             cache_wr_en_q <= 1'b0;
-            replay_valid <= (replay_valid && !replay_output_fire) ||
-                            replay_can_issue_read;
+            replay_read_en_legacy <= 1'b0;
+            if (replay_pipe_mode) begin
+                replay_valid <= (replay_valid && !replay_output_fire) ||
+                                replay_can_issue_read_pipe;
+            end else if (replay_read_wait != 2'd0) begin
+                replay_read_wait <= replay_read_wait - 1'b1;
+                if (replay_read_wait == 2'd1)
+                    replay_valid <= 1'b1;
+            end
 
             if (stream_reset) begin
                 load_active <= 1'b1;
@@ -502,6 +606,8 @@ module axis_hwc_tile_cache #(
                 replay_active <= 1'b0;
                 replay_valid <= 1'b0;
                 req_armed <= 1'b1;
+                replay_read_en_legacy <= 1'b0;
+                replay_read_wait <= 2'd0;
                 replay_rd_pixel <= 16'd0;
                 replay_out_pixel <= 16'd0;
                 replay_rd_rel_y <= 9'd0;
@@ -525,7 +631,7 @@ module axis_hwc_tile_cache #(
                 load_active_cycles <= load_active_cycles + 1'b1;
             if (beat_pending)
                 load_unpack_cycles <= load_unpack_cycles + 1'b1;
-            if (replay_active || replay_valid)
+            if (replay_active || replay_valid || replay_read_wait != 2'd0)
                 replay_active_cycles <= replay_active_cycles + 1'b1;
 
             if (!fill_req)
@@ -543,7 +649,13 @@ module axis_hwc_tile_cache #(
                 replay_out_rel_y <= 9'd0;
                 replay_out_x <= 9'd0;
                 replay_mem_addr <= replay_chunk * num_pixels;
-                replay_out_lane_valid <= {ROWS{1'b0}};
+                if (replay_pipe_mode) begin
+                    replay_out_lane_valid <= {ROWS{1'b0}};
+                end else begin
+                    replay_read_en_legacy <= 1'b1;
+                    replay_read_wait <= replay_legacy_wait_init;
+                    replay_out_lane_valid <= replay_start_lane_valid;
+                end
             end
 
             if (axis_fire) begin
@@ -612,7 +724,7 @@ module axis_hwc_tile_cache #(
                 end
             end
 
-            if (replay_can_issue_read) begin
+            if (replay_can_issue_read_pipe) begin
                 replay_out_pixel <= replay_rd_pixel;
                 replay_out_rel_y <= replay_rd_rel_y;
                 replay_out_x <= replay_rd_x;
@@ -638,6 +750,19 @@ module axis_hwc_tile_cache #(
                     replay_active <= 1'b0;
                     replay_valid <= 1'b0;
                     packet_done <= 1'b1;
+                end else if (!replay_pipe_mode) begin
+                    replay_out_pixel <= replay_out_pixel + 1'b1;
+                    replay_valid <= 1'b0;
+                    replay_read_en_legacy <= 1'b1;
+                    replay_read_wait <= replay_legacy_wait_init;
+                    replay_out_lane_valid <= replay_start_lane_valid;
+                    if (replay_out_x + 1'b1 == ofm_w) begin
+                        replay_out_x <= 9'd0;
+                        replay_out_rel_y <= replay_out_rel_y + 1'b1;
+                    end else begin
+                        replay_out_x <= replay_out_x + 1'b1;
+                    end
+                    replay_mem_addr <= replay_mem_addr + 1'b1;
                 end
             end
         end

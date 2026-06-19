@@ -16,7 +16,8 @@ module systolic_top_feeder #(
     parameter FM_W_MAX = 416,
     parameter FM_H_MAX = 416,
     parameter IFM_BANKS = 5,
-    parameter TAIL_CYCLES_CONFIG = `SYSTOLIC_TAIL_CYCLES_CONFIG
+    parameter TAIL_CYCLES_CONFIG = `SYSTOLIC_TAIL_CYCLES_CONFIG,
+    parameter IFM_PINGPONG_FIFO_ENABLE = 1
 ) (
     input  clk,
     input  rst,
@@ -24,10 +25,12 @@ module systolic_top_feeder #(
     input  feeder_start,
     output feeder_done,
     output feeder_busy,
+    input  feeder_prefetch,
     output feeder_fill_req,
     output [8:0] feeder_fill_fy,
     input  kernel_1x1,
     input  raw_hwc_mode,
+    input  ifm_pingpong_enable,
 
     input  compute_start,
     input  [15:0] num_pixels,
@@ -110,6 +113,17 @@ module systolic_top_feeder #(
         raw_hwc_compute_start_level;
     wire vector_push_fire = vector_ifm_valid && vector_ifm_ready;
     wire raw_overlap_enabled = raw_hwc_mode && (vector_start_level != 16'd0);
+    reg  ifm_rd_bank;
+    reg  ifm_wr_bank;
+    reg  prefetch_bank_pending;
+    reg  prefetch_bank;
+    reg  compute_inflight;
+    reg [15:0] ifm_bank_count0;
+    reg [15:0] ifm_bank_count1;
+    wire pingpong_active =
+        (IFM_PINGPONG_FIFO_ENABLE != 0) && vector_mode && ifm_pingpong_enable;
+    wire feeder_start_prefetch = pingpong_active && feeder_prefetch;
+    wire feeder_start_bank = feeder_start_prefetch ? ~ifm_rd_bank : ifm_rd_bank;
 
     assign feeder_done = vector_mode ? vector_feeder_done : line_feeder_done;
     assign feeder_compute_ready =
@@ -131,15 +145,53 @@ module systolic_top_feeder #(
             vector_fill_req <= 1'b0;
             vector_feeder_done <= 1'b0;
             vector_push_count <= 16'd0;
+            ifm_rd_bank <= 1'b0;
+            ifm_wr_bank <= 1'b0;
+            prefetch_bank_pending <= 1'b0;
+            prefetch_bank <= 1'b0;
+            compute_inflight <= 1'b0;
+            ifm_bank_count0 <= 16'd0;
+            ifm_bank_count1 <= 16'd0;
         end else begin
             vector_feeder_done <= 1'b0;
+            if (compute_start) begin
+                compute_inflight <= 1'b1;
+                if (pingpong_active && prefetch_bank_pending) begin
+                    ifm_rd_bank <= prefetch_bank;
+                    prefetch_bank_pending <= 1'b0;
+                end
+            end
+            if (compute_done)
+                compute_inflight <= 1'b0;
             if (vector_mode && feeder_start) begin
                 vector_fill_req <= 1'b1;
                 vector_push_count <= 16'd0;
+                ifm_wr_bank <= feeder_start_bank;
+                if (pingpong_active && feeder_prefetch) begin
+                    prefetch_bank_pending <= 1'b1;
+                    prefetch_bank <= feeder_start_bank;
+                end else if (!pingpong_active) begin
+                    prefetch_bank_pending <= 1'b0;
+                    prefetch_bank <= 1'b0;
+                    ifm_wr_bank <= 1'b0;
+                end
+                if (feeder_start_bank) begin
+                    ifm_bank_count1 <= 16'd0;
+                end else begin
+                    ifm_bank_count0 <= 16'd0;
+                end
             end
             if (vector_mode && vector_fill_req && vector_push_fire &&
-                vector_push_count != 16'hffff)
+                vector_push_count != 16'hffff) begin
                 vector_push_count <= vector_push_count + 16'd1;
+                if (ifm_wr_bank) begin
+                    if (ifm_bank_count1 != 16'hffff)
+                        ifm_bank_count1 <= ifm_bank_count1 + 16'd1;
+                end else begin
+                    if (ifm_bank_count0 != 16'hffff)
+                        ifm_bank_count0 <= ifm_bank_count0 + 16'd1;
+                end
+            end
             if (vector_mode && vector_fill_req && vector_packet_done) begin
                 vector_fill_req <= 1'b0;
                 vector_feeder_done <= 1'b1;
@@ -147,6 +199,13 @@ module systolic_top_feeder #(
             if (!vector_mode) begin
                 vector_fill_req <= 1'b0;
                 vector_push_count <= 16'd0;
+                ifm_rd_bank <= 1'b0;
+                ifm_wr_bank <= 1'b0;
+                prefetch_bank_pending <= 1'b0;
+                prefetch_bank <= 1'b0;
+                compute_inflight <= 1'b0;
+                ifm_bank_count0 <= 16'd0;
+                ifm_bank_count1 <= 16'd0;
             end
         end
     end
@@ -201,6 +260,7 @@ module systolic_top_feeder #(
         .WGT_FIFO_DEPTH(WGT_FIFO_DEPTH), .WGT_FIFO_AW(WGT_FIFO_AW),
         .PSUM_FIFO_DEPTH(PSUM_FIFO_DEPTH), .PSUM_FIFO_AW(PSUM_FIFO_AW),
         .TAIL_CYCLES_CONFIG(TAIL_CYCLES_CONFIG),
+        .IFM_PINGPONG_FIFO_ENABLE(IFM_PINGPONG_FIFO_ENABLE),
         .USE_DMA_IFM(0)
     ) u_core (
         .clk(clk),
@@ -220,6 +280,9 @@ module systolic_top_feeder #(
             {ROWS{vector_ifm_valid && vector_ifm_ready}} :
             {ROWS{feeder_ifm_valid}}),
         .ifm_fifo_wr_data(vector_mode ? vector_ifm_data : feeder_ifm_data),
+        .ifm_pingpong_enable(pingpong_active),
+        .ifm_wr_bank(ifm_wr_bank),
+        .ifm_rd_bank(ifm_rd_bank),
         .ifm_fifo_full_legacy(ifm_fifo_full_legacy),
         .dma_bank_wr_en(5'd0),
         .dma_wr_x(9'd0),

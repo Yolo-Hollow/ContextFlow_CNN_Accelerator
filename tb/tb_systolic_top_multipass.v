@@ -55,6 +55,7 @@ module tb_systolic_top_multipass;
         .hold_compute_count_on_stall(1'b0),
         .num_pixels(num_pixels), .done(done),
         .ifm_fifo_wr_en(ifm_wr_en), .ifm_fifo_wr_data(ifm_wr_data),
+        .ifm_pingpong_enable(1'b0), .ifm_wr_bank(1'b0), .ifm_rd_bank(1'b0),
         .ifm_fifo_full_legacy(ifm_full),
         .dma_bank_wr_en(dma_bank_wr_en), .dma_wr_x(dma_wr_x), .dma_wr_fy(dma_wr_fy),
         .dma_wr_data(dma_wr_data), .dma_line_advance(dma_line_advance),
@@ -63,8 +64,12 @@ module tb_systolic_top_multipass;
         .bias_wr_addr(bias_addr), .bias_wr_data(bias_data), .bias_wr_en(bias_en),
         .is_first_pass(is_first), .psum_top_ext(psum_top_ext), .use_ext_psum(use_ext),
         .psum_stream_data({COLS*2*PSUM_W{1'b0}}), .psum_stream_valid(1'b0), .psum_stream_compute_ready(1'b1), .use_psum_stream(1'b0),
+        .psum_column_stream_data({COLS*2*PSUM_W{1'b0}}),
+        .psum_column_stream_valid({COLS{1'b0}}),
+        .use_column_psum_stream(1'b0),
         .wgt_fifo_wr_en(wgt_wr_en), .wgt_fifo_wr_data(wgt_wr_data), .wgt_fifo_full(wgt_full),
-        .psum_fifo_rd_en(psum_rd_en), .psum_fifo_rd_data(psum_rd_data), .psum_fifo_empty(psum_empty)
+        .psum_fifo_rd_en(psum_rd_en), .psum_fifo_rd_data(psum_rd_data),
+        .psum_fifo_empty(psum_empty), .psum_fifo_wr_en_dbg()
     );
 
     always #5 clk = ~clk;

@@ -34,7 +34,8 @@ module conv_layer_top_stream #(
     parameter OFM_ADDR_W = 24,
     parameter OFM_FIFO_DEPTH = 32,
     parameter OFM_FIFO_AW = 5,
-    parameter TAIL_CYCLES_CONFIG = `SYSTOLIC_TAIL_CYCLES_CONFIG
+    parameter TAIL_CYCLES_CONFIG = `SYSTOLIC_TAIL_CYCLES_CONFIG,
+    parameter IFM_PINGPONG_FIFO_ENABLE = 1
 ) (
     input  clk,
     input  rst,
@@ -209,6 +210,7 @@ module conv_layer_top_stream #(
     wire sched_bias_start;
     wire sched_weight_start;
     wire sched_feeder_start;
+    wire sched_feeder_prefetch;
     wire sched_compute_start;
     wire sched_drain_start;
     wire [13:0] sched_feeder_pass_base_k;
@@ -346,6 +348,7 @@ module conv_layer_top_stream #(
         .bias_load_start(sched_bias_start), .bias_load_done(bias_load_done),
         .weight_load_start(sched_weight_start), .weight_load_done(sched_weight_done),
         .feeder_start(sched_feeder_start), .feeder_done(feeder_done),
+        .feeder_prefetch(sched_feeder_prefetch),
         .feeder_compute_ready(feeder_compute_ready),
         .feeder_overlap_mode(feeder_overlap_mode),
         .raw_hwc_mode(stream_raw_hwc_mode),
@@ -688,13 +691,17 @@ module conv_layer_top_stream #(
         .WGT_FIFO_DEPTH(WGT_FIFO_DEPTH), .WGT_FIFO_AW(WGT_FIFO_AW),
         .PSUM_FIFO_DEPTH(PSUM_FIFO_DEPTH), .PSUM_FIFO_AW(PSUM_FIFO_AW),
         .FM_W_MAX(FM_W_MAX), .FM_H_MAX(FM_H_MAX), .IFM_BANKS(IFM_BANKS),
-        .TAIL_CYCLES_CONFIG(TAIL_CYCLES_CONFIG)
+        .TAIL_CYCLES_CONFIG(TAIL_CYCLES_CONFIG),
+        .IFM_PINGPONG_FIFO_ENABLE(IFM_PINGPONG_FIFO_ENABLE)
     ) u_top (
         .clk(clk), .rst(rst),
         .feeder_start(sched_feeder_start), .feeder_done(feeder_done), .feeder_busy(),
+        .feeder_prefetch(sched_feeder_prefetch),
         .feeder_fill_req(feeder_fill_req), .feeder_fill_fy(feeder_fill_fy),
         .kernel_1x1(kernel_1x1),
         .raw_hwc_mode(stream_raw_hwc_mode),
+        .ifm_pingpong_enable(stream_raw_hwc_mode && pass_prefetch_enable &&
+                             during_compute_prefetch_enable),
         .compute_start(sched_compute_start), .num_pixels(sched_num_pixels),
         .tail_cycles_config(tail_cycles_config),
         .raw_hwc_compute_start_level(raw_hwc_compute_start_level),

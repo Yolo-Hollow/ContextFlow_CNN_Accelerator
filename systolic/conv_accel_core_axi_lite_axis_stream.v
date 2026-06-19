@@ -43,9 +43,13 @@ module conv_accel_core_axi_lite_axis_stream #(
     parameter HWC_CACHE_DEPTH = (1 << HWC_CACHE_AW),
     parameter HWC_CACHE_STRIPES = 1,
     parameter HWC_CACHE_USE_URAM = 0,
+    parameter HWC_REPLAY_PIPELINE_ENABLE = 1,
+    parameter HWC_CACHE_EXTRA_READ_LATENCY = 0,
+    parameter HWC_REPLAY_EXTRA_WAIT_CYCLES = 0,
     parameter AXIS_W = 64,
     parameter AXIS_KEEP_W = AXIS_W / 8,
-    parameter TAIL_CYCLES_CONFIG = `SYSTOLIC_TAIL_CYCLES_CONFIG
+    parameter TAIL_CYCLES_CONFIG = `SYSTOLIC_TAIL_CYCLES_CONFIG,
+    parameter IFM_PINGPONG_FIFO_ENABLE = 1
 ) (
     input  clk,
     input  rst,
@@ -374,7 +378,10 @@ module conv_accel_core_axi_lite_axis_stream #(
         .CACHE_AW(HWC_CACHE_AW),
         .CACHE_DEPTH(HWC_CACHE_DEPTH),
         .CACHE_STRIPES(HWC_CACHE_STRIPES),
-        .CACHE_USE_URAM(HWC_CACHE_USE_URAM)
+        .CACHE_USE_URAM(HWC_CACHE_USE_URAM),
+        .HWC_REPLAY_PIPELINE_ENABLE(HWC_REPLAY_PIPELINE_ENABLE),
+        .CACHE_EXTRA_READ_LATENCY(HWC_CACHE_EXTRA_READ_LATENCY),
+        .HWC_REPLAY_EXTRA_WAIT_CYCLES(HWC_REPLAY_EXTRA_WAIT_CYCLES)
     ) u_axis_hwc_tile_cache (
         .clk(clk),
         .rst(rst),
@@ -425,7 +432,8 @@ module conv_accel_core_axi_lite_axis_stream #(
         .WGT_TILE_AW(WGT_TILE_AW), .PSUM_BUF_AW(PSUM_BUF_AW), .PSUM_BUF_DEPTH(PSUM_BUF_DEPTH),
         .MULT_W(MULT_W), .SHIFT_W(SHIFT_W), .ZP_W(ZP_W),
         .OFM_ADDR_W(OFM_ADDR_W), .OFM_FIFO_DEPTH(OFM_FIFO_DEPTH), .OFM_FIFO_AW(OFM_FIFO_AW),
-        .TAIL_CYCLES_CONFIG(TAIL_CYCLES_CONFIG)
+        .TAIL_CYCLES_CONFIG(TAIL_CYCLES_CONFIG),
+        .IFM_PINGPONG_FIFO_ENABLE(IFM_PINGPONG_FIFO_ENABLE)
     ) u_core (
         .clk(clk),
         .rst(rst),

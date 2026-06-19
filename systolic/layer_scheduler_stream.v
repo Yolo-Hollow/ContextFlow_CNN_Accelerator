@@ -39,6 +39,7 @@ module layer_scheduler_stream #(
     output reg weight_load_start,
     input      weight_load_done,
     output reg feeder_start,
+    output reg feeder_prefetch,
     input      feeder_done,
     input      feeder_compute_ready,
     input      feeder_overlap_mode,
@@ -102,6 +103,7 @@ module layer_scheduler_stream #(
     reg prefetch_started;
     reg prefetch_weight_done;
     reg prefetch_feed_done;
+    reg prefetch_feed_ready;
     reg [13:0] prefetch_pass_base_k;
     reg pass_bank;
     reg prev_drain_pending;
@@ -126,8 +128,12 @@ module layer_scheduler_stream #(
     wire prefetch_feed_done_now =
         prefetch_feed_done ||
         (prefetch_started && feeder_done);
+    wire prefetch_feed_ready_now =
+        prefetch_feed_ready || prefetch_feed_done_now ||
+        (during_compute_prefetch_enable && prefetch_started &&
+         feeder_compute_ready);
     wire prefetch_ready_now =
-        prefetch_started && prefetch_weight_done_now && prefetch_feed_done_now;
+        prefetch_started && prefetch_weight_done_now && prefetch_feed_ready_now;
     wire prefetch_start_serial_ready =
         (compute_done_seen || compute_done) &&
         (!feeder_overlap_mode || feeder_done_seen || feeder_done);
@@ -192,6 +198,7 @@ module layer_scheduler_stream #(
             bias_load_start <= 1'b0;
             weight_load_start <= 1'b0;
             feeder_start <= 1'b0;
+            feeder_prefetch <= 1'b0;
             compute_start <= 1'b0;
             psum_drain_start <= 1'b0;
             feeder_pass_base_k <= 14'd0;
@@ -203,6 +210,7 @@ module layer_scheduler_stream #(
             prefetch_started <= 1'b0;
             prefetch_weight_done <= 1'b0;
             prefetch_feed_done <= 1'b0;
+            prefetch_feed_ready <= 1'b0;
             prefetch_pass_base_k <= 14'd0;
             pass_bank <= 1'b0;
             prev_drain_pending <= 1'b0;
@@ -220,6 +228,7 @@ module layer_scheduler_stream #(
             bias_load_start <= 1'b0;
             weight_load_start <= 1'b0;
             feeder_start <= 1'b0;
+            feeder_prefetch <= 1'b0;
             compute_start <= 1'b0;
             psum_drain_start <= 1'b0;
             perf_prefetch_start <= 1'b0;
@@ -249,6 +258,11 @@ module layer_scheduler_stream #(
                 prefetch_feed_done <= 1'b1;
                 perf_prefetch_feed_done <= 1'b1;
             end
+            if (during_compute_prefetch_enable && prefetch_started &&
+                feeder_compute_ready &&
+                !prefetch_feed_ready) begin
+                prefetch_feed_ready <= 1'b1;
+            end
 
             case (state)
                 ST_IDLE: begin
@@ -266,6 +280,7 @@ module layer_scheduler_stream #(
                         prefetch_started <= 1'b0;
                         prefetch_weight_done <= 1'b0;
                         prefetch_feed_done <= 1'b0;
+                        prefetch_feed_ready <= 1'b0;
                         feeder_pass_base_k <= 14'd0;
                         pass_bank <= 1'b0;
                         prev_drain_pending <= 1'b0;
@@ -321,6 +336,7 @@ module layer_scheduler_stream #(
                         prefetch_started <= 1'b0;
                         prefetch_weight_done <= 1'b0;
                         prefetch_feed_done <= 1'b0;
+                        prefetch_feed_ready <= 1'b0;
                         state <= ST_COMP_WAIT;
                     end
                 end
@@ -339,10 +355,12 @@ module layer_scheduler_stream #(
                         prefetch_started <= 1'b1;
                         prefetch_weight_done <= 1'b0;
                         prefetch_feed_done <= 1'b0;
+                        prefetch_feed_ready <= 1'b0;
                         prefetch_pass_base_k <= next_k[13:0];
                         feeder_pass_base_k <= next_k[13:0];
                         weight_load_start <= 1'b1;
                         feeder_start <= 1'b1;
+                        feeder_prefetch <= 1'b1;
                         perf_prefetch_start <= 1'b1;
                     end
 
@@ -448,10 +466,12 @@ module layer_scheduler_stream #(
                         prefetch_started <= 1'b1;
                         prefetch_weight_done <= 1'b0;
                         prefetch_feed_done <= 1'b0;
+                        prefetch_feed_ready <= 1'b0;
                         prefetch_pass_base_k <= next_k[13:0];
                         feeder_pass_base_k <= next_k[13:0];
                         weight_load_start <= 1'b1;
                         feeder_start <= 1'b1;
+                        feeder_prefetch <= 1'b1;
                         perf_prefetch_start <= 1'b1;
                     end
                     if (!prefetch_start_now && psum_overlap_ready_now) begin

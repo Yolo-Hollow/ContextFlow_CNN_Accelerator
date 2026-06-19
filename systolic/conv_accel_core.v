@@ -43,6 +43,7 @@ module conv_accel_core #(
     parameter OFM_FIFO_DEPTH = 32,
     parameter OFM_FIFO_AW = 5,
     parameter TAIL_CYCLES_CONFIG = `SYSTOLIC_TAIL_CYCLES_CONFIG,
+    parameter IFM_PINGPONG_FIFO_ENABLE = 1,
     parameter [15:0] RAW_HWC_COMPUTE_START_LEVEL = 16'd0
 ) (
     input  clk,
@@ -469,7 +470,8 @@ module conv_accel_core #(
         .WGT_TILE_AW(WGT_TILE_AW), .PSUM_BUF_AW(PSUM_BUF_AW), .PSUM_BUF_DEPTH(PSUM_BUF_DEPTH),
         .MULT_W(MULT_W), .SHIFT_W(SHIFT_W), .ZP_W(ZP_W),
         .OFM_ADDR_W(OFM_ADDR_W), .OFM_FIFO_DEPTH(OFM_FIFO_DEPTH), .OFM_FIFO_AW(OFM_FIFO_AW),
-        .TAIL_CYCLES_CONFIG(TAIL_CYCLES_CONFIG)
+        .TAIL_CYCLES_CONFIG(TAIL_CYCLES_CONFIG),
+        .IFM_PINGPONG_FIFO_ENABLE(IFM_PINGPONG_FIFO_ENABLE)
     ) u_layer (
         .clk(clk), .rst(rst), .start(start_pulse), .busy(layer_busy), .done(layer_done),
         .perf_compute_fire(layer_compute_fire),

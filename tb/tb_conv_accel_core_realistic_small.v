@@ -54,6 +54,18 @@
 `ifndef TB_CONV_ACCEL_CORE_HWC_CACHE_USE_URAM
 `define TB_CONV_ACCEL_CORE_HWC_CACHE_USE_URAM 0
 `endif
+`ifndef TB_CONV_ACCEL_CORE_IFM_PINGPONG_FIFO_ENABLE
+`define TB_CONV_ACCEL_CORE_IFM_PINGPONG_FIFO_ENABLE 1
+`endif
+`ifndef TB_CONV_ACCEL_CORE_HWC_REPLAY_PIPELINE_ENABLE
+`define TB_CONV_ACCEL_CORE_HWC_REPLAY_PIPELINE_ENABLE 1
+`endif
+`ifndef TB_CONV_ACCEL_CORE_HWC_CACHE_EXTRA_READ_LATENCY
+`define TB_CONV_ACCEL_CORE_HWC_CACHE_EXTRA_READ_LATENCY 0
+`endif
+`ifndef TB_CONV_ACCEL_CORE_HWC_REPLAY_EXTRA_WAIT_CYCLES
+`define TB_CONV_ACCEL_CORE_HWC_REPLAY_EXTRA_WAIT_CYCLES 0
+`endif
 `ifndef TB_CONV_ACCEL_CORE_QUANT_MULT
 `define TB_CONV_ACCEL_CORE_QUANT_MULT 16'd1
 `endif
@@ -398,6 +410,10 @@ module `TB_CONV_ACCEL_CORE_MODULE;
         , .HWC_CACHE_DEPTH(`TB_CONV_ACCEL_CORE_HWC_CACHE_DEPTH)
         , .HWC_CACHE_STRIPES(`TB_CONV_ACCEL_CORE_HWC_CACHE_STRIPES)
         , .HWC_CACHE_USE_URAM(`TB_CONV_ACCEL_CORE_HWC_CACHE_USE_URAM)
+        , .HWC_REPLAY_PIPELINE_ENABLE(`TB_CONV_ACCEL_CORE_HWC_REPLAY_PIPELINE_ENABLE)
+        , .HWC_CACHE_EXTRA_READ_LATENCY(`TB_CONV_ACCEL_CORE_HWC_CACHE_EXTRA_READ_LATENCY)
+        , .HWC_REPLAY_EXTRA_WAIT_CYCLES(`TB_CONV_ACCEL_CORE_HWC_REPLAY_EXTRA_WAIT_CYCLES)
+        , .IFM_PINGPONG_FIFO_ENABLE(`TB_CONV_ACCEL_CORE_IFM_PINGPONG_FIFO_ENABLE)
 `endif
     ) dut (
         .clk(clk), .rst(rst),
@@ -1454,6 +1470,7 @@ module `TB_CONV_ACCEL_CORE_MODULE;
         end
     end
 
+`ifndef TB_CONV_ACCEL_CORE_NETLIST_SIM
     always @(posedge clk) begin
         if (!rst && `TB_DUT_LAYER.final_fifo_valid && `TB_DUT_LAYER.rq_in_ready) begin
             for (final_raw_lane = 0; final_raw_lane < COUT_TILE; final_raw_lane = final_raw_lane + 1) begin
@@ -1470,6 +1487,7 @@ module `TB_CONV_ACCEL_CORE_MODULE;
             end
         end
     end
+`endif
 
 `ifdef TB_CONV_ACCEL_CORE_USE_AXIS_STREAM
     always @(posedge clk) begin
@@ -1521,6 +1539,7 @@ module `TB_CONV_ACCEL_CORE_MODULE;
     end
 `endif
 
+`ifndef TB_CONV_ACCEL_CORE_NETLIST_SIM
     always @(posedge clk) begin
 `ifdef TB_CONV_ACCEL_CORE_KERNEL_1X1
         if (!rst && `TB_DUT_LAYER.u_top.vector_ifm_valid &&
@@ -1585,6 +1604,7 @@ module `TB_CONV_ACCEL_CORE_MODULE;
         if (!rst && `TB_DUT_LAYER.done)
             layer_done_pulse_count <= layer_done_pulse_count + 1;
     end
+`endif
 
 `ifdef TB_CONV_ACCEL_CORE_CHECK_FEEDER_IFM
     always @(posedge clk) begin
@@ -2022,6 +2042,7 @@ module `TB_CONV_ACCEL_CORE_MODULE;
             fail = fail + 1;
         end else pass = pass + 1;
 `ifdef TB_CONV_ACCEL_CORE_RAW_HWC_IFM
+`ifndef TB_CONV_ACCEL_CORE_NETLIST_SIM
         expected_raw_hwc_bytes = 0;
         for (run_idx = 0; run_idx < TILE_COUNT; run_idx = run_idx + 1) begin
             get_tile_cfg(run_idx, run_oy_base, run_ofm_h, run_pixel_base);
@@ -2047,12 +2068,16 @@ module `TB_CONV_ACCEL_CORE_MODULE;
                 dut.u_axis_hwc_tile_cache.completed_pixels, expected_raw_hwc_replay_packets);
             fail = fail + 1;
         end else pass = pass + 1;
+`endif
 `else
+`ifndef TB_CONV_ACCEL_CORE_NETLIST_SIM
         if (ifm_write_count != RUN_PIXELS * K_PASSES * COUT_BLOCKS) begin
             $display("[FAIL] ifm writes got=%0d exp=%0d", ifm_write_count, RUN_PIXELS * K_PASSES * COUT_BLOCKS);
             fail = fail + 1;
         end else pass = pass + 1;
 `endif
+`endif
+`ifndef TB_CONV_ACCEL_CORE_NETLIST_SIM
         if (compute_fire_count != RUN_PIXELS * K_PASSES * COUT_BLOCKS) begin
             $display("[FAIL] compute fires got=%0d exp=%0d", compute_fire_count, RUN_PIXELS * K_PASSES * COUT_BLOCKS);
             fail = fail + 1;
@@ -2061,6 +2086,7 @@ module `TB_CONV_ACCEL_CORE_MODULE;
             $display("[FAIL] psum writes got=%0d exp=%0d", psum_wr_count, RUN_PIXELS * K_PASSES * COUT_BLOCKS);
             fail = fail + 1;
         end else pass = pass + 1;
+`endif
         if (COUT_TOTAL <= COUT_TILE && current_cout_base !== 11'd0) begin
             $display("[FAIL] unexpected Cout block advance, cout_base=%0d", current_cout_base);
             fail = fail + 1;
@@ -2215,6 +2241,11 @@ module `TB_CONV_ACCEL_CORE_MODULE;
 
     initial begin
         repeat (`TB_CONV_ACCEL_CORE_TIMEOUT) @(negedge clk);
+`ifdef TB_CONV_ACCEL_CORE_NETLIST_SIM
+        $display("[FAIL] timeout ofm_wr=%0d/%0d axis_tlast=%0d cout=%0d k=%0d fill_req=%0d",
+            ofm_mem_wr_count, EXPECTED_OFM_WRITES, axis_ofm_tlast_count,
+            current_cout_base, current_pass_base_k, feeder_fill_req);
+`else
         $display("[FAIL] timeout status=%b cfg_done_sticky=%0d layer_done_pulses=%0d axi_arv=%0d axi_arr=%0d axi_rv=%0d axi_rr=%0d axi_rd_state=%0d bw_bias_busy=%0d bw_bias_count=%0d bw_bias_done=%0d bw_wgt_busy=%0d bw_wgt_count=%0d bw_wgt_done=%0d ifm_busy=%0d ifm_cool=%0d ifm_x=%0d ifm_adv=%0d line_state=%0d line_oy=%0d lvalid=%b%b%b lfy=%0d,%0d,%0d lbvalid=%b%b%b lbfy=%0d,%0d,%0d win_active=%0d win_oy=%0d win_ox=%0d win_ready=%0d row_done=%0d ofm_wr=%0d cout=%0d k=%0d fill_req=%0d sched_state=%0d feeder_done=%0d compute_done=%0d drain_done=%0d done_pending=%0d done_cnt=%0d ofm_wb_busy=%0d ofm_valid=%0d act_valid=%0d ifm_full=%h psum_empty=%h fire=%0d ifm_wr=%0d fire_cnt=%0d psum_wr=%0d ps_start=%0d ps_done=%0d ps_clear=%0d",
             cfg_read_data[1:0], `TB_DUT_CFG.done_sticky, layer_done_pulse_count,
 `ifdef TB_CONV_ACCEL_CORE_USE_AXI_LITE
@@ -2257,6 +2288,7 @@ module `TB_CONV_ACCEL_CORE_MODULE;
             `TB_DUT_LAYER.ifm_fifo_full, `TB_DUT_LAYER.psum_fifo_empty,
             `TB_DUT_LAYER.compute_fire, ifm_write_count, compute_fire_count, psum_wr_count,
             ps_tile_start_count, ps_done_seen_count, ps_done_clear_count);
+`endif
         $fatal(1);
     end
 endmodule

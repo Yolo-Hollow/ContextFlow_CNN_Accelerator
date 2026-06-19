@@ -23,6 +23,11 @@ set hwc_cache_depth 4096
 set hwc_cache_stripes 1
 set hwc_cache_use_uram 0
 set tail_cycles 0
+set ifm_pingpong_fifo_enable 1
+set hwc_replay_pipeline_enable 1
+set hwc_cache_extra_read_latency 0
+set hwc_replay_extra_wait_cycles 0
+set pl_clk_mhz 100
 set jobs 8
 set board_part ""
 set board_connection ""
@@ -90,6 +95,21 @@ for {set i 0} {$i < [llength $argv]} {incr i} {
     } elseif {$arg eq "-tail_cycles"} {
         incr i
         set tail_cycles [lindex $argv $i]
+    } elseif {$arg eq "-ifm_pingpong_fifo_enable"} {
+        incr i
+        set ifm_pingpong_fifo_enable [lindex $argv $i]
+    } elseif {$arg eq "-hwc_replay_pipeline_enable"} {
+        incr i
+        set hwc_replay_pipeline_enable [lindex $argv $i]
+    } elseif {$arg eq "-hwc_cache_extra_read_latency"} {
+        incr i
+        set hwc_cache_extra_read_latency [lindex $argv $i]
+    } elseif {$arg eq "-hwc_replay_extra_wait_cycles"} {
+        incr i
+        set hwc_replay_extra_wait_cycles [lindex $argv $i]
+    } elseif {$arg eq "-pl_clk_mhz"} {
+        incr i
+        set pl_clk_mhz [lindex $argv $i]
     } elseif {$arg eq "-jobs"} {
         incr i
         set jobs [lindex $argv $i]
@@ -241,7 +261,7 @@ if {$board_part ne ""} {
 }
 set_property -dict [list \
     CONFIG.PSU__FPGA_PL0_ENABLE {1} \
-    CONFIG.PSU__CRL_APB__PL0_REF_CTRL__FREQMHZ {100} \
+    CONFIG.PSU__CRL_APB__PL0_REF_CTRL__FREQMHZ $pl_clk_mhz \
     CONFIG.PSU__USE__M_AXI_GP0 {1} \
     CONFIG.PSU__USE__M_AXI_GP1 {0} \
     CONFIG.PSU__USE__M_AXI_GP2 {0} \
@@ -277,6 +297,10 @@ set_property -dict [list \
     CONFIG.HWC_CACHE_STRIPES $hwc_cache_stripes \
     CONFIG.HWC_CACHE_USE_URAM $hwc_cache_use_uram \
     CONFIG.TAIL_CYCLES_CONFIG $tail_cycles \
+    CONFIG.IFM_PINGPONG_FIFO_ENABLE $ifm_pingpong_fifo_enable \
+    CONFIG.HWC_REPLAY_PIPELINE_ENABLE $hwc_replay_pipeline_enable \
+    CONFIG.HWC_CACHE_EXTRA_READ_LATENCY $hwc_cache_extra_read_latency \
+    CONFIG.HWC_REPLAY_EXTRA_WAIT_CYCLES $hwc_replay_extra_wait_cycles \
 ] [get_bd_cells accel]
 
 # Three DDR-to-stream channels supply layer inputs; one stream-to-DDR channel
@@ -343,7 +367,7 @@ connect_bd_intf_net [get_bd_intf_pins dma_weight/M_AXIS_MM2S] [get_bd_intf_pins 
 connect_bd_intf_net [get_bd_intf_pins dma_ifm/M_AXIS_MM2S] [get_bd_intf_pins accel/ifm_s_axis]
 connect_bd_intf_net [get_bd_intf_pins accel/ofm_m_axis] [get_bd_intf_pins dma_ofm/S_AXIS_S2MM]
 
-# Single 100 MHz PL clock domain and reset.
+# Single PL clock domain and reset.
 set pl_clk [get_bd_pins ps/pl_clk0]
 set periph_resetn [get_bd_pins rst_pl/peripheral_aresetn]
 connect_bd_net $pl_clk [get_bd_pins rst_pl/slowest_sync_clk]
@@ -446,7 +470,7 @@ puts "=== Block Design validation complete ==="
 puts "Project: [file join $project_dir ${project_name}.xpr]"
 puts "BD: [get_files ${bd_name}.bd]"
 puts "Accelerator: ROWS=$rows COLS=$cols K_TILE=$k_tile COUT_TILE=$cout_tile IFM_BANKS=$ifm_banks IFM_FIFO_DEPTH=$ifm_fifo_depth IFM_FIFO_AW=$ifm_fifo_aw PSUM_FIFO_DEPTH=$psum_fifo_depth PSUM_FIFO_AW=$psum_fifo_aw"
-puts "Clock: PS pl_clk0 at 100 MHz"
+puts "Clock: PS pl_clk0 at $pl_clk_mhz MHz"
 puts "For KV260 use -board_part xilinx.com:kv260_som:part0:1.4 with"
 puts "  -board_connection {som240_1_connector xilinx.com:kv260_carrier:som240_1_connector:1.3}"
 puts "to apply the SOM DDR and carrier PS peripheral presets."

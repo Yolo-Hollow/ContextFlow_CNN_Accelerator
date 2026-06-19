@@ -1,6 +1,23 @@
 `timescale 1ns / 1ps
 
 module tb_axis_hwc_tile_cache;
+`include "tail_cycles_override.vh"
+`ifndef TB_HWC_REPLAY_PIPELINE_ENABLE
+`define TB_HWC_REPLAY_PIPELINE_ENABLE 1
+`endif
+`ifndef TB_HWC_CACHE_EXTRA_READ_LATENCY
+`define TB_HWC_CACHE_EXTRA_READ_LATENCY 0
+`endif
+`ifndef TB_HWC_REPLAY_EXTRA_WAIT_CYCLES
+`define TB_HWC_REPLAY_EXTRA_WAIT_CYCLES 0
+`endif
+`ifndef TB_HWC_CACHE_STRIPES
+`define TB_HWC_CACHE_STRIPES 4
+`endif
+`ifndef TB_HWC_CACHE_USE_URAM
+`define TB_HWC_CACHE_USE_URAM 1
+`endif
+
     localparam ROWS = 18;
     localparam AXIS_W = 64;
     localparam KEEP_W = 8;
@@ -49,8 +66,11 @@ module tb_axis_hwc_tile_cache;
         .KEEP_W(KEEP_W),
         .CACHE_AW(CACHE_AW),
         .CACHE_DEPTH(64),
-        .CACHE_STRIPES(4),
-        .CACHE_USE_URAM(1)
+        .CACHE_STRIPES(`TB_HWC_CACHE_STRIPES),
+        .CACHE_USE_URAM(`TB_HWC_CACHE_USE_URAM),
+        .HWC_REPLAY_PIPELINE_ENABLE(`TB_HWC_REPLAY_PIPELINE_ENABLE),
+        .CACHE_EXTRA_READ_LATENCY(`TB_HWC_CACHE_EXTRA_READ_LATENCY),
+        .HWC_REPLAY_EXTRA_WAIT_CYCLES(`TB_HWC_REPLAY_EXTRA_WAIT_CYCLES)
     ) dut (
         .clk(clk),
         .rst(rst),
@@ -272,7 +292,9 @@ module tb_axis_hwc_tile_cache;
                     fire_count, num_pixels);
                 fail = fail + 1;
             end else pass = pass + 1;
-            if (replay_delta > num_pixels + 2) begin
+            if (`TB_HWC_REPLAY_PIPELINE_ENABLE &&
+                (`TB_HWC_CACHE_EXTRA_READ_LATENCY == 0) &&
+                replay_delta > num_pixels + 2) begin
                 $display("[FAIL] fast replay active cycles got=%0d exp<=%0d",
                     replay_delta, num_pixels + 2);
                 fail = fail + 1;

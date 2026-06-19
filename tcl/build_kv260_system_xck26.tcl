@@ -23,6 +23,11 @@ set hwc_cache_depth 4096
 set hwc_cache_stripes 1
 set hwc_cache_use_uram 0
 set tail_cycles 0
+set ifm_pingpong_fifo_enable 1
+set hwc_replay_pipeline_enable 1
+set hwc_cache_extra_read_latency 0
+set hwc_replay_extra_wait_cycles 0
+set pl_clk_mhz 100
 set jobs 8
 set synth_only 0
 set reuse_synth 0
@@ -86,6 +91,21 @@ for {set i 0} {$i < [llength $argv]} {incr i} {
     } elseif {$arg eq "-tail_cycles"} {
         incr i
         set tail_cycles [lindex $argv $i]
+    } elseif {$arg eq "-ifm_pingpong_fifo_enable"} {
+        incr i
+        set ifm_pingpong_fifo_enable [lindex $argv $i]
+    } elseif {$arg eq "-hwc_replay_pipeline_enable"} {
+        incr i
+        set hwc_replay_pipeline_enable [lindex $argv $i]
+    } elseif {$arg eq "-hwc_cache_extra_read_latency"} {
+        incr i
+        set hwc_cache_extra_read_latency [lindex $argv $i]
+    } elseif {$arg eq "-hwc_replay_extra_wait_cycles"} {
+        incr i
+        set hwc_replay_extra_wait_cycles [lindex $argv $i]
+    } elseif {$arg eq "-pl_clk_mhz"} {
+        incr i
+        set pl_clk_mhz [lindex $argv $i]
     } elseif {$arg eq "-jobs"} {
         incr i
         set jobs [lindex $argv $i]
@@ -137,6 +157,11 @@ if {$reuse_synth} {
         -hwc_cache_stripes $hwc_cache_stripes \
         -hwc_cache_use_uram $hwc_cache_use_uram \
         -tail_cycles $tail_cycles \
+        -ifm_pingpong_fifo_enable $ifm_pingpong_fifo_enable \
+        -hwc_replay_pipeline_enable $hwc_replay_pipeline_enable \
+        -hwc_cache_extra_read_latency $hwc_cache_extra_read_latency \
+        -hwc_replay_extra_wait_cycles $hwc_replay_extra_wait_cycles \
+        -pl_clk_mhz $pl_clk_mhz \
         -generate_targets \
     ]
     source [file join $script_dir create_ps_dma_bd_xck26.tcl]
@@ -146,7 +171,7 @@ if {$reuse_synth} {
     update_compile_order -fileset sources_1
     update_compile_order -fileset sim_1
 
-    puts "=== System synthesis: top=$wrapper_top board=$board_part carrier=$board_connection tail_cycles=$tail_cycles jobs=$jobs ==="
+    puts "=== System synthesis: top=$wrapper_top board=$board_part carrier=$board_connection pl_clk_mhz=$pl_clk_mhz tail_cycles=$tail_cycles ifm_pingpong_fifo_enable=$ifm_pingpong_fifo_enable hwc_replay_pipeline_enable=$hwc_replay_pipeline_enable hwc_cache_extra_read_latency=$hwc_cache_extra_read_latency hwc_replay_extra_wait_cycles=$hwc_replay_extra_wait_cycles jobs=$jobs ==="
     reset_run synth_1
     launch_runs synth_1 -jobs $jobs
     wait_on_run synth_1
