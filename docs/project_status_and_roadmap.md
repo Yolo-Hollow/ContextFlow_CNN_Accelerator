@@ -1,14 +1,14 @@
 # Systolic Accelerator 当前状态与后续计划
 
-> 最后更新：2026-06-12
+> 最后更新：2026-06-19
 
 本文档作为当前项目的主入口。旧版 `accelerator_systolic.md` 保留早期设计记录和阶段性实验过程；本文档只记录当前 RTL 状态、已验证内容、已知限制和后续路线。
 
-## Mainline handoff note
+## 主线交接说明
 
-For the handoff repository, the RTL/TB/Tcl mainline is restored to the stable raw-HWC replay baseline used by `D:/MPSoC/b_hwcreplay_22` (about `280.34 ms` on the fixed DDR demo). The later IFM ping-pong / double-staging experiments are preserved on branch `experiment-ifm-pingpong-debug-current`, but they are not part of the default build or regression path because board validation did not converge.
+用于项目交接的 RTL/TB/Tcl 主线已恢复到 `D:/MPSoC/b_hwcreplay_22` 使用的稳定 raw-HWC replay 基线；固定 DDR 图片测试的延时约为 `280.34 ms`。后续 IFM ping-pong 和双 staging 实验保留在 `experiment-ifm-pingpong-debug-current` 分支中，但由于未能完成稳定上板验证，不属于默认构建和回归路径。
 
-The default hardware profile is:
+默认硬件配置如下：
 
 ```text
 ROWS=18, COLS=8, COUT_TILE=16, IFM_BANKS=2

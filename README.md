@@ -1,59 +1,58 @@
-# KV260 Systolic YOLOv3-tiny Accelerator
+# KV260 脉动阵列 YOLOv3-tiny 加速器
 
-This repository contains a Verilog RTL accelerator, bare-metal Vitis software,
-testbenches, scripts, and the final handoff hardware artifacts for a simplified
-single-scale YOLOv3-tiny face-mask detection flow on the AMD/Xilinx KV260.
+本仓库包含面向 AMD/Xilinx KV260 的 Verilog RTL 加速器、Vitis 裸机软件、
+测试平台、自动化脚本，以及简化版单尺度 YOLOv3-tiny 口罩检测流程的最终
+硬件交付产物。
 
-## Current Handoff Baseline
+## 当前交付基线
 
-The handoff mainline is the stable raw-HWC replay design used by:
+当前主线采用经过稳定上板验证的 raw-HWC replay 设计，对应构建目录：
 
 ```text
 D:/MPSoC/b_hwcreplay_22
 ```
 
-Measured board result on the fixed DDR image demo:
+固定 DDR 图片测试的板级结果如下：
 
 ```text
-total latency ~= 280.340 ms
-detection     = with_mask, score 0.357321
-toolchain     = Vivado/Vitis 2022.2
-target        = KV260 / xck26-sfvc784-2LV-c
+总延时       ~= 280.340 ms
+检测结果     = with_mask，置信度 0.357321
+工具链       = Vivado/Vitis 2022.2
+目标器件     = KV260 / xck26-sfvc784-2LV-c
 ```
 
-The later IFM ping-pong / double-staging experiments are intentionally not part
-of the default mainline because board validation did not converge. They are kept
-on branch `experiment-ifm-pingpong-debug-current` for reference.
+后续 IFM ping-pong 和双 staging 实验由于未能完成稳定上板验证，未合入默认
+主线。相关代码保留在 `experiment-ifm-pingpong-debug-current` 分支中，仅供参考。
 
-## Repository Layout
+## 仓库结构
 
 ```text
-cal/                     DSP/int8 multiplier helpers
-com/                     common RTL helpers
-systolic/                accelerator RTL
-tb/                      Verilog and Python regression tests
-tcl/                     Vivado/xsim build and simulation scripts
-sw/vitis_2022_2/         bare-metal runtime, scheduler, and board scripts
-tools/                   golden-data, UART log, and demo analysis tools
-docs/                    design notes, dataflow/register docs, test plans
-golden/                  policy for curated golden data
-repro/                   minimal model data, test image, and expected output
+cal/                     DSP/int8 乘法辅助模块
+com/                     公共 RTL 模块
+systolic/                加速器 RTL 源码
+tb/                      Verilog 与 Python 回归测试
+tcl/                     Vivado/xsim 构建和仿真脚本
+sw/vitis_2022_2/         裸机运行时、调度器和上板脚本
+tools/                   golden 数据、UART 日志和演示分析工具
+docs/                    设计说明、数据流、寄存器和测试计划
+golden/                  小型回归 golden 数据的版本管理规则
+repro/                   最小模型数据、测试图片和期望输出
 release/kv260_hwcreplay_22/
-                         final XSA and bitstream for handoff
+                         最终交付的 XSA 与 bitstream
 2022_Peking_University_Master_Thesis_Template_iofu728_pkuthss_/
-                         thesis source and latest PDF
+                         论文源文件和最新 PDF
 ```
 
-## Final Hardware Artifacts
+## 最终硬件产物
 
-The final handoff artifacts are tracked under:
+最终交付文件位于：
 
 ```text
 release/kv260_hwcreplay_22/conv_accel_ps_dma_minimal.xsa
 release/kv260_hwcreplay_22/conv_accel_ps_dma_wrapper.bit
 ```
 
-SHA256:
+SHA256：
 
 ```text
 conv_accel_ps_dma_minimal.xsa
@@ -63,7 +62,7 @@ conv_accel_ps_dma_wrapper.bit
   C9CBC381F7906B5ECF206C7CA256276FE30943EAE5A22D0573D1FA244F8EC3D8
 ```
 
-The default build scripts are configured for the same stable hardware profile:
+默认构建脚本使用与交付硬件一致的参数：
 
 ```text
 ROWS=18
@@ -77,9 +76,9 @@ HWC_CACHE_USE_URAM=1
 TAIL_CYCLES=1
 ```
 
-## Build
+## 硬件构建
 
-Use Vivado 2022.2 explicitly:
+显式使用 Vivado 2022.2：
 
 ```powershell
 & 'C:\Xilinx\Vivado\2022.2\bin\vivado.bat' `
@@ -88,12 +87,11 @@ Use Vivado 2022.2 explicitly:
   -tclargs -build_dir D:/MPSoC/build_repro_hwcreplay_22 -jobs 12
 ```
 
-The generated XSA can then be used by the Vitis 2022.2 software flow in
-`sw/vitis_2022_2/`.
+生成的 XSA 可供 `sw/vitis_2022_2/` 中的 Vitis 2022.2 软件流程使用。
 
-## Software and Board Smoke Tests
+## 软件构建与上板测试
 
-Build the main single-scale DDR demo ELF:
+构建单尺度十层 DDR 演示 ELF：
 
 ```powershell
 powershell -ExecutionPolicy Bypass `
@@ -101,7 +99,7 @@ powershell -ExecutionPolicy Bypass `
   -Mode conv0_conv9_ddr_demo
 ```
 
-Run the fixed-image DDR demo on the board:
+在开发板上运行固定图片 DDR 测试：
 
 ```powershell
 powershell -ExecutionPolicy Bypass `
@@ -112,7 +110,7 @@ powershell -ExecutionPolicy Bypass `
   -CaptureSeconds 240
 ```
 
-Run the RTL-golden batch-chain smoke:
+运行逐层 RTL golden 批处理链测试：
 
 ```powershell
 powershell -ExecutionPolicy Bypass `
@@ -123,15 +121,15 @@ powershell -ExecutionPolicy Bypass `
   -CaptureSeconds 240
 ```
 
-## RTL Simulation
+## RTL 仿真
 
-Run the short xsim regression:
+运行短回归：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File tb/run_short_xsim_regression.ps1
 ```
 
-Run a targeted xsim test:
+运行指定的 xsim 测试：
 
 ```powershell
 & 'C:\Xilinx\Vivado\2022.2\bin\vivado.bat' `
@@ -140,26 +138,22 @@ Run a targeted xsim test:
   -tclargs -top tb_conv_accel_core_axi_lite_axis_stream_conv6_3x3_raw_hwc_fulltile_cout16
 ```
 
-The main Conv0-to-Conv9 Vitis build, fixed-image DDR demo, and final decode
-check use the curated deployment package under `repro/`; they do not require
-the original training project. Full model re-export and a few legacy targeted
-RTL tests still require external source data. Generation scripts remain under
-`tools/golden/`, while the full dataset and PyTorch checkpoints stay outside
-this handoff repository.
+Conv0 至 Conv9 的 Vitis 构建、固定图片 DDR 演示和最终检测解码均使用
+`repro/` 中的交付数据包，不依赖原始训练工程。完整模型重新导出和少数历史
+定向 RTL 测试仍需外部源数据。生成脚本保留在 `tools/golden/`，完整数据集和
+PyTorch checkpoint 不纳入本交付仓库。
 
-## Thesis PDF
+## 论文 PDF
 
-The latest thesis PDF is:
+最新论文 PDF 位于：
 
 ```text
 2022_Peking_University_Master_Thesis_Template_iofu728_pkuthss_/main.pdf
 ```
 
-## Notes for Future Work
+## 后续工作
 
-The current stable design already includes raw-HWC replay, pass prefetch,
-PSUM overlap, column PSUM, and a large URAM HWC cache. The main remaining gap is
-that the measured `compute_fire` time is still much lower than total PL busy
-time. Future optimization should focus on structurally reducing K-pass boundary
-overhead rather than re-enabling the unsafe IFM ping-pong/during-compute
-prefetch experiments directly.
+当前稳定设计已包含 raw-HWC replay、pass prefetch、PSUM overlap、column PSUM
+和大容量 URAM HWC cache。实测 `compute_fire` 时间仍显著小于 PL 总 busy 时间，
+后续优化应重点减少 K-pass 边界的结构性固定开销，不应直接重新启用尚未证明
+安全的 IFM ping-pong 或 during-compute prefetch 实验路径。

@@ -1,10 +1,9 @@
-# Reproducible Vitis Inference Package
+# Vitis 推理复现数据包
 
-This directory is the minimal deployment-data package required to build and
-validate the Conv0-to-Conv9 Vitis application without the external
-`D:/MPSoC/python_prj` training project.
+本目录提供构建和验证 Conv0 至 Conv9 Vitis 应用所需的最小部署数据，不依赖
+原先位于 `D:/MPSoC/python_prj` 的完整训练工程。
 
-## Contents
+## 目录内容
 
 ```text
 model/
@@ -17,7 +16,7 @@ expected/
 SHA256SUMS
 ```
 
-Each layer directory contains:
+每个网络层目录包含：
 
 ```text
 manifest.json
@@ -28,13 +27,13 @@ activation_lut_u8.bin
 golden_ofm_u8_hwc.bin
 ```
 
-The Vitis header generator reads the weight, bias, activation LUT, and golden
-output. The IFM files support standalone/directed layer builds; only Conv0 IFM
-is embedded by the normal Conv0-to-Conv9 chain build.
+Vitis 头文件生成器读取权重、bias、激活 LUT 和 golden 输出。IFM 文件用于
+独立层或定向测试；正常的 Conv0 至 Conv9 串行构建仅嵌入 Conv0 的 IFM，
+其余层输入由上一层硬件输出提供。
 
-## Build the Conv0-to-Conv9 ELF
+## 构建 Conv0 至 Conv9 ELF
 
-After generating the Vitis BSP/platform described in the repository README:
+先按照仓库根 README 的说明生成 Vitis BSP/platform，然后执行：
 
 ```powershell
 powershell -ExecutionPolicy Bypass `
@@ -42,10 +41,10 @@ powershell -ExecutionPolicy Bypass `
   -Mode conv0_conv9_ddr_demo
 ```
 
-The script defaults to this directory. Use `-ReproRoot <path>` only when
-testing another deployment package.
+构建脚本默认读取本目录。只有在验证另一份部署数据包时，才需要通过
+`-ReproRoot <path>` 指定其他路径。
 
-## Prepare the Fixed DDR Image
+## 准备固定 DDR 图片
 
 ```powershell
 python tools/demo/prepare_ddr_image.py `
@@ -53,13 +52,13 @@ python tools/demo/prepare_ddr_image.py `
   demo_output/image_package.bin
 ```
 
-The prepared 416x416 HWC RGB tensor must match:
+预处理得到的 `416x416` HWC RGB tensor 应与下列文件完全一致：
 
 ```text
 model/00_conv0_pool/ifm_u8_hwc.bin
 ```
 
-## Verify the Final Detection Golden
+## 验证最终检测 Golden
 
 ```powershell
 python tools/golden/yolo_single_scale_decode.py `
@@ -67,12 +66,10 @@ python tools/golden/yolo_single_scale_decode.py `
   --output repro/expected/decode_golden.json
 ```
 
-Expected result: one `with_mask` detection with score approximately
-`0.357321`.
+期望结果为一个类别为 `with_mask`、置信度约为 `0.357321` 的检测框。
 
-## Provenance
+## 数据来源
 
-The package was curated from the quantized face-mask project formerly located
-at `D:/MPSoC/python_prj`. It intentionally excludes training code, the full
-dataset, PyTorch checkpoints, intermediate PSUM dumps, and redundant xsim text
-memories. `SHA256SUMS` records the exact files included in this handoff.
+本数据包由量化口罩检测工程导出的部署数据整理而成。为控制仓库规模，其中
+不包含训练代码、完整数据集、PyTorch checkpoint、中间 PSUM dump 和重复的
+xsim 文本 memory。`SHA256SUMS` 记录了本交付数据包中全部文件的精确校验值。
