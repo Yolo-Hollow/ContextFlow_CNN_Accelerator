@@ -1,13 +1,13 @@
 \chapter*{摘要}
 \markboth{摘要}{}
 
-边缘端目标检测要求在有限功耗和有限片上资源下完成较低延迟的卷积神经网络推理。FPGA 与 MPSoC 平台具有可定制数据通路、丰富片上存储和灵活软硬件协同的优势，适合部署轻量级目标检测网络。然而，在真实网络端到端运行中，加速器性能并不只取决于乘加阵列规模；DMA 启动、输入特征图重排、权重加载、部分和反馈、多轮 K pass 同步以及软硬件调度空泡都会显著降低阵列有效利用率。
+边缘端目标检测要求在有限功耗和片上资源下完成低延迟卷积神经网络推理。可编程逻辑与多处理器片上系统平台具有可定制数据通路和软硬件协同优势，适合部署轻量级检测网络。然而，在真实网络端到端运行中，性能并不只取决于乘加阵列规模；DMA 启动、输入特征图重排、权重加载、partial-PSUM 反馈、多轮 K pass 同步和软硬件调度空泡都会降低阵列有效利用率。
 
-本文面向 Xilinx Kria KV260 / XCK26 平台，设计并实现了一种用于 YOLOv3-tiny 单尺度链式推理的 INT8 卷积加速器。硬件采用参数化 systolic array 作为卷积核心，支持 3x3 卷积、原生 1x1 卷积、INT32 部分和累加、逐通道重量化、查表激活、池化以及 AXI-Lite/AXI-Stream 系统接口。软件侧基于 Vitis bare-metal runtime 负责层描述、空间 tile 调度、DMA 启动、量化参数配置、输出重排和 YOLO decode，从而形成从 DDR 图像输入到 Conv0--Conv9 输出解析的完整 PS/PL 协同链路。
+本文面向 Xilinx Kria KV260/XCK26 平台，设计并实现了一种用于 YOLOv3-tiny 单尺度链式推理的层自适应脉动阵列加速器 LASA（Layer-Adaptive Systolic Accelerator）。LASA 以 dual-lane INT8 systolic array 为卷积核心，原生支持 1x1/3x3 卷积、INT32 部分和累加、逐通道重量化以及可旁路激活和池化。软件侧基于 Vitis bare-metal runtime 完成层描述、tile 调度、DMA 启动、输出重排和 YOLO decode，形成从 DDR 图像输入到 Conv0--Conv9 输出解析的完整 PS/PL 协同链路。
 
-围绕真实 YOLO 层的非计算开销，本文进一步提出并实现了多级数据流与调度优化。首先，通过 batch stream 和预打包权重布局减少每个 tile 内的 DMA 启动与运行时重排开销；其次，引入 raw-HWC tile cache，使软件能够传输自然 HWC tile，由硬件在片上完成 1x1/3x3 向量重放，并在后端层使用 full-tile 调度降低空间 tile 启动开销；再次，针对多 K pass 卷积中的 partial-PSUM 反馈瓶颈，实现了流水化 drain、early drain、continuous PSUM collector 和 pass-level prefetch，使权重准备、IFM replay、部分和反馈与当前 pass 计算尽可能重叠。本文同时设计了阶段、子阶段、pass 级和列级性能计数器，用于解释瓶颈迁移和验证优化有效性。
+围绕真实 YOLO 层的非计算开销，本文提出 KCS 三维分块执行模型，并进一步实现三类优化策略：BSD（Batched Streaming Dataflow）降低 PS/DMA 交互开销，OCRR（On-Chip Reorder and Replay）将 IFM 布局转换转移到片上缓存和重放逻辑，OPF-P（Overlapped PSUM Feedback and Prefetch）隐藏多 K pass 中的 partial-PSUM 反馈和下一 pass 准备气泡。本文同时设计了阶段、子阶段和 pass 级性能计数器，用于解释瓶颈迁移和验证优化有效性。
 
-实验结果表明，所设计系统在 KV260 上完成 Conv0--Conv9 batch-chain bit-exact 验证，并在两张 DDR 动态图像上得到稳定的 YOLO decode 结果。最终推荐实现采用 Vivado/Vitis 2022.2、100 MHz 时钟、ROWS=18、COLS=8、COUT\_TILE=16 的配置，在 D:/MPSoC/b\_kprefetch\_22 构建中完成布局布线，资源占用为 84480 个 CLB LUT、53260 个 CLB Register、63 个 BRAM Tile、24 个 URAM 和 184 个 DSP。两张图像的端到端 DDR demo 延迟约为 288 ms。该结果并不定位为实时视频性能领先，而是证明在资源受限 MPSoC 上，围绕数据流、部分和反馈和 pass 级调度的系统优化能够将早期约 1.18 s 的链式推理延迟降低到约 0.29 s，并给出可解释的瓶颈分析路径。
+实验结果表明，所设计系统在 KV260 上完成 Conv0--Conv9 batch-chain bit-exact 验证，并在两张 DDR 图像上得到稳定 YOLO decode 结果。最终推荐实现采用 Vivado/Vitis 2022.2、100 MHz 时钟、ROWS=18、COLS=8、COUT\_TILE=16 的配置，端到端 DDR demo 延迟约为 288 ms；相较早期约 1.18 s 的链式推理版本，获得约 4.1 倍端到端加速。阶段计数器结果进一步表明，LASA 与 KCS/BSD/OCRR/OPF-P 能够降低数据搬运、IFM 布局转换、partial-PSUM 反馈和 pass 边界调度带来的非计算开销。
 
 \medskip
-\noindent\textbf{关键词：}YOLOv3-tiny，MPSoC，FPGA 加速器，systolic array，数据流优化，partial-PSUM，INT8 量化
+\noindent\textbf{关键词：}YOLOv3-tiny，MPSoC，FPGA 加速器，LASA，systolic array，数据流优化，INT8 量化

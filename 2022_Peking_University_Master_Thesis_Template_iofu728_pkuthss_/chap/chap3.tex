@@ -1,100 +1,56 @@
-\chapter{加速器系统架构}
+\chapter{LASA 层自适应脉动阵列架构}
 \label{chap:architecture}
 
-本章介绍本文加速器的系统结构。设计目标不是单独实现一个卷积算子，而是在 MPSoC 上形成从 DDR 图像输入、PS 侧调度、PL 侧卷积计算、OFM 回写到 YOLO decode 的完整运行链路。为此，硬件架构必须同时满足三个要求：第一，卷积核心具备稳定的 INT8/INT32 计算语义；第二，AXI 边界能够承载真实层的数据量和背压；第三，后处理和输出格式能够支持链式推理和板级验证。
+本文的目标不是单独实现一个卷积算子，而是在边缘 MPSoC 上完成从 DDR 图像输入、PS 侧调度、PL 侧卷积计算、OFM 回写到 YOLO decode 的完整链式推理。为此，本文提出一种层自适应脉动阵列加速器（Layer-Adaptive Systolic Accelerator, LASA）。LASA 以统一 INT8 systolic array 为计算基础，通过 layer descriptor 和 AXI-Lite 配置支持不同卷积核、输出通道分块、K pass、量化参数、激活和池化组合，从而在同一套硬件上覆盖 YOLOv3-tiny Conv0--Conv9 的多种层形状。
 
-\section{系统总体结构}
+\section{系统设计目标与软硬件分工}
 
-图~\ref{fig:system_overview} 给出系统级结构。PS 侧 A53 程序负责准备输入图像包、配置寄存器、启动四路 DMA、维护层和 tile 调度，并在每层结束后解析 OFM packet。PL 侧 accelerator 接收 AXI-Lite 配置，通过 bias、weight、IFM 三路 AXI-Stream 输入完成卷积计算，并通过 OFM AXI-Stream 输出 $\{addr,data\}$ debug packet 到 DDR。
+真实 YOLOv3-tiny 链式推理对加速器提出三类要求。第一，PL 侧卷积核心需要保持稳定的 INT8/INT32 计算语义，使 Conv0--Conv9 的输出能够与 golden 逐层比较。第二，PS/PL 边界需要承载真实层的数据搬运和背压，而不是依赖小规模仿真中的理想输入。第三，系统必须暴露足够的计数器和调试接口，使端到端延迟可以被分解为 DMA、IFM 重排、阵列计算、partial-PSUM 反馈、OFM 后处理和软件 decode 等阶段。
+
+因此，本文采用“PS 负责任务组织，PL 负责规则密集计算”的协同方式。PS 侧 A53 程序维护 layer descriptor、DDR 缓冲区、DMA 启停、输出重排和 YOLO decode；PL 侧 LASA 接收寄存器配置和 AXI-Stream 数据，在片上完成卷积、重量化、激活、池化和 OFM packet 输出。第~\ref{chap:dataflow} 章讨论的 KCS 执行模型以及 BSD、OCRR、OPF-P 三类优化策略均建立在这一软硬件边界之上。
+
+\section{MPSoC 总体结构}
+
+图~\ref{fig:system_overview} 给出系统级结构。DDR 中保存输入图像包、量化权重、中间特征图和输出 packet；PS A53 通过 AXI-Lite 配置 LASA，并通过四路 AXI DMA 搬运 bias、weight、IFM 和 OFM 数据。LASA 以 AXI-Stream 接收三路输入流，以 AXI-Stream 输出 OFM debug packet 到 DDR，随后由软件重排并执行 YOLO decode。
 
 \begin{figure}[htb]
 \centering
-\resizebox{\textwidth}{!}{%
-\begin{tikzpicture}[
-    node distance=8mm and 10mm,
-    blk/.style={draw, rounded corners=1pt, align=center, minimum width=22mm, minimum height=8mm},
-    bus/.style={-Latex, thick}
-]
-\node[blk] (ddr) {DDR\\image/weights/features};
-\node[blk, right=of ddr] (ps) {PS A53\\runtime};
-\node[blk, below=of ps] (dma) {4x AXI DMA\\bias/weight/IFM/OFM};
-\node[blk, right=of ps] (cfg) {AXI-Lite\\registers};
-\node[blk, right=of dma, minimum width=34mm] (pl) {PL accelerator\\systolic + postprocess};
-\node[blk, right=of pl] (ofm) {OFM buffer\\YOLO decode};
-\draw[bus] (ps) -- node[above]{config} (cfg);
-\draw[bus] (cfg) -- (pl);
-\draw[bus] (ddr) -- (ps);
-\draw[bus] (ps) -- (dma);
-\draw[bus] (ddr) |- (dma);
-\draw[bus] (dma) -- node[below]{AXI-Stream} (pl);
-\draw[bus] (pl) -- (ofm);
-\draw[bus] (ofm) |- (ddr);
-\end{tikzpicture}
-}
+\includegraphics[width=\textwidth]{\detokenize{img/picture/MPSOC架构3.png}}
 \caption{MPSoC 端到端系统结构}
 \label{fig:system_overview}
 \end{figure}
 
-控制面和数据面分离是该系统的基本原则。AXI-Lite 寄存器只负责层参数、tile 参数、量化参数、stream 配置和性能计数器；大规模张量数据全部通过 AXI DMA 搬运。这样既避免了 PS 逐字节访问 PL，又使 batch stream、raw-HWC cache 和不同调度开关可以在不改变外部总线结构的情况下演进。
+该结构分离控制面和数据面。AXI-Lite 只承载层参数、tile 参数、量化参数、stream 配置和性能计数器；大规模张量数据全部通过 AXI DMA 搬运。这一划分使 PL 内部数据流可以持续演进，而外部软件 ABI 和 DMA 拓扑保持稳定。
 
-\section{PL 加速器内部数据流}
+\section{LASA 数据通路概览}
 
-图~\ref{fig:accelerator_datapath} 展示 PL 内部数据流。输入端包含 bias/weight loader、line/vector/raw-HWC IFM loader；中间是 layer scheduler、window feeder、systolic top 和 partial-PSUM 存储；输出端包含 drain/collector、requant、activation、pooling 和 OFM byte writer。
+图~\ref{fig:accelerator_datapath} 展示 LASA 的数据通路。输入侧包含 bias loader、weight loader 和 IFM feeder；中间是 layer scheduler、systolic array 和 partial-PSUM 存储；输出侧包含 collector/drain、requant、activation、pooling 和 OFM writer。该图只描述各功能块的连接关系，具体的 KCS 分块、片上重排、PSUM 反馈和 pass 级预取在第~\ref{chap:dataflow} 章展开。
 
 \begin{figure}[htb]
 \centering
-\resizebox{\textwidth}{!}{%
-\begin{tikzpicture}[
-    node distance=7mm and 8mm,
-    blk/.style={draw, rounded corners=1pt, align=center, minimum width=20mm, minimum height=8mm},
-    bus/.style={-Latex, thick}
-]
-\node[blk] (sched) {layer\\scheduler};
-\node[blk, below left=of sched] (bias) {bias\\loader};
-\node[blk, below=of sched] (wgt) {weight\\loader};
-\node[blk, below right=of sched] (ifm) {IFM feeder\\line/vector/raw-HWC};
-\node[blk, right=of wgt, minimum width=28mm] (array) {systolic array\\INT8 MAC};
-\node[blk, right=of array] (psum) {partial-PSUM\\buffer/stream};
-\node[blk, right=of psum] (post) {requant\\LUT/pool};
-\node[blk, right=of post] (ofm) {OFM\\AXIS writer};
-\draw[bus] (sched) -- (bias);
-\draw[bus] (sched) -- (wgt);
-\draw[bus] (sched) -- (ifm);
-\draw[bus] (bias) -- (array);
-\draw[bus] (wgt) -- (array);
-\draw[bus] (ifm) -- (array);
-\draw[bus] (array) -- (psum);
-\draw[bus] (psum) -- (post);
-\draw[bus] (post) -- (ofm);
-\draw[bus] (psum) |- ++(0,-12mm) -| node[below]{non-final pass feedback} (array);
-\end{tikzpicture}
-}
-\caption{PL 加速器内部数据流}
+\includegraphics[width=\textwidth]{\detokenize{img/picture/LASA数据通路.png}}
+\caption{LASA 数据通路概览}
 \label{fig:accelerator_datapath}
 \end{figure}
 
-该数据通路采用 packet 化语义。每个输出 pixel 和一个 $Cout_{tile}$ 通道块形成一个 PSUM packet，非 final K pass 写回 partial-PSUM，final K pass 进入后处理流水线。后处理后，每个有效输出 byte 被打包为 OFM debug packet。虽然该输出格式不是最终最高效的连续 HWC burst，但它保留了地址信息，便于软件重排和 golden 比对，是当前板级验证链路的基础。
+LASA 的最终板级配置采用 ROWS=18、COLS=8、$Cout_{tile}=16$。阵列沿 K 维接收 18 路 IFM lane；每个列位置包含两个 INT8 output-channel lane，因此 COLS=8 对应 16 个并行输出通道。两个 lane 的乘积分别累加到独立 INT32 partial sum 中，并在 final pass 后进入逐通道重量化路径。该 dual-lane INT8 column 设计提高了输出通道维度并行度，也决定了 PSUM packet、requant lane 和 OFM writer 的基本粒度。
 
-\section{Systolic 计算核心}
+\section{层自适应机制}
 
-本文最终板级配置采用 ROWS=18、COLS=8、$Cout_{tile}=16$。阵列沿 K 维接收 18 路 IFM lane，每个列位置对应两个输出通道 lane，因此一个 pass 处理最多 16 个输出通道。PE 内部完成 INT8 乘法和 INT32 累加，权重在当前 pass 内驻留，IFM 向量随输出 pixel 推进。
+LASA 的“层自适应”体现在四个方面。第一，计算路径原生支持 3x3 与 1x1 卷积。对 3x3 卷积，IFM feeder 根据 $oy,ox,k_y,k_x,c_i$ 生成展开后的 K 维向量；对 1x1 卷积，硬件使用 native vector path，避免将 1x1 强行映射为稀疏 3x3 后产生无效 K pass。这样 Conv7 和 Conv9 等检测头可以使用更短的 $K_{total}$。
 
-对 3x3 卷积，IFM feeder 负责根据 $oy,ox,k_y,k_x,c_i$ 生成展开后的 K 维向量。对 1x1 卷积，硬件支持 native vector path，避免把 1x1 强行映射为稀疏 3x3 后带来的无效 K pass。这样 Conv7 和 Conv9 检测头可以使用更短的 $K_{total}$，减少后端层调度开销。
+第二，后处理路径采用可配置旁路。final K pass 输出首先进入逐通道重量化模块；重量化后的 uint8 输出进入 activation LUT，可根据层描述选择 identity、ReLU/Leaky ReLU 等语义。若当前层启用 pooling，则 OFM pooling 模块执行 $2\times2$、stride=2 的 maxpool；若不启用 pooling，则数据直接旁路到 OFM byte stream。该机制使同一套硬件可以覆盖 YOLOv3-tiny 中带 pool 和不带 pool 的层。
 
-\section{后处理流水线}
+第三，层参数由 descriptor 驱动。软件通过 layer descriptor 配置输入/输出尺寸、kernel、stride、padding、$K_{total}$、Cout blocks、spatial tile、量化参数、activation 和 pool 标志。硬件不需要为不同层重新综合，而是通过 AXI-Lite 寄存器和 stream packet 边界切换执行语义。
 
-final K pass 的输出首先进入重量化模块。每个输出通道 lane 有独立的 multiplier、shift 和 output zero point，配置通过 AXI-Lite 间接寄存器写入。重量化后的 uint8 输出进入 activation LUT，支持 identity、ReLU/Leaky ReLU 等运行时可配置语义。若当前层启用 pooling，则 OFM pooling 模块执行 $2\times2$、stride=2 的 maxpool，并将池化后的输出写入 OFM byte stream。
+第四，数据流模式可组合。LASA 的基础数据通路可以与 batch stream、raw-HWC cache、partial-PSUM overlap、continuous collector 和 during-compute prefetch 等模式组合使用。对于以 1x1/3x3 标准卷积、逐层激活和池化为主的轻量化边缘 CNN，该机制具备扩展到其他顺序型卷积层的基础；对 depthwise/group convolution、residual add、concat 等结构，则需要后续扩展专门的数据路径或软件融合策略。
 
-该设计使 Conv0--Conv4 中的卷积和池化可以在 PL 内连续完成，软件看到的层输出已经是下一层输入所需的 HWC 量化张量。对后端不带 pool 的层，后处理路径直接输出卷积结果。
+\section{链式推理执行流程}
 
-\section{AXI-Lite 配置与性能计数器}
+一次 Conv0--Conv9 推理从 DDR 中的图像包开始。软件读取或准备输入图像，按 layer descriptor 写入当前层的尺寸、量化、tile 和 stream 配置，随后启动 OFM S2MM DMA 以及 bias、weight、IFM 三路 MM2S DMA。LASA 在当前层结束后输出带地址的 OFM packet，软件将其重排为 HWC buffer，并作为下一层输入或最终 YOLO decode 输入。
 
-AXI-Lite 寄存器分为四类。第一类是基础层配置，包括 feature map 尺寸、kernel/stride/pad、$K_{total}$、$Cout$、tile 行范围和 expected bytes。第二类是 stream 配置，包括 batch mode、raw-HWC mode、early drain、pass prefetch、continuous PSUM 和 during-compute prefetch 等开关。第三类是量化和 activation LUT 间接写入寄存器。第四类是只读性能计数器，包括 busy、wait、stage、sub-stage、raw-HWC、prefetch、collector 和 pass timeline 统计。
+当前 OFM 输出采用 debug packet 语义：每个有效输出 byte 携带地址并写入 DDR。该格式不是最高带宽效率的连续 HWC burst，但保留了地址信息，便于板级阶段进行逐层重排、golden 比对和错误定位。第~\ref{chap:runtime} 章将进一步说明 runtime、寄存器接口、验证模式和性能计数器如何围绕该路径组织。
 
-性能计数器是本文实验论证的重要组成部分。它们不改变外部数据格式，却能在每个 tile 或每层结束后解释加速器时间消耗：等待 DMA、feeder replay、compute stage 空泡、PSUM drain、OFM post-process 分别占多少周期。第六章将使用这些计数器说明优化如何改变瓶颈分布。
+\section{本章小结}
 
-\section{软件运行时协同}
-
-Vitis bare-metal runtime 使用静态 layer descriptor 描述 Conv0--Conv9 的输入尺寸、输出通道数、kernel、pool、K passes、Cout blocks 和 golden 信息。运行时按 layer 和 spatial tile 循环，写入配置寄存器，启动 OFM S2MM DMA，再启动输入 MM2S DMA，最后等待 accelerator done 和 OFM DMA 完成。
-
-在验证模式下，软件解析每个 OFM debug packet 的地址和数据，将其重排为 HWC buffer，并与 RTL semantic golden 比较。在 DDR image demo 模式下，软件从固定 DDR 地址读取图像包，执行十层硬件推理后对 Conv9 输出运行 YOLO decode。该路径证明本文设计不仅能通过模块仿真，也能在真实 PS/PL 协同环境中完成端到端图像推理。
+本章提出并定义了 LASA 层自适应脉动阵列架构。LASA 通过 dual-lane INT8 systolic array、1x1/3x3 原生计算路径、可旁路后处理和 descriptor-driven 配置，为 YOLOv3-tiny 链式推理提供统一硬件执行基础。下一章将在 LASA 上进一步提出 KCS 三维分块执行模型，并围绕 PS/PL 交互、IFM 数据排布和 K-pass 边界气泡展开优化。

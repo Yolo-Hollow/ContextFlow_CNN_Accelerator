@@ -1,13 +1,13 @@
 \chapter{验证与实验结果}
 \label{chap:results}
 
-本章报告本文加速器的正确性验证、板级端到端性能、优化消融、阶段计数器分析和资源时序结果。实验的重点不是将最终延迟包装为实时视频领先指标，而是验证本文提出的数据流和调度优化是否能够在真实 MPSoC 环境中降低 YOLOv3-tiny 链式推理的非计算开销，并解释性能瓶颈如何迁移。
+本章报告 LASA 加速器的正确性验证、板级端到端性能、优化消融、阶段计数器分析和资源时序结果。实验围绕 KCS 执行模型以及 BSD、OCRR、OPF-P 三类优化策略展开，验证其在真实 MPSoC 环境中降低 YOLOv3-tiny 链式推理非计算开销的效果，并解释性能瓶颈如何迁移。
 
 \section{实验设置}
 
-实验平台为 Xilinx Kria KV260，PL 器件为 XCK26，工具链为 Vivado/Vitis 2022.2。最终推荐硬件构建目录为 \texttt{D:/MPSoC/b\_kprefetch\_22}，核心时钟目标为 100 MHz。加速器参数为 ROWS=18、COLS=8、$Cout_{tile}=16$、IFM FIFO depth=1024，后端 raw-HWC full-tile cache 使用 URAM 承载 Conv5/6/8 的 $13\times13$ tile。
+实验平台为 Xilinx Kria KV260，PL 器件为 XCK26，工具链为 Vivado/Vitis 2022.2。最终推荐硬件构建目录为 \texttt{D:/MPSoC/b\_kprefetch\_22}，核心时钟目标为 100 MHz。LASA 参数为 ROWS=18、COLS=8、$Cout_{tile}=16$、IFM FIFO depth=1024，后端 raw-HWC full-tile cache 使用 URAM 承载 Conv5/6/8 的 $13\times13$ tile。
 
-最终推荐软件配置为 \texttt{conv0\_conv9\_ddr\_demo}，开启 RawHwcConv4/5/6/8、early drain、pass prefetch、partial-PSUM overlap、continuous PSUM、backend full-tile 和 during-compute prefetch。验证路径包含两类：第一类是 batch-chain 模式，对 Conv0--Conv9 每层输出与 RTL semantic golden 做 bit-exact 比较；第二类是 DDR image demo，将 $416\times416\times3$ 图像包写入 DDR，由硬件执行十层推理并在 A53 侧进行 YOLO decode。
+最终推荐软件配置为 \texttt{conv0\_conv9\_ddr\_demo}，开启 RawHwcConv4、5、6、8，early drain、pass prefetch、partial-PSUM overlap、continuous PSUM、backend full-tile 和 during-compute prefetch。验证路径包含两类：第一类是 batch-chain 模式，对 Conv0--Conv9 每层输出与 RTL semantic golden 做 bit-exact 比较；第二类是 DDR image demo，将 $416\times416\times3$ 图像包写入 DDR，由硬件执行十层推理并在 A53 侧进行 YOLO decode。
 
 \section{正确性验证}
 
@@ -35,7 +35,7 @@ DDR image demo & 动态图像输入与 YOLO decode & 两张图像 PASS \\
 
 \section{端到端性能与优化消融}
 
-表~\ref{tab:ablation} 汇总了主要板级优化版本的端到端 DDR demo 延迟。所有结果均来自 KV260 板级运行，输入图像和模型链路保持一致。不同版本的目标不是形成严格产品发布序列，而是展示本文优化如何逐步降低非计算开销。
+表~\ref{tab:ablation} 汇总了主要板级优化版本的端到端 DDR demo 延迟。所有结果均来自 KV260 板级运行，输入图像和模型链路保持一致。各版本展示了本文优化策略逐步降低非计算开销的过程。
 
 \begin{table}[htb]
 \centering
@@ -45,16 +45,23 @@ DDR image demo & 动态图像输入与 YOLO decode & 两张图像 PASS \\
 \toprule
 版本或优化阶段 & 主要变化 & 典型延迟 \\
 \midrule
-Batch/DDR baseline & batch stream，DDR 图像 demo 初版 & $\approx 1.18$ s \\
-Weight 64-bit loader & 预打包权重与 64-bit PL 解包 & $\approx 0.861$ s \\
-Drainpipe & 流水化 PSUM drain writer & $\approx 0.646$ s \\
-Early drain + pass prefetch & 提前 drain 与下一 K pass 预取 & $\approx 0.387$ s \\
-Continuous PSUM collector & 非 final pass 持续写 partial-PSUM & $\approx 0.371$ s \\
-Backend full-tile & Conv5/6/8 使用 $13\times13$ full tile & $\approx 0.335$ s \\
-During-compute prefetch & 当前 compute 中准备下一 K pass & $\approx 0.288$ s \\
+BSD baseline & batch stream 与 DDR 图像 demo 初版 & $\approx 1.18$ s \\
+BSD weight layout & 预打包权重与 64-bit PL 解包 & $\approx 0.861$ s \\
+OPF-P drainpipe & 流水化 PSUM drain writer & $\approx 0.646$ s \\
+OPF-P prefetch & early drain 与下一 K pass 预取 & $\approx 0.387$ s \\
+OPF-P collector & 非 final pass 持续写 partial-PSUM & $\approx 0.371$ s \\
+OCRR full-tile & Conv5/6/8 使用 $13\times13$ full tile & $\approx 0.335$ s \\
+OPF-P during-compute & 当前 compute 中准备下一 K pass & $\approx 0.288$ s \\
 \bottomrule
 \end{tabular}
 \end{table}
+
+\begin{figure}[htb]
+\centering
+\includegraphics[width=\textwidth]{img/picture/ablation_norm_speedup.png}
+\caption{端到端 DDR demo 归一化延迟与相对加速比}
+\label{fig:ablation_bar}
+\end{figure}
 
 最终 \texttt{b\_kprefetch\_22} 构建完成 full-programming batch-chain 验证，日志中 UART detections 与 decode golden 匹配。两张 DDR image demo 的结果如表~\ref{tab:ddr_demo} 所示。
 
@@ -72,7 +79,25 @@ maksssksksss1.png & 287.993 ms & with\_mask, score=0.295050 & 20260616\_193752 \
 \end{tabular}
 \end{table}
 
-该结果约为 3.5 FPS，不应表述为通用实时检测领先性能。本文将其解释为在资源受限 XCK26 上，通过数据流与调度优化将早期约 1.18 s 的完整链式推理降低到约 0.29 s，获得约 4.1 倍端到端加速。
+该结果约为 3.5 FPS。与早期约 1.18 s 的完整链式推理版本相比，最终版本将端到端延迟降低到约 0.29 s，获得约 4.1 倍端到端加速。该提升来自 BSD、OCRR 和 OPF-P 对 PS/PL 交互、IFM 布局转换和 K-pass 边界气泡的分别优化。
+
+为给出软件参考基线，本文采用单核 Cortex-A53 INT8 scalar KCO 实现作为 CPU-only baseline。该实现与硬件实验使用同一条 Conv0--Conv9 单尺度链路，板级日志记录的 \texttt{CPU\_TOTAL} 为 2540175 us。图~\ref{fig:software_vs_hardware} 将其与最终硬件 DDR image demo 的端到端延迟进行对比，硬件版本相对于该软件基线获得约 8.82 倍加速。
+
+\begin{figure}[htb]
+\centering
+\includegraphics[width=0.82\textwidth]{img/picture/software_vs_hardware.png}
+\caption{A53 软件基线与最终硬件端到端延迟对比}
+\label{fig:software_vs_hardware}
+\end{figure}
+
+此外，LASA 在同一套阵列和输出后处理路径中原生支持 $1\times1$ 与 $3\times3$ 卷积。图~\ref{fig:native1x1_vs_sparse3x3} 对比了早期将 $1\times1$ 卷积映射为稀疏 $3\times3$ 的实现，以及后续 native $1\times1$ 路径在 Conv7 和 Conv9 上的单层延迟。原生路径避免了稀疏 $3\times3$ 映射引入的无效 K pass 与权重/输入搬运，Conv7 和 Conv9 分别获得约 47.7 倍和 86.6 倍加速。
+
+\begin{figure}[htb]
+\centering
+\includegraphics[width=0.9\textwidth]{img/picture/native1x1_vs_sparse3x3.png}
+\caption{$1\times1$ 卷积层原生路径与稀疏 $3\times3$ 映射延迟对比}
+\label{fig:native1x1_vs_sparse3x3}
+\end{figure}
 
 \section{阶段计数器分析}
 
@@ -97,7 +122,7 @@ drain stage & 16.467 ms \\
 \end{tabular}
 \end{table}
 
-这些计数器说明，经过 drainpipe 和 continuous PSUM 后，drain 已不再是主要瓶颈；经过 backend full-tile 和 during-compute prefetch 后，剩余开销主要分布在 feeder/replay 和 compute stage idle。换言之，下一步优化不应继续单纯扩大阵列，而应继续提高 raw-HWC replay 吞吐、减少 compute stage 内部空泡，并评估 OFM debug packet 对软件重排的影响。
+这些计数器说明，经过 OPF-P 中的 drainpipe 和 continuous PSUM 后，drain 已不再是主要瓶颈；经过 OCRR full-tile 和 OPF-P during-compute prefetch 后，剩余开销主要分布在 feeder/replay 和 compute stage idle。换言之，下一步优化不应继续单纯扩大阵列，而应继续提高 raw-HWC replay 吞吐、减少 compute stage 内部空泡，并评估 OFM debug packet 对软件重排的影响。
 
 \section{资源与时序}
 
@@ -125,11 +150,11 @@ Routing errors & 0 \\
 \end{tabular}
 \end{table}
 
-资源结果体现了本文优化的代价。raw-HWC full-tile cache 引入 URAM 以减少后端 tile 启动开销；continuous PSUM collector 和性能计数器增加 LUT/FF；during-compute prefetch 增加调度与队列控制逻辑。整体上，设计仍能装入 XCK26 并闭合 100 MHz，但 LUT 使用已经较高，继续增加 column-level PSUM 或更深 overlap 时需要谨慎评估资源和时序裕量。
+资源结果体现了本文优化的代价。OCRR raw-HWC full-tile cache 引入 URAM 以减少后端 tile 启动开销；OPF-P continuous PSUM collector 和性能计数器增加 LUT/FF；during-compute prefetch 增加调度与队列控制逻辑。整体上，设计仍能装入 XCK26 并闭合 100 MHz，但 LUT 使用已经较高，继续增加 column-level PSUM 或更深 overlap 时需要谨慎评估资源和时序裕量。
 
 \section{与相关工作的定性比较}
 
-表~\ref{tab:qualitative_compare} 从研究重点角度比较本文与代表性工作。由于不同论文使用的模型、输入尺寸、器件、频率、量化策略和是否计入软件后处理差异较大，本文不进行不公平的绝对 FPS 横向排名。
+表~\ref{tab:qualitative_compare} 从研究重点角度比较本文与代表性工作。由于不同论文使用的模型、输入尺寸、器件、频率、量化策略和是否计入软件后处理差异较大，本节采用网络粒度、数据流讨论、板级端到端验证和性能解释方式等维度进行定性比较。
 
 \begin{table}[htb]
 \centering
@@ -141,21 +166,21 @@ Routing errors & 0 \\
 \midrule
 主要目标 & 自动化映射流程 & systolic array 生成 & MPSoC 链式推理优化 \\
 网络粒度 & 多模型映射 & 阵列综合 & YOLOv3-tiny Conv0--Conv9 \\
-数据流讨论 & 编译映射为主 & 阵列结构为主 & DMA/IFM/PSUM/pass 调度 \\
+数据流讨论 & 编译映射为主 & 阵列结构为主 & BSD/OCRR/OPF-P 分层优化 \\
 板级端到端 & 有 & 非重点 & KV260 DDR image demo \\
 性能解释 & 较少 & 较少 & stage/pass/counter 诊断 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-本文的优势在于系统闭环和瓶颈解释；不足在于通用性和绝对吞吐仍有限。当前 runtime 针对 YOLOv3-tiny 单尺度静态调度，不是通用 CNN 编译器；OFM 输出仍采用 debug packet 格式，验证友好但带宽效率不足；功耗数据尚未形成板级实测，后续可结合 Vivado power estimate 或外部功耗计进行能效评估。
+本文的特点在于系统闭环和瓶颈解释。当前 runtime 面向 YOLOv3-tiny 单尺度静态调度，尚未扩展为通用 CNN 编译器；OFM 输出采用 debug packet 格式，便于验证和错误定位，后续可进一步迁移为连续 HWC burst 以提高带宽效率；功耗数据尚未形成板级实测，后续可结合 Vivado power estimate 或外部功耗计进行能效评估。
 
-\section{局限性与后续工作}
+\section{讨论与后续工作}
 
-本文仍存在以下局限。第一，最终延迟约 288 ms，不能宣称实时视频级性能领先。其价值在于证明优化路径和系统完整性，而不是与 GPU/NPU 进行绝对性能竞争。第二，OFM debug packet 以每字节一个带地址 packet 的方式输出，便于验证但降低 DMA 带宽效率；后续应设计连续 HWC burst 写回。第三，raw-HWC cache 对层形状敏感，Conv3 实验说明并非所有层都适合启用该路径。第四，column-level PSUM 仍处于探索阶段，需要完整 top-level xsim 和板级 A/B 后才能作为正式优化。
+基于当前实验结果，后续工作可从以下方向展开。第一，最终版本端到端延迟约为 288 ms，阶段计数器显示 feeder/replay 与 compute idle 仍占有较大比例，后续可继续提高 raw-HWC replay 吞吐并细化 pass 内部调度。第二，OFM debug packet 以每字节一个带地址 packet 的方式输出，便于验证但会增加 DMA 与软件重排开销，后续应设计连续 HWC burst 写回。第三，OCRR raw-HWC cache 对层形状敏感，Conv3 实验说明该路径更适合后端小空间尺寸层，后续可由 runtime 根据层形状自动选择。第四，LASA 当前主要覆盖以 1x1/3x3 标准卷积、逐层激活和池化为主的顺序型网络，对 depthwise/group/residual/concat 等结构仍需扩展。第五，column-level PSUM 仍处于探索阶段，需要完整 top-level xsim 和板级 A/B 后才能作为正式优化。
 
-后续工作可从四个方向展开：一是将 OFM 输出迁移为连续 HWC DMA burst，减少软件重排；二是继续优化 raw-HWC replay 吞吐和 compute stage idle；三是完善 column-level PSUM feedback，使 partial sum 按列粒度更早进入下一 pass；四是补充功耗实测和更广泛模型验证，提升论文结论的可比性和可推广性。
+此外，补充功耗实测和更广泛模型验证也有助于提高结论的可比性和可推广性。功耗部分可结合 Vivado power estimate 与外部功耗计结果进行交叉验证；模型部分可优先选择同样以 1x1/3x3 标准卷积为主的轻量网络，评估 LASA 层自适应机制和 KCS/BSD/OCRR/OPF-P 优化策略在不同层形状下的适用范围。
 
 \section{本章小结}
 
-本章给出了本文加速器的正确性、性能、资源和限制分析。实验表明，本文设计能够在 KV260/XCK26 上完成真实 Conv0--Conv9 链式推理，并通过 batch stream、raw-HWC cache、backend full-tile、continuous PSUM 和 during-compute prefetch 将端到端 DDR demo 延迟降低到约 0.29 s。性能计数器进一步说明，优化后瓶颈已从 PSUM drain 和权重加载转移到 feeder/replay 与 compute idle，为后续工作提供了明确方向。
+本章给出了 LASA 加速器的正确性、性能、资源和实验分析。实验表明，本文设计能够在 KV260/XCK26 上完成真实 Conv0--Conv9 链式推理，并通过 BSD、OCRR 和 OPF-P 将端到端 DDR demo 延迟降低到约 0.29 s。性能计数器进一步说明，优化后瓶颈已从 PSUM drain 和权重加载转移到 feeder/replay 与 compute idle，为后续工作提供了明确方向。

@@ -1,104 +1,103 @@
-\chapter{数据流与分块调度优化}
+\chapter{面向链式推理的数据流与调度优化}
 \label{chap:dataflow}
 
-本章讨论本文针对真实 YOLOv3-tiny 层提出的数据流与调度优化。若只考虑阵列峰值，卷积层似乎可以由 $MACs / Peak$ 估算延迟；但在 MPSoC 板级运行中，实际时间还包含权重加载、IFM 打包、DMA 启动、tile 边界同步、缓存重放和 OFM 重排。因此，本文将优化目标定义为降低非计算开销：
+LASA 提供了层级可配置的硬件执行基础，但真实 YOLOv3-tiny 链式推理的端到端延迟仍不能只由阵列峰值吞吐决定。权重加载、IFM 打包、DMA 启动、tile 边界同步、partial-PSUM 反馈、pass 准备和 OFM 输出都会形成非计算开销。因此，本文将优化目标写为
 \begin{equation}
 T_{noncomp}=T_{layer}-T_{compute\_fire}.
 \end{equation}
-其中 $T_{compute\_fire}$ 表示阵列真正接受一个输出 pixel 计算的周期数，其余部分均属于等待、搬运、反馈或边界开销。
+其中 $T_{compute\_fire}$ 表示阵列真正接受输出 pixel 计算的周期数，其余部分均属于等待、搬运、反馈或边界开销。
 
-\section{三维分块调度}
-
-本文使用 K 维、输出通道和空间三维分块。K 维分块由 ROWS 决定，最终配置 ROWS=18，因此 $K_{tile}=18$。输出通道分块由 COLS 决定，每列产生两个输出 lane，最终配置 COLS=8，因此 $Cout_{tile}=16$。空间分块由 tile 的输出行范围决定，用于限制片上 IFM/OFM buffer 和单次 AXI DMA 长度。
-
-图~\ref{fig:tiling_schedule} 给出三维调度关系。每个 spatial tile 内，调度器先遍历输出通道块，再对当前输出通道块执行所有 K pass。首个 K pass 从 bias 初始化 partial sum，非首 pass 读取上一轮 partial-PSUM，final pass 输出到后处理流水线。
+本章首先提出 KCS 三维分块执行模型，将不同层统一映射为 K-pass、Cout block 和 spatial tile。随后围绕三类非计算瓶颈提出三类优化策略：面向 PS/PL 交互的批量流式协同策略 BSD（Batched Streaming Dataflow）、面向 IFM 布局转换的片上重排与重放策略 OCRR（On-Chip Reorder and Replay），以及面向 K-pass 边界气泡的反馈重叠与预取策略 OPF-P（Overlapped PSUM Feedback and Prefetch）。
 
 \begin{figure}[htb]
 \centering
-\resizebox{0.86\textwidth}{!}{%
-\begin{tikzpicture}[
-    node distance=6mm,
-    blk/.style={draw, rounded corners=1pt, align=center, minimum width=28mm, minimum height=7mm},
-    bus/.style={-Latex, thick}
-]
-\node[blk] (tile) {spatial tile};
-\node[blk, below=of tile] (cout) {for each Cout block};
-\node[blk, below=of cout] (k) {for each K pass};
-\node[blk, below left=of k] (load) {load weight\\feed IFM};
-\node[blk, below=of k] (comp) {compute};
-\node[blk, below right=of k] (drain) {partial/final\\PSUM drain};
-\draw[bus] (tile) -- (cout);
-\draw[bus] (cout) -- (k);
-\draw[bus] (k) -- (load);
-\draw[bus] (load) -- (comp);
-\draw[bus] (comp) -- (drain);
-\draw[bus] (drain.east) .. controls +(16mm,0) and +(16mm,0) .. node[right]{next K pass} (k.east);
-\end{tikzpicture}
-}
-\caption{K/Cout/spatial 三维调度关系}
+\includegraphics[width=\textwidth]{\detokenize{img/picture/时序优化策略.png}}
+\caption{BSD、OCRR 与 OPF-P 三类优化策略总览}
+\label{fig:strategy_overview}
+\end{figure}
+
+\section{KCS 三维分块执行模型}
+
+KCS 执行模型由 K 维、输出通道和空间三个调度维度组成。K 维分块由 ROWS 决定，最终配置 ROWS=18，因此 $K_{tile}=18$。输出通道分块由 COLS 和 dual-lane INT8 column 决定，每列产生两个输出通道 lane，因此
+\begin{equation}
+Cout_{tile}=2\times COLS.
+\end{equation}
+最终配置 COLS=8，对应 $Cout_{tile}=16$。空间分块由 tile 的输出行范围决定，用于限制片上 IFM/OFM buffer 和单次 AXI DMA 长度。
+
+图~\ref{fig:tiling_schedule} 给出三维调度关系。每个 spatial tile 内，调度器先遍历输出通道块，再对当前输出通道块执行所有 K pass。首个 K pass 从 bias 初始化 partial sum；非首 pass 读取上一轮 partial-PSUM；final pass 将结果送入 requant、activation、pooling 和 OFM path。
+
+\begin{figure}[htb]
+\centering
+\includegraphics[width=\textwidth]{\detokenize{img/picture/KCS分块策略.png}}
+\caption{KCS 三维分块执行模型}
 \label{fig:tiling_schedule}
 \end{figure}
 
-该调度方式的优点是通用性强，可覆盖从 Conv0 到 Conv9 的不同层形状；缺点是当 $N_{kpass}$ 和 $N_{cout}$ 较大时，pass 边界开销会被重复放大。后续优化均围绕减少这些重复开销展开。
+KCS 不是单独的优化策略，而是 LASA 上的统一映射抽象。它回答不同 CNN 层如何映射到固定阵列规模，而 BSD、OCRR 和 OPF-P 则分别针对映射后暴露出的 PS/PL 交互、数据排布和 pass 边界开销进行优化。
 
-\section{Batch Stream}
+\section{BSD：面向 PS/PL 交互的批量流式协同}
 
-早期 per-request 模式中，硬件每需要一个 bias block、weight tile 或 IFM line 时向软件发出请求，软件随后打包数据、启动 DMA 并等待完成。这种方式适合小型 smoke test，但在 Conv6 等真实层中会产生数万次服务事件，A53 侧开销和 DMA 启动开销会淹没阵列计算。
+BSD 的目标是降低 PS 逐请求服务和 DMA 频繁启动造成的系统协同开销。早期 per-request 模式中，硬件每需要一个 bias block、weight tile 或 IFM line 时向软件发出请求，软件随后打包数据、启动 DMA 并等待完成。这种方式适合小型 smoke test，但在 Conv6 等真实层中会产生大量服务事件，A53 侧开销和 DMA 启动开销会淹没阵列计算。
 
-Batch stream 将每个 spatial tile 所需的 bias、weight 和 IFM 数据预先打包成连续 AXI stream。软件在 tile 开始时分别启动三路输入 DMA，硬件通过 packet count 恢复内部边界，只在整个 stream 末尾依赖 TLAST。该方式带来两个直接收益：第一，DMA 启动次数从每个请求一次降低为每个 tile 每类输入一次；第二，AXI backpressure 由 PL 自然吸收，软件不需要在 pass 内频繁轮询硬件请求。
+BSD 将每个 spatial tile 所需的 bias、weight 和 IFM 数据预先打包成连续 AXI stream。软件在 tile 开始时分别启动三路输入 DMA，硬件通过 packet count 恢复内部边界，只在整个 stream 末尾依赖 TLAST。这样，DMA 启动次数从每个请求一次降低为每个 tile 每类输入一次，AXI backpressure 也由 PL 自然吸收。
 
-STREAM\_CFG bit0 控制 batch mode。对应的 BIAS\_PACKETS、WEIGHT\_PACKETS 和 IFM\_PACKETS 寄存器用于配置期望 packet 数，硬件完成后通过只读 counter 回报完成数。软件在每个 tile 结束时比较 expected/completed，保证 stream 边界没有丢包或多包。
+权重数据在模型中通常按输出通道、输入通道和 kernel 维度组织，而硬件消费顺序是 $Cout block \rightarrow K pass \rightarrow lane \rightarrow channel$。本文在生成 Vitis header 时直接产生硬件消费顺序的权重数组，使 weight DMA 可以读取 ELF 只读段中的连续数组，不再需要运行时 scratch copy 或 repack。PL 端 weight loader 使用 64-bit AXI beat 写入多个 byte bank，进一步降低 weight load 等待。预打包权重虽然作用于数据布局，但其主要收益是减少运行时 PS 服务和 DMA 准备成本，因此归入 BSD。
 
-\section{预打包权重布局}
+\section{OCRR：面向 IFM 布局转换的片上重排与重放}
 
-权重数据天然以模型格式保存，通常按输出通道、输入通道和 kernel 维度组织；而硬件消费顺序是 $Cout block \rightarrow K pass \rightarrow lane \rightarrow channel$。若每次运行时由 A53 重新排列权重，会造成明显的软件时间开销。
+OCRR 的目标是缓解软件自然 HWC 布局与 systolic array K-lane 消费顺序之间的不匹配。IFM 输入存在两种路径。第一种是 prepacked IFM stream：软件提前把每个 K pass 需要的 IFM lane 按硬件顺序打包。该方式 PL 简单，但 A53 侧打包成本较高。第二种是 raw-HWC stream：软件发送自然 HWC tile，PL 在片上缓存后按 pass 和窗口顺序 replay。
 
-本文在构建 Vitis header 时直接生成硬件消费顺序的权重数组。这样 batch mode 下 weight DMA 可以直接读取 ELF 只读段中的连续数组，不再需要运行时 scratch copy 或 repack。PL 端 weight loader 使用 64-bit AXI beat，一拍写入多个 byte bank，进一步降低 weight load 等待。该优化不改变外部 ABI，只改变软件生成数据的排列方式和 PL loader 的内部写入粒度。
+图~\ref{fig:strategy_overview} 中间部分给出 OCRR 的数据排布思路。prepacked 路径把重排压力放在软件；raw-HWC 路径把重排压力转移到 PL cache/replay，但可减少 A53 逐 pass 复制和索引开销。对 3x3 层，cache materializes 每个输出 pixel 的 3x3 窗口，并按 18 lane 输出给阵列；对 1x1 层，cache 按连续通道向量 replay。
 
-\section{Raw-HWC Tile Cache}
-
-IFM 输入存在两种路径。第一种是 prepacked IFM stream：软件提前把每个 K pass 需要的 IFM lane 按硬件顺序打包。该方式 PL 简单，但 A53 侧打包成本较高。第二种是 raw-HWC stream：软件发送自然 HWC tile，PL 在片上缓存后按 pass 和窗口顺序 replay。本文引入 raw-HWC tile cache 以降低后端层的软件打包压力。
-
-图~\ref{fig:raw_hwc_cache} 对比两种路径。prepacked 路径把重排压力放在软件；raw-HWC 路径把重排压力转移到 PL cache/replay，但可减少 A53 逐 pass 复制和索引开销。对 3x3 层，cache materializes 每个输出 pixel 的 3x3 窗口，并按 18 lane 输出给阵列；对 1x1 层，cache 按连续通道向量 replay。
-
-\begin{figure}[htb]
-\centering
-\resizebox{\textwidth}{!}{%
-\begin{tikzpicture}[
-    node distance=7mm and 10mm,
-    blk/.style={draw, rounded corners=1pt, align=center, minimum width=26mm, minimum height=8mm},
-    bus/.style={-Latex, thick}
-]
-\node[blk] (sw1) {software\\prepack IFM};
-\node[blk, right=of sw1] (dma1) {AXI DMA};
-\node[blk, right=of dma1] (core1) {systolic\\IFM FIFO};
-\node[blk, below=12mm of sw1] (sw2) {software\\raw HWC tile};
-\node[blk, right=of sw2] (dma2) {AXI DMA};
-\node[blk, right=of dma2] (cache) {raw-HWC\\tile cache};
-\node[blk, right=of cache] (core2) {systolic\\IFM FIFO};
-\draw[bus] (sw1) -- (dma1);
-\draw[bus] (dma1) -- node[above]{prepacked vectors} (core1);
-\draw[bus] (sw2) -- (dma2);
-\draw[bus] (dma2) -- node[above]{HWC bytes} (cache);
-\draw[bus] (cache) -- node[above]{replayed vectors} (core2);
-\end{tikzpicture}
-}
-\caption{prepacked IFM stream 与 raw-HWC tile cache 对比}
-\label{fig:raw_hwc_cache}
-\end{figure}
-
-raw-HWC 并非对所有层都收益为正。其收益取决于 tile 容量、输入通道数、replay 吞吐和 compute overlap。本文最终将 raw-HWC 作为后端 Conv4/5/6/8 的主要优化路径；Conv3 raw-HWC 虽然可功能通过，但由于 tile/FIFO 容量和 replay 开销，板级结果不优于推荐配置，因此作为边界分析而非默认路径。
-
-\section{Backend Full-Tile 调度}
-
-Conv5、Conv6 和 Conv8 的空间尺寸均为 $13\times13$。早期调度将这些层拆成 $4+4+4+1$ 行 spatial tile，可以降低片上缓存容量需求，但每个 tile 都需要重复启动 bias、weight、IFM 和 OFM 流程。随着 raw-HWC cache 使用 URAM 扩容，后端层可以使用完整 $13\times13$ tile，从而减少 tile 边界固定成本。
-
-Backend full-tile 的容量条件可近似写为
+OCRR 还包括后端 full-tile 调度。Conv5、Conv6 和 Conv8 的空间尺寸均为 $13\times13$。早期调度将这些层拆成 $4+4+4+1$ 行 spatial tile，可以降低片上缓存容量需求，但每个 tile 都需要重复启动 bias、weight、IFM 和 OFM 流程。随着 raw-HWC cache 使用 URAM 扩容，后端层可以使用完整 $13\times13$ tile，从而减少 tile 边界固定成本。容量条件可近似写为
 \begin{equation}
 tile\_pixels \times \left\lceil\frac{C_{in}}{2}\right\rceil \le HWC\_CACHE\_DEPTH.
 \end{equation}
-在最终 full-tile build 中，Conv5/8 需要 $13\times13\times\lceil256/2\rceil=21632$ 个 materialized word，Conv6 需要 $13\times13\times\lceil512/2\rceil=43264$ 个 materialized word。该容量由 HWC cache 的 URAM 实现承担，换取更少的 spatial tile 启动次数。
+在最终 full-tile build 中，Conv5/8 需要 $13\times13\times\lceil256/2\rceil=21632$ 个 materialized word，Conv6 需要 $13\times13\times\lceil512/2\rceil=43264$ 个 materialized word。raw-HWC 并非对所有层都收益为正；Conv3 raw-HWC 虽然可功能通过，但由于 tile/FIFO 容量和 replay 开销，板级结果不优于推荐配置，因此作为边界分析而非默认路径。
 
-\section{数据流优化小结}
+\section{OPF-P：面向 K-pass 边界的反馈重叠与预取}
 
-本章优化的共同目标是减少 $T_{noncomp}$。Batch stream 降低 DMA 启动和软件服务次数；预打包权重消除运行时 weight repack；raw-HWC cache 将 IFM 重排从 A53 移到 PL 并为后续 overlap 创造条件；backend full-tile 降低后端层空间 tile 固定开销。下一章将进一步讨论多 K pass 场景中 partial-PSUM feedback 和 pass-level prefetch 的调度优化。
+OPF-P 的目标是隐藏多 K pass 之间的 partial-PSUM 反馈和下一 pass 准备气泡。对于 $K_{total}>K_{tile}$ 的层，第一轮 K pass 只能产生部分和，后续 pass 必须读取前一轮 partial sum 并继续累加，最后一轮才进入重量化和输出路径。对一个输出 pixel 和一个 $Cout_{tile}$ 通道块，硬件内部形成
+\begin{equation}
+P[p,c] = \sum_{k=k_0}^{k_0+K_{tile}-1} X[p,k]\cdot W[k,c].
+\end{equation}
+当当前 pass 不是 final pass 时，该 packet 被写入片上 partial-PSUM buffer；下一 pass 读取同一地址的 partial sum 作为初值继续累加。当当前 pass 是 final pass 时，该 packet 被送入 requant/activation/pool/OFM path。
+
+该语义要求 partial-PSUM 地址、Cout block 和 pass context 与下一 pass 严格对齐，同时避免读写冲突，并保持 final pass 输出顺序与软件重排和 golden 比对一致。本文使用 ping-pong bank 和 per-pass context 维护这些条件。也就是说，PSUM 反馈不是独立于数据流之外的模块，而是跨 K pass 数据流的一部分。
+
+若每轮 pass 都严格串行执行“计算完成、全部 drain、下一轮 feed、下一轮 compute”，后端大层会出现明显阵列空泡。本文首先将 drain writer 改为 AXI-Stream 风格握手：packet valid、addr 和 data 在真实 $valid \& ready$ 握手前保持稳定，握手成功后才推进地址。随后加入 read-return tracker 和 one-entry hold register，使下游 ready 时可以接近每周期输出一个 PSUM packet。
+
+Early drain 允许调度器在当前 pass 已经开始产生 PSUM 数据后提前启动 drain，只要 partial-PSUM FIFO 已具备可读数据。Continuous PSUM collector 进一步改变非 final pass 的路径：collector 在 compute 开始前接收 pass context，并在阵列列 FIFO 产生完整 packet 后立即将其写入 partial-PSUM bank；final pass packet 则进入后处理流水线。这样，非 final pass 的 partial-PSUM 写回从“compute 后集中 drain”变为“compute 过程中持续收集”，减少 pass 边界处的反馈延迟。
+
+K pass 之间除了 PSUM 反馈，还包含下一 pass 权重加载和 IFM replay。Pass-level prefetch 在当前 pass 已经满足安全条件后提前准备下一 pass 的 weight 和 raw-HWC replay。该机制遵循两个约束：一是不能覆盖当前 pass 正在使用的 PE 权重；二是 next-pass IFM replay 只能进入解耦 FIFO 或安全队列，不能破坏当前 pass 的输入顺序。During-compute prefetch 进一步允许在当前 pass compute 进行时启动下一 pass 权重和 raw-HWC replay 的 staging，从而降低 compute stage 中由于下一 pass 准备不足造成的 idle。
+
+图~\ref{fig:psum_prefetch_timeline} 对比了串行 pass 和 OPF-P 重叠 pass 的时间线。
+
+\begin{figure}[htb]
+\centering
+\includegraphics[width=\textwidth]{\detokenize{img/picture/partial-psum feedback.png}}
+\caption{OPF-P 反馈重叠与 pass 级预取时间线}
+\label{fig:psum_prefetch_timeline}
+\end{figure}
+
+\section{优化策略小结}
+
+表~\ref{tab:strategy_summary} 汇总了 KCS 执行模型与三类优化策略的定位。KCS 负责将不同卷积层统一映射到 LASA；BSD 作用于软硬件协同层，减少 PS/DMA 服务开销；OCRR 作用于数据排布层，缓解 IFM 布局转换和 tile 边界开销；OPF-P 作用于流水线调度层，隐藏 K-pass 反馈和下一 pass 准备气泡。
+
+\begin{table}[htb]
+\centering
+\caption{KCS 执行模型与三类优化策略}
+\label{tab:strategy_summary}
+\begin{tabular}{@{}p{0.12\textwidth}p{0.16\textwidth}p{0.26\textwidth}p{0.30\textwidth}@{}}
+\toprule
+名称 & 层次 & 主要瓶颈 & 对应机制 \\
+\midrule
+KCS & 执行模型 & 层形状到固定阵列的映射 & K-pass、Cout block、spatial tile \\
+BSD & 软硬件协同 & PS 服务与 DMA 启动 & batch stream、packet count、prepacked weight \\
+OCRR & 数据排布转换 & IFM 重排与 tile 边界 & raw-HWC cache、replay、backend full-tile \\
+OPF-P & 流水线调度 & PSUM/pass 边界气泡 & drainpipe、continuous collector、pass prefetch \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+三类优化共同目标是减少 $T_{noncomp}$，但它们针对的不是同一种开销。这样的分层表述使本文的优化链条从零散实现点收敛为系统协同、数据排布和流水线调度三个层面的策略。下一章将说明这些策略如何通过 runtime、寄存器接口、验证流程和性能计数器集成为可运行、可诊断的板级系统。

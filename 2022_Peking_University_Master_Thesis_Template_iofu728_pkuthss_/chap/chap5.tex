@@ -1,96 +1,83 @@
-\chapter{Partial-PSUM 反馈与系统集成}
-\label{chap:psum}
+\chapter{运行时集成、验证机制与性能诊断}
+\label{chap:runtime}
 
-多 K pass 卷积的核心难点在于 partial-PSUM feedback。对于 $K_{total}>K_{tile}$ 的层，第一轮 K pass 只能产生部分和，后续 pass 必须读取前一轮 partial sum 并继续累加，最后一轮才进入重量化和输出路径。若每轮 pass 都严格串行执行“计算完成、全部 drain、下一轮 feed、下一轮 compute”，后端大层会出现明显阵列空泡。本章介绍本文如何对 partial-PSUM 路径和 pass 边界进行流水化与重叠。
+第~\ref{chap:dataflow} 章提出了 KCS 执行模型以及 BSD、OCRR、OPF-P 三类优化策略。本章转向系统实现层面，说明软件 runtime 如何配置 LASA 与这些策略，板级验证如何保证 Conv0--Conv9 链式推理正确，以及性能计数器如何支撑第六章的消融分析。通过运行时、寄存器接口、验证流程和计数器体系，本文将前述架构和优化策略落实为可运行、可复现、可诊断的板级系统。
 
-\section{Partial-PSUM 反馈语义}
+\section{Layer Descriptor 与链式调度}
 
-对一个输出 pixel 和一个 $Cout_{tile}$ 通道块，硬件内部形成一个 PSUM packet：
-\begin{equation}
-P[p,c] = \sum_{k=k_0}^{k_0+K_{tile}-1} X[p,k]\cdot W[k,c].
-\end{equation}
-当当前 pass 不是 final pass 时，该 packet 被写入片上 partial-PSUM buffer；下一 pass 读取同一地址的 partial sum 作为初值继续累加。当当前 pass 是 final pass 时，该 packet 被送入 requant/activation/pool/OFM path。
+Vitis bare-metal runtime 使用静态 layer descriptor 描述 Conv0--Conv9 的输入尺寸、输出通道数、kernel、stride、pool、K passes、Cout blocks、tile 形状、量化参数和 golden 信息。这些字段对应 LASA 的层自适应配置和 KCS 执行模型。运行时按 layer 和 spatial tile 循环，写入配置寄存器，启动 OFM S2MM DMA，再启动 bias、weight、IFM 三路 MM2S DMA，最后等待 accelerator done 和 OFM DMA 完成。
 
-该语义要求三个条件同时成立：第一，partial-PSUM 的地址和 Cout block 必须与下一 pass 对齐；第二，写入和读取不能发生读写冲突；第三，final pass 的输出顺序必须与软件重排和 golden 比对一致。本文使用 ping-pong bank 和 per-pass context 维护这些条件。
+对前端较大空间尺寸层，runtime 根据 tile 行范围逐块搬运输入和输出；对后端 $13\times13$ 层，最终推荐配置启用 backend full-tile，减少 tile 边界启动次数。每层完成后，软件将 OFM packet 重排为 HWC buffer，并作为下一层输入。Conv9 输出进入 YOLO decode，形成 DDR image demo 的最终检测结果。
 
-\section{流水化 PSUM Drain}
+\section{AXI-Lite 配置接口}
 
-早期 drain writer 在下游 ready 出现回压时容易产生地址推进和 valid 保持之间的时序风险，同时吞吐受内部状态机限制。本文将 drain writer 改为 AXI-Stream 风格握手：packet valid、addr 和 data 在真实 $valid \& ready$ 握手前保持稳定，握手成功后才推进地址。随后加入一拍 read-return tracker 和 one-entry hold register，使下游 ready 时可以接近每周期输出一个 PSUM packet。
+AXI-Lite 是 PS runtime 配置 PL 端 LASA 的控制面。为避免混淆，本文将 AXI-Lite 地址空间分为两类：第一类是\textbf{运行配置寄存器}，由软件在每个 layer 或 spatial tile 启动前写入，直接决定本次硬件执行语义；第二类是\textbf{只读性能计数器}，由硬件在运行过程中累加，软件在层结束后读取，用于第六章的性能分析。二者共享同一个 AXI-Lite 端口，但作用不同：前者参与功能执行，后者只参与观测和诊断。
 
-流水化 drain 的意义不仅是提高 drain 吞吐，也为后续 overlap 提供可控事件：调度器可以基于 drain packet fire、drain done 和 FIFO empty wait 判断 partial-PSUM 是否已经产生足够可读数据。
+表~\ref{tab:runtime_config_regs} 给出本文最终系统中实际用于工作的主要配置寄存器。完整地址空间还包含若干调试状态位和实验性 trace 选择位，论文中只列出与 LASA 层自适应、KCS 映射以及 BSD/OCRR/OPF-P 优化直接相关的配置项。
 
-\section{Early Drain 与 Continuous PSUM Collector}
-
-传统 pass 调度在 compute done 后才启动 drain。Early drain 允许调度器在当前 pass 已经开始产生 PSUM 数据后提前启动 drain，只要 partial-PSUM FIFO 已经具备可读数据。该机制降低 compute 完成后等待 drain 启动的空泡，但仍保留 final pass 和非 final pass 的输出顺序约束。
-
-Continuous PSUM collector 进一步改变非 final pass 的路径。collector 在 compute 开始前接收一个 pass context，并在阵列列 FIFO 产生完整 packet 后立即将其写入 partial-PSUM bank；final pass packet 则进入后处理流水线。这样，非 final pass 的 partial-PSUM 写回从“compute 后集中 drain”变为“compute 过程中持续收集”，减少 pass 边界处的反馈延迟。
-
-图~\ref{fig:psum_prefetch_timeline} 对比了串行 pass 和重叠 pass 的时间线。
-
-\begin{figure}[htb]
+\begin{table}[htb]
 \centering
-\resizebox{\textwidth}{!}{%
-\begin{tikzpicture}[
-    x=8mm,y=7mm,
-    phase/.style={draw, minimum height=5mm, align=center},
-    arr/.style={-Latex, thick}
-]
-\node at (0,2) {串行};
-\node[phase, minimum width=14mm] at (2,2) {feed};
-\node[phase, minimum width=18mm] at (4.1,2) {compute};
-\node[phase, minimum width=18mm] at (6.4,2) {drain};
-\node[phase, minimum width=16mm] at (8.5,2) {next feed};
-\node[phase, minimum width=20mm] at (10.8,2) {next compute};
+\caption{主要运行配置寄存器}
+\label{tab:runtime_config_regs}
+\small
+\begin{tabular}{p{0.15\textwidth}p{0.27\textwidth}p{0.46\textwidth}}
+\toprule
+类别 & 代表寄存器 & 作用 \\
+\midrule
+控制状态 & \makecell[l]{\texttt{CTRL/STATUS}} & 写 \texttt{start} 启动 accelerator，写 \texttt{clear} 清除状态；读 \texttt{busy}、\texttt{done} 和 \texttt{config\_error} 判断本次 tile 是否完成或配置非法。 \\
+层形状配置 & \makecell[l]{\texttt{FM\_SIZE}, \texttt{OFM\_SIZE}\\ \texttt{CONV}, \texttt{K\_TOTAL}\\ \texttt{COUT\_TOTAL}} & 配置输入/输出尺寸、stride、padding、native 1x1/3x3 模式、K 维总长度和输出通道数，是 LASA 适配不同卷积层的基础。 \\
+tile 配置 & \makecell[l]{\texttt{NUM\_PIXELS}\\ \texttt{TILE\_ROWS}\\ \texttt{PIXEL\_BASE}\\ \texttt{EXPECTED\_BYTES}} & 配置当前 spatial tile 的输出 pixel 数、输出行范围、全局 HWC 地址基址和 OFM 期望输出字节数，对应 KCS 中的 spatial tile 维度。 \\
+量化与后处理 & \makecell[l]{\texttt{IFM\_ZP}, \texttt{POOL\_CFG}\\ \texttt{QUANT\_ADDR/DATA}\\ \texttt{LUT\_ADDR/DATA}} & 配置输入零点、pool bypass/maxpool、逐 lane 重量化参数和 activation LUT，使同一硬件支持不同层的量化、激活和池化组合。 \\
+stream 与优化开关 & \makecell[l]{\texttt{STREAM\_CFG}\\ \texttt{BIAS/WEIGHT/IFM}\\ \texttt{\_PACKETS}\\ \texttt{TAIL\_CONFIG}} & 配置 batch stream 的 packet 数、raw-HWC 路径、early drain、pass prefetch、partial-PSUM overlap、continuous collector 和 during-compute prefetch 等数据流与调度模式。 \\
+\bottomrule
+\end{tabular}
+\end{table}
 
-\node at (0,0) {重叠};
-\node[phase, minimum width=14mm] at (2,0) {feed};
-\node[phase, minimum width=28mm] at (4.6,0) {compute};
-\node[phase, minimum width=24mm] at (5.3,-0.8) {continuous collect};
-\node[phase, minimum width=24mm] at (7.6,0.8) {next prefetch};
-\node[phase, minimum width=22mm] at (9.5,0) {next compute};
-\draw[arr] (6.9,0.8) -- (8.5,0.1);
-\end{tikzpicture}
-}
-\caption{Partial-PSUM 反馈与 pass-level prefetch 时间线}
-\label{fig:psum_prefetch_timeline}
-\end{figure}
+所有主要优化均通过 STREAM\_CFG 位控制。bit0 使能 BSD 的 batch mode，bit1 使能 OCRR 的 raw-HWC mode，bit2 使能 OPF-P 中的 early drain，bit3 使能 pass prefetch，bit4 使能 partial-PSUM overlap，bit5 使能 continuous PSUM collector，bit7 使能 during-compute prefetch。bit6 对应 column-level PSUM，是当前探索性设计，不作为最终推荐配置的必要条件。
 
-\section{Pass-Level Prefetch}
+一次 layer/tile 的配置顺序如下。首先，runtime 确认 accelerator 处于 idle 状态，并写入层形状、tile 范围、输入零点、池化配置和 OFM 期望输出字节数。随后，软件写入当前输出 lane 的重量化参数，必要时写入 activation LUT。若启用 batch stream 或 raw-HWC 路径，runtime 进一步写入 \texttt{STREAM\_CFG}、三路输入 packet 数和 \texttt{TAIL\_CONFIG}。最后，软件先启动 OFM S2MM DMA，再启动 bias、weight、IFM 三路 MM2S DMA，并向 \texttt{CTRL/STATUS} 写 \texttt{start}。硬件运行完成后置位 \texttt{done}，runtime 再解析 OFM packet、读取性能计数器并进入下一层或下一 tile。
 
-K pass 之间除了 PSUM 反馈，还包含下一 pass 权重加载和 IFM replay。Pass-level prefetch 在当前 pass 已经满足安全条件后提前准备下一 pass 的 weight 和 raw-HWC replay。该机制遵循两个约束：一是不能覆盖当前 pass 正在使用的 PE 权重；二是 next-pass IFM replay 只能进入解耦 FIFO 或安全队列，不能破坏当前 pass 的输入顺序。
+这种设计保持了软件 ABI 的稳定性。默认关闭实验开关时，系统回到保守串行语义；逐步打开开关时，软件只需写入不同 \texttt{STREAM\_CFG} 和少量 tail/prefetch 参数，外部 AXI packet 格式保持不变。因此，同一 runtime 可以执行 baseline、batch、raw-HWC、continuous PSUM 和 during-compute prefetch 等多个 A/B 配置。
 
-本文实现了两级 prefetch。第一阶段 pass prefetch 主要在当前 compute 完成后、drain 或 pass 边界窗口中准备下一 pass；第二阶段 during-compute prefetch 进一步允许在当前 pass compute 进行时启动下一 pass 权重和 raw-HWC replay 的 staging。后者能够降低 compute stage 中由于下一 pass 准备不足造成的 idle，但需要更严格地维护权重读取预算和 IFM FIFO 顺序。
+\section{正确性验证路径}
 
-\section{STREAM\_CFG 与调度开关}
+本文采用从模块到板级的多层验证。RTL 层面使用 Icarus Verilog 和 Vivado XSIM 覆盖 PE、systolic array、feeder、AXI loader、PSUM buffer、collector、AXI-Lite bridge 和端到端 conv top。模块级测试重点检查握手稳定性、K pass 地址推进、partial-PSUM bank 切换、raw-HWC replay 顺序和 OFM packet 地址。
 
-所有优化均通过 AXI-Lite 中的 STREAM\_CFG 位控制。bit0 使能 batch mode，bit1 使能 raw-HWC mode，bit2 使能 early drain，bit3 使能 pass prefetch，bit4 使能 partial-PSUM overlap，bit5 使能 continuous PSUM collector，bit7 使能 during-compute prefetch。bit6 对应 column-level PSUM，是当前探索性设计，不作为最终推荐配置的必要条件。
+系统层面使用外部 golden 数据验证真实层，包括 Conv0、Layer06/Conv3、Conv4 以及后端 Conv5/6/8 raw-HWC tile。板级层面包含两条路径。第一条是 batch-chain 模式，对 Conv0--Conv9 每层输出与 RTL semantic golden 做 bit-exact 比较；第二条是 DDR image demo 模式，将 $416\times416\times3$ 图像包写入 DDR，由硬件执行十层推理并在 A53 侧进行 YOLO decode。
 
-这种设计保持了软件 ABI 的稳定性。默认关闭实验开关时，系统回到保守串行语义；逐步打开开关时，软件只需写入不同 STREAM\_CFG 和少量 tail/prefetch 参数，外部 AXI packet 格式保持不变。该策略便于在同一 runtime 中进行 A/B 测试和板级回归。
+OFM debug packet 在验证阶段承担关键作用。每个输出 byte 携带地址，软件可以将其重排为 HWC buffer 并定位错误位置。虽然这种格式牺牲了带宽效率，但它使模块仿真、板级 UART 日志、golden 比对和最终 DDR demo 能够使用同一套语义闭环。
 
 \section{性能计数器设计}
 
-为了避免仅凭端到端延迟判断优化效果，本文在硬件中加入多层性能计数器。
+仅报告端到端延迟无法说明优化是否真正降低了目标瓶颈。为此，本文在 PL 端加入多层只读性能计数器，类别如表~\ref{tab:perf_counters} 所示。这些寄存器不改变硬件执行语义，只在 accelerator 运行期间记录事件和周期数；runtime 在每个 tile 或 layer 结束后读取并打印 UART 日志。
 
 \begin{table}[htb]
 \centering
 \caption{主要性能计数器类别}
 \label{tab:perf_counters}
-\begin{tabular}{ll}
+\small
+\begin{tabular}{p{0.18\textwidth}p{0.24\textwidth}p{0.48\textwidth}}
 \toprule
-类别 & 作用 \\
+类别 & 代表寄存器 & 诊断对象 \\
 \midrule
-PERF & 统计 tile busy、外部等待、compute fire 等顶层周期 \\
-STAGEPERF & 统计 bias、weight、feeder、compute、drain、OFM post 阶段 \\
-SUBPERF & 细分 feeder push、FIFO stall、compute active、IFM stall、tail 等 \\
-RAWSTAT & 统计 raw-HWC load、unpack、replay 和 replay wait \\
-PREFETCHPERF & 统计 prefetch start、hit、miss、stall 等事件 \\
-COLLECTPERF & 统计 collector packet、partial write、final write 和 context stall \\
-PASSPERF & 统计 pass start 到 first fire、fire span、compute idle 等 \\
+PERF & \makecell[l]{\texttt{PERF\_BUSY}\\ \texttt{PERF\_WAIT\_*}\\ \texttt{PERF\_COMPUTE}} & 顶层 busy 周期、外部等待周期和 compute fire 周期，用于区分计算时间与非计算开销。 \\
+STAGEPERF & \makecell[l]{\texttt{STAGE\_*}} & layer scheduler 各阶段耗时，用于观察优化后瓶颈在 bias、weight、feeder、compute、drain 和 OFM post 之间的迁移。 \\
+SUBPERF/ RAWSTAT & \makecell[l]{\texttt{FEED\_*}\\ \texttt{COMP\_*}\\ \texttt{RAW\_*}} & 细分 feeder push/FIFO stall、compute active/IFM stall、raw-HWC load/unpack/replay 等事件，用于分析 OCRR 和 compute idle。 \\
+DRAINPERF & \makecell[l]{\texttt{DRAIN\_*}} & 统计 PSUM drain 读出、packet fire 和下游 backpressure，用于评估 drainpipe 与 early drain。 \\
+PREFETCHPERF & \makecell[l]{\texttt{PREFETCH\_*}} & 统计下一 K pass 预取是否命中以及等待时间，用于评估 pass-level prefetch 和 during-compute prefetch。 \\
+COLLECTPERF & \makecell[l]{\texttt{COLLECT\_*}} & 统计 continuous PSUM collector 的 partial/final 写入和 context stall，用于评估 OPF-P 中的持续收集路径。 \\
+PASSPERF & \makecell[l]{\texttt{PASS\_*}\\ \texttt{PASSTRACE\_*}} & 统计 pass 粒度 first fire、fire span、selected pass timestamp 和 compute idle，用于定位 K-pass 边界气泡与阵列利用率。 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-这些计数器使本文能够说明每次优化后的瓶颈迁移。例如，drainpipe 主要降低 drain 阶段；continuous collector 降低 partial-PSUM 存储开销；backend full-tile 减少 spatial tile 固定成本；during-compute prefetch 降低下一 pass 准备造成的 compute idle。第六章将基于这些计数器进行实验分析。
+这些计数器使本文能够说明每次优化后的瓶颈迁移。例如，BSD 主要影响 DMA 启动与外部等待，OCRR 主要影响 raw-HWC load/replay 与 spatial tile 固定成本，OPF-P 主要影响 drain、collector、prefetch 和 compute idle。第六章的阶段 breakdown 和消融表均来自这些只读计数器或与其一致的 UART 日志；它们与表~\ref{tab:runtime_config_regs} 中的运行配置寄存器分离，因此不会改变实验版本的功能语义。
+
+\section{最终推荐配置}
+
+为了避免多个实验版本并列造成主线混乱，本文将 \texttt{D:/MPSoC/b\_kprefetch\_22} 作为最终推荐硬件构建。该版本在 Vivado/Vitis 2022.2、100 MHz 目标频率下完成实现，采用 ROWS=18、COLS=8、$Cout_{tile}=16$ 的 LASA 阵列配置，并启用 BSD、OCRR 与 OPF-P 的主要机制，包括后端 raw-HWC full-tile、continuous PSUM collector 和 during-compute prefetch。
+
+最终推荐软件配置为 \texttt{conv0\_conv9\_ddr\_demo}，开启 RawHwcConv4、5、6、8，early drain、pass prefetch、partial-PSUM overlap、continuous PSUM、backend full-tile 和 during-compute prefetch。该组合既通过 Conv0--Conv9 batch-chain bit-exact 验证，也在两张 DDR image demo 上得到稳定 YOLO decode 结果，是第六章实验的主线配置。
 
 \section{探索性 Column-Level PSUM}
 
@@ -100,4 +87,4 @@ PASSPERF & 统计 pass start 到 first fire、fire span、compute idle 等 \\
 
 \section{本章小结}
 
-本章从 partial-PSUM 反馈角度解释了后端大层的性能瓶颈，并介绍了 drainpipe、early drain、continuous collector、pass prefetch 和 during-compute prefetch 等调度优化。与第四章的数据搬运优化结合后，系统能够同时减少软件打包、DMA 启动、tile 边界、PSUM drain 和 pass 准备空泡，为第六章的端到端性能提升奠定基础。
+本章说明了 LASA 以及 KCS/BSD/OCRR/OPF-P 如何通过 Vitis runtime、AXI-Lite 寄存器、STREAM\_CFG 开关、golden 验证路径和性能计数器形成完整板级闭环。这些机制使第六章能够同时报告正确性、端到端性能、阶段 breakdown、资源时序和后续工作分析。

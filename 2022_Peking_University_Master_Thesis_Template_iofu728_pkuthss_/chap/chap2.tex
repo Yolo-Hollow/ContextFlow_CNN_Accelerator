@@ -53,6 +53,15 @@ Systolic array 由规则排列的处理单元（Processing Element, PE）组成�
 
 本文面向的模型是 YOLOv3-tiny 的单尺度链路。输入为 $416\times416\times3$ 量化 RGB 图像，硬件链式执行 Conv0 到 Conv9，最终输出 $13\times13\times24$ 检测头。表~\ref{tab:yolo_layers} 给出本文 runtime 使用的层级形状和调度规模。
 
+图~\ref{fig:yolov3_tiny_single_scale} 展示 YOLOv3-tiny 的单尺度检测链路。本文实现和验证的 Conv0--Conv9 对应该链路中从输入到 $13\times13$ 检测头的顺序卷积路径，保留 3x3 卷积、1x1 检测头、池化和逐层后处理等结构特征，作为 LASA 层自适应机制与后续数据流优化的实验对象。
+
+\begin{figure}[htb]
+\centering
+\includegraphics[width=\textwidth]{\detokenize{img/picture/单尺度yolov3_tiny.png}}
+\caption{YOLOv3-tiny 单尺度检测链路}
+\label{fig:yolov3_tiny_single_scale}
+\end{figure}
+
 \begin{table}[htb]
 \centering
 \caption{Conv0--Conv9 单尺度链路层参数}
