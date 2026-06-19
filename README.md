@@ -35,6 +35,8 @@ tcl/                     Vivado/xsim 构建和仿真脚本
 sw/vitis_2022_2/         裸机运行时、调度器和上板脚本
 tools/                   golden 数据、UART 日志和演示分析工具
 docs/                    设计说明、数据流、寄存器和测试计划
+docs/historical_progress.md
+                         早期设计与阶段性实验日志
 golden/                  小型回归 golden 数据的版本管理规则
 repro/                   最小模型数据、测试图片和期望输出
 release/kv260_hwcreplay_22/
