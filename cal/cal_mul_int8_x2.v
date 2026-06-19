@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Derived from adamgallas/fpga_accelerator_yolov3tiny.
+// Upstream: https://github.com/adamgallas/fpga_accelerator_yolov3tiny
 `timescale 1ns / 1ps
 module cal_mult_int8_x2
 (

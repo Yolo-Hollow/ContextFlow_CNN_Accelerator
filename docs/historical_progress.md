@@ -1,10 +1,10 @@
 # Systolic Accelerator 历史开发记录
 
+> 最后更新：2026-06-19
+
 > 本文档归档项目早期设计说明和阶段性实验日志，仅用于追溯设计演进。当前有效状态以 `project_status_and_roadmap.md` 为准。
 
 ## 第一阶段：早期设计与验证记录
-
-> 最后更新：2026-05-25
 
 本文档记录 `accelerator_systolic/` 当前的卷积脉动阵列 IP 设计状态、已验证语义、分块策略、测试结果和后续计划。目标是在 weight-stationary 脉动阵列架构下，完成可部署简化 YOLOv3-tiny 的卷积加速 IP。
 
