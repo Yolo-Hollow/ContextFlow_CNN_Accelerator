@@ -130,7 +130,7 @@ systolic array 顶部。最后一个 K pass 的 drain packet 进入 requant/acti
 ### 4.1 Bias AXIS 格式
 
 `axis_bias_weight_loader` 接收 bias stream。每个 64-bit beat 包含两个
-little-endian int32 bias：
+小端序 int32 Bias：
 
 ```text
 TDATA[31:0]  = bias[even]
@@ -157,7 +157,7 @@ tile_mem[row * COUT_TILE + cout_lane]
 
 `axis_bias_weight_loader` 直接使用 64-bit beat 写 `weight_tile_loader` 的
 8 个 byte bank。`weight_tile_loader` 再按阵列列格式吐给每个 row 的
-weight FIFO：
+Weight FIFO：
 
 ```text
 cycle c:
@@ -285,7 +285,7 @@ addr  = (channel / 2) * tile_pixels + output_pixel
 控制 stripe/URAM 推断。
 
 raw-HWC 是 opt-in 路径，默认 `STREAM_CFG.bit1=0` 时不影响已验证的
-prepacked IFM stream。
+预打包 IFM 数据流。
 
 ## 6. Systolic Array 与 PSUM 路径
 
@@ -453,7 +453,7 @@ kernel_1x1=1 时必须满足：
 
 | Byte offset | Name | R/W | Bit field | 作用 |
 |---:|---|---|---|---|
-| `0x64` | `STREAM_CFG` | R/W | `bit0=batch_mode`, `bit1=raw_hwc_mode`, `bit2=early_drain_enable`, `bit3=pass_prefetch_enable`, `bit4=psum_stream_overlap_enable`, `bit5=continuous_psum_enable` | Select batch stream, raw-HWC cache, early drain, next-K prefetch, experimental partial-PSUM overlap, and experimental continuous PSUM collector |
+| `0x64` | `STREAM_CFG` | R/W | `bit0=batch_mode`, `bit1=raw_hwc_mode`, `bit2=early_drain_enable`, `bit3=pass_prefetch_enable`, `bit4=psum_stream_overlap_enable`, `bit5=continuous_psum_enable` | 选择 batch stream、raw-HWC cache、提前 drain、下一 K pass 预取、实验性 partial-PSUM overlap 和连续 PSUM collector |
 | `0x68` | `BIAS_PACKETS` | R/W | `[31:0]` | 当前 tile 期望 bias packet 数 |
 | `0x6c` | `WEIGHT_PACKETS` | R/W | `[31:0]` | 当前 tile 期望 weight packet 数 |
 | `0x70` | `IFM_PACKETS` | R/W | `[31:0]` | 当前 tile 期望 IFM packet 数 |
@@ -559,412 +559,112 @@ tail、drain empty 等计数已经接到硬件路径，Vitis runtime 可打印
 raw tile；硬件在 `stream_reset` 后重新进入 load 状态，之后每个 K pass 通过
 `fill_req` replay vector。
 
-## 14. 2026-06-13 DRAINPERF addendum
+## 14. 扩展性能寄存器
 
-The AXI-Lite configuration path now uses 9-bit byte addresses. The bridge maps
-AXI byte address `[8:2]` to the internal 7-bit `cfg_addr[6:0]`. Existing byte
-offsets below `0x100` keep their previous values, but the top-level AXI-Lite
-address ports are now `[8:0]`; rebuild the Vivado block design before board
-use.
+AXI-Lite 配置地址已扩展为 9-bit byte address。Bridge 将 AXI byte address `[8:2]` 映射到内部 `cfg_addr[6:0]`；`0x100` 以下的旧 offset 保持兼容。修改 RTL 后必须重新生成 Vivado Block Design。
 
-Additional read-only drain sub-performance registers:
+### 14.1 Drain 性能计数
 
-| Byte offset | Name | R/W | Meaning |
+| Byte offset | 名称 | 属性 | 含义 |
 |---:|---|---|---|
-| `0x100` | `DRAIN_READ_FIRE` | R | PSUM drain FIFO read request handshakes |
-| `0x104` | `DRAIN_PACKET_FIRE` | R | Drain packets accepted by the downstream OFM path |
-| `0x108` | `DRAIN_READY_STALL` | R | Drain cycles stalled by downstream backpressure |
-| `0x10c` | `DRAIN_INTERNAL_FULL` | R | Drain cycles blocked by the internal output/skid register |
-| `0x110` | `DRAINPERF_VERSION` | R | Current fixed value: `1` |
+| `0x100` | `DRAIN_READ_FIRE` | R | PSUM drain FIFO 读请求握手数 |
+| `0x104` | `DRAIN_PACKET_FIRE` | R | 下游 OFM 路径接收的 drain packet 数 |
+| `0x108` | `DRAIN_READY_STALL` | R | 下游 backpressure 导致的停顿周期 |
+| `0x10c` | `DRAIN_INTERNAL_FULL` | R | 内部输出/skid 寄存器占满周期 |
+| `0x110` | `DRAINPERF_VERSION` | R | 固定版本号 `1` |
 
-The existing `0xe8 DRAIN_EMPTY_WAIT` counter remains the FIFO-empty component.
-Runtime software prints these fields as `DRAINPERF`, and the summarizer reports
-the residual:
+`0xe8 DRAIN_EMPTY_WAIT` 继续表示等待 PSUM FIFO 非空的周期。软件输出 `DRAINPERF`，并计算未归类 residual。
 
-```text
-STAGE_DRAIN - packet_fire - ready_stall - internal_full - empty_wait
-```
+### 14.2 K-pass 预取计数
 
-## 15. 当前设计边界
-
-- 当前 OFM AXIS 是 debug byte packet 格式，不是连续 HWC burst。
-- native 1x1 只承诺 batch mode、stride 1、pad 0、tile 不超过 IFM FIFO。
-- raw-HWC 仍是 opt-in 实验路径；默认 prepacked IFM stream 不受影响。
-- pooling 目前只实现 bypass 和 uint8 2x2 stride-2 maxpool。
-- pass/fail 应以 RTL semantic golden 为准，PyTorch reference 只适合作模型级 sanity check。
-- 大型 golden 数据不在本仓库，仍按 `golden/README.md` 放在外部 `D:/MPSoC/python_prj/rtl_golden/`。
-
-## 16. 2026-06-14 early-drain addendum
-
-`STREAM_CFG[2]` is an experimental early PSUM drain enable. Reset/default value
-is `0`, and the validated default software flow keeps it disabled unless the
-Vitis build is explicitly generated with `-EarlyDrain`.
-
-When enabled, `layer_scheduler_stream` may issue `psum_drain_start` before the
-current compute pass has fully completed, once the pass has started producing
-PSUM data. The scheduler still requires all three conditions before advancing
-to the next pass:
-
-```text
-feeder_done_seen && compute_done_seen && drain_done_seen
-```
-
-Therefore early drain does not change packet address order, OFM packet format,
-DMA streams, raw-HWC tile format, or quantization semantics. It only overlaps
-part of PSUM FIFO drain wait with the tail of the current compute pass.
-
-Board validation for `D:/MPSoC/b_earlydrain_22` passed on `COM8` with
-`Conv5/6/8 raw-HWC`, `RawHwcComputeStartLevel=64`, and `-EarlyDrain`:
-
-```text
-maksssksksss0 DDR demo  PASS  total=520.446 ms
-maksssksksss1 DDR demo  PASS  total=520.505 ms
-batch-chain             PASS  RTL golden and YOLO decode
-```
-
-Compared with the prior `b_drainperf_22` baseline (`543.006 ms`), the observed
-fixed-image gain is about `22.6 ms`. Conv5/6/8 `DRAINPERF empty_wait` values are
-still unchanged, so the improvement is overlap/hiding rather than faster PSUM
-production.
-
-## 17. 2026-06-14 K-pass prefetch addendum
-
-`STREAM_CFG[3]` is an experimental next-K-pass prefetch enable. Reset/default
-value is `0`, and software only sets it for experimental builds generated with
-`-PassPrefetch`. Hardware ignores the bit for non-raw-HWC layers.
-
-When enabled, the scheduler may prepare the next K pass while the current pass
-is still completing. The design keeps two pass indices:
-
-```text
-exec_pass_base_k   -> compute, PSUM, final-pass decisions, debug current pass
-feeder_pass_base_k -> raw-HWC replay address generation
-```
-
-The first prototype is intentionally conservative:
-
-- only prefetches within the same COUT block;
-- does not prefetch bias;
-- does not start next-pass compute until current-pass drain is complete;
-- falls back to waiting if next-pass weight or IFM replay is not ready.
-
-The weight stream format is unchanged. Internally, `systolic_top` now consumes
-exactly one weight vector on compute start plus `COLS-1` additional vectors
-during weight-load cycles. This keeps the current pass from over-reading into
-the prefetched next-pass weight tile.
-
-Additional read-only prefetch counters:
-
-| Byte offset | Name | R/W | Meaning |
+| Byte offset | 名称 | 属性 | 含义 |
 |---:|---|---|---|
-| `0x114` | `PREFETCH_START` | R | Next-pass prefetch start pulses |
-| `0x118` | `PREFETCH_WEIGHT_DONE` | R | Prefetched weight-load completions |
-| `0x11c` | `PREFETCH_FEED_DONE` | R | Prefetched raw-HWC replay completions |
-| `0x120` | `PREFETCH_HIT` | R | Pass-boundary transitions that found prefetch ready |
-| `0x124` | `PREFETCH_MISS` | R | Pass-boundary transitions that still had to wait |
-| `0x128` | `PREFETCH_STALL` | R | Cycles spent waiting for pending prefetch work |
-| `0x12c` | `PREFETCHPERF_VERSION` | R | Current fixed value: `1` |
+| `0x114` | `PREFETCH_START` | R | 下一 pass 预取启动次数 |
+| `0x118` | `PREFETCH_WEIGHT_DONE` | R | 预取 Weight 完成次数 |
+| `0x11c` | `PREFETCH_FEED_DONE` | R | 预取 raw-HWC replay 完成次数 |
+| `0x120` | `PREFETCH_HIT` | R | pass 边界已准备完成次数 |
+| `0x124` | `PREFETCH_MISS` | R | pass 边界仍需等待次数 |
+| `0x128` | `PREFETCH_STALL` | R | 等待预取完成的周期数 |
+| `0x12c` | `PREFETCHPERF_VERSION` | R | 固定版本号 `1` |
 
-Runtime software prints these fields as `PREFETCHPERF`. Local Vivado/xsim
-`2022.2` validation passes Conv5/Conv6/Conv8 raw-HWC tile0 with
-`RawHwcComputeStartLevel=64`, early drain, and pass prefetch enabled.
+### 14.3 Partial-PSUM 重叠计数
 
-## 18. 2026-06-15 partial-PSUM stream overlap addendum
-
-`STREAM_CFG[4]` enables experimental partial-PSUM overlap. It is effective only
-with raw-HWC mode and next-K prefetch enabled. Reset and normal software builds
-keep the bit at `0`.
-
-For a non-final K pass, the current drain writes partial sums into one
-ping-pong bank while the next pass reads the other bank. The scheduler may
-start the next compute after a conservative drain lead is available. Per-bank
-available counters prevent the PSUM reader from overtaking the writer; a
-blocked reader deasserts compute-ready rather than reading unwritten data.
-Drain completion is latched independently of scheduler state so a one-cycle
-done pulse cannot be lost during prefetch commit.
-
-Additional read-only counters:
-
-| Byte offset | Name | R/W | Meaning |
+| Byte offset | 名称 | 属性 | 含义 |
 |---:|---|---|---|
-| `0x130` | `PSUMOVL_START` | R | Partial-PSUM overlap transitions |
-| `0x134` | `PSUMOVL_HIT` | R | Transitions that met prefetch and PSUM lead conditions |
-| `0x138` | `PSUMOVL_WAIT_PSUM` | R | Cycles waiting for the conservative PSUM lead |
-| `0x13c` | `PSUMOVL_UNDERFLOW` | R | Sticky/count indication that a reader reached unavailable data |
-| `0x140` | `PSUMOVLPERF_VERSION` | R | Current fixed value: `1` |
+| `0x130` | `PSUMOVL_START` | R | Partial-PSUM overlap 切换次数 |
+| `0x134` | `PSUMOVL_HIT` | R | 同时满足预取和 PSUM lead 的次数 |
+| `0x138` | `PSUMOVL_WAIT_PSUM` | R | 等待 PSUM lead 的周期数 |
+| `0x13c` | `PSUMOVL_UNDERFLOW` | R | reader 追上未写数据的 sticky/count |
+| `0x140` | `PSUMOVLPERF_VERSION` | R | 固定版本号 `1` |
 
-Vivado/xsim `2022.2` external-golden tests pass for Conv5, Conv6, and Conv8
-raw-HWC tile0 with overlap64, early drain, pass prefetch, and partial-PSUM
-overlap enabled.
+### 14.4 连续 PSUM Collector 计数
 
-The first Vivado `2022.2` implementation in `D:/MPSoC/b_psumovl_22` meets
-timing (`WNS=+0.038 ns`, `WHS=+0.010 ns`) with zero routing errors. The
-concurrent PSUM ping-pong memory currently maps to about `23616` LUTs rather
-than the previous `14 BRAM` storage, increasing total LUT use to `78900`.
-Board validation remains pending, and a later revision should restore explicit
-BRAM mapping if the measured overlap gain does not justify this resource cost.
-
-## 19. 2026-06-15 continuous PSUM collector addendum
-
-`STREAM_CFG[5]` enables the experimental continuous PSUM collector. Reset and
-normal software builds keep this bit clear. Vitis exposes the experiment with
-`-ContinuousPsum`.
-
-In this mode, the scheduler submits one pass context before compute starts.
-`psum_output_collector` consumes the per-column PSUM FIFOs, groups a full
-`COLS*2` packet per pixel, and keeps the collector active across consecutive
-pass contexts. Non-final packets write directly into the selected partial-PSUM
-ping-pong bank; final packets continue into the existing requant, activation,
-pool, and OFM writeback path.
-
-The external AXIS/DMA formats, raw-HWC tile layout, OFM packet format,
-quantization semantics, and layer schedule are unchanged. The mode currently
-targets the same backend set as the previous overlap experiments:
-Conv5/Conv6/Conv8 raw-HWC with overlap64, early drain, pass prefetch, and
-partial-PSUM overlap.
-
-Additional read-only collector counters:
-
-| Byte offset | Name | R/W | Meaning |
+| Byte offset | 名称 | 属性 | 含义 |
 |---:|---|---|---|
-| `0x144` | `COLLECT_PACKET_FIRE` | R | Collector packets accepted downstream |
-| `0x148` | `COLLECT_PARTIAL_WRITE` | R | Non-final packets written to partial PSUM RAM |
-| `0x14c` | `COLLECT_FINAL_WRITE` | R | Final packets sent to OFM post-processing |
-| `0x150` | `COLLECT_CONTEXT_PUSH` | R | Pass contexts accepted by the collector FIFO |
-| `0x154` | `COLLECT_CONTEXT_POP` | R | Completed pass contexts |
-| `0x158` | `COLLECT_CONTEXT_FULL_STALL` | R | Cycles with scheduler context valid but collector FIFO full |
-| `0x15c` | `COLLECT_COLUMN_EMPTY_WAIT` | R | Cycles waiting for one or more PSUM column FIFOs |
-| `0x160` | `COLLECTPERF_VERSION` | R | Current fixed value: `1` |
+| `0x144` | `COLLECT_PACKET_FIRE` | R | Collector 下游 packet 握手数 |
+| `0x148` | `COLLECT_PARTIAL_WRITE` | R | 写入 partial PSUM RAM 的 non-final packet 数 |
+| `0x14c` | `COLLECT_FINAL_WRITE` | R | 送入 OFM 后处理的 final packet 数 |
+| `0x150` | `COLLECT_CONTEXT_PUSH` | R | 接收的 pass context 数 |
+| `0x154` | `COLLECT_CONTEXT_POP` | R | 完成的 pass context 数 |
+| `0x158` | `COLLECT_CONTEXT_FULL_STALL` | R | context FIFO full 停顿周期 |
+| `0x15c` | `COLLECT_COLUMN_EMPTY_WAIT` | R | 等待任意 PSUM column FIFO 的周期 |
+| `0x160` | `COLLECTPERF_VERSION` | R | 固定版本号 `1` |
 
-Runtime software prints these fields as:
+## 15. Pass 时间线诊断寄存器
 
-```text
-COLLECTPERF layer=... packet_fire=... partial_write=... final_write=...
-            context_push=... context_pop=... context_full_stall=...
-            column_empty_wait=... version=...
-```
+Pass timeline monitor 只观察现有事件，不反馈 scheduler 或数据通路。所有聚合计数在 layer start 时清零，layer done 后保持。
 
-Local validation has passed under Icarus and Vivado/xsim `2022.2`, including
-Conv5, Conv6, and Conv8 raw-HWC tile0/tile3 external-golden tests with
-continuous PSUM enabled. The first board build exposed a Conv5 tail-tile
-mismatch caused by stale per-bank partial-PSUM availability credit when a
-ping-pong bank was reused. The fix clears the selected bank credit on each
-non-final continuous collector compute start.
-
-The fixed `D:/MPSoC/b_psumcollector_fix3_22` Vivado `2022.2` implementation is
-complete: `WNS=+0.165 ns`, `TNS=0`, `WHS=+0.010 ns`, `THS=0`, `0` routing
-errors, `56442 LUT`, `49000 FF`, `63 BRAM`, `8 URAM`, and `183 DSP`. The
-bitstream hash is
-`1E0255EA61AEBF28C01DC72386B398ABAE000193EA840C217CAAD5BC6437248D`, and the
-XSA hash is
-`40424070EDC08B05BDA56FE2295A2D5F3520E4F425559E2693F9B49185E1562A`.
-
-Board validation passes:
-
-```text
-batch-chain: PASS, 20260615_081758_conv0_conv9_batch_chain_COM8.log
-DDR image0:  PASS, 0.371271 s, 20260615_082040_conv0_conv9_ddr_demo_COM8.log
-DDR image1:  PASS, 0.371314 s, 20260615_082302_conv0_conv9_ddr_demo_COM8.log
-```
-
-`COLLECTPERF context_full_stall=0`, `PSUMOVLPERF underflow=0`, and
-`PREFETCHPERF` hit rate is `100%` on the continuous-collector backend layers.
-The measured gain over the previous `b_psumovl_credit1_22` baseline is small
-but positive; the dominant remaining cycles are still compute-stage and
-feeder/replay activity.
-
-## 20. 2026-06-15 pass timeline diagnostic addendum
-
-The pass timeline monitor is a diagnostic-only block. It does not feed back
-into scheduler control, DMA handshakes, raw-HWC cache replay, PSUM storage, OFM
-format, or quantization. Its purpose is to explain why the continuous PSUM
-collector build still reports much more `STAGE_COMPUTE` and
-`COLLECT_COLUMN_EMPTY_WAIT` time than true `compute_fire` time.
-
-The monitor observes existing pass events:
-
-```text
-weight_done
-feed_start/feed_ready/feed_done
-compute_start/compute_fire/compute_done
-collector_packet_fire/collector_context_done
-raw_replay_active
-stage_compute
-```
-
-Per-layer aggregate counters are cleared on layer start and held after layer
-done:
-
-| Byte offset | Name | R/W | Meaning |
+| Byte offset | 名称 | 属性 | 含义 |
 |---:|---|---|---|
-| `0x164` | `PASSTRACE_SELECT` | R/W | bit31 trace enable, `[23:16]` COUT block, `[15:0]` K pass |
-| `0x168` | `PASS_COUNT` | R | Completed pass contexts seen by the monitor |
-| `0x16c` | `PASS_START_TO_FIRST_FIRE` | R | Sum of compute-start to first compute-fire latency |
-| `0x170` | `PASS_FIRST_TO_LAST_FIRE` | R | Sum of first-fire to last-fire spans |
-| `0x174` | `PASS_LAST_FIRE_TO_DONE` | R | Sum of last-fire to compute-done tail latency |
-| `0x178` | `PASS_COLLECT_FIRST_WAIT` | R | Sum of compute-start to first collector packet latency |
-| `0x17c` | `PASS_COLLECT_COLUMN_EMPTY` | R | Collector column-empty wait cycles |
-| `0x180` | `PASS_REPLAY_DURING_COMPUTE` | R | Raw-HWC replay-active cycles during compute stage |
-| `0x184` | `PASS_COMPUTE_IDLE_STAGE` | R | Compute-stage cycles without `compute_fire` |
+| `0x164` | `PASSTRACE_SELECT` | R/W | bit31 使能；`[23:16]` COUT block；`[15:0]` K pass |
+| `0x168` | `PASS_COUNT` | R | 完成的 pass context 数 |
+| `0x16c` | `PASS_START_TO_FIRST_FIRE` | R | compute start 到 first fire 的累计周期 |
+| `0x170` | `PASS_FIRST_TO_LAST_FIRE` | R | first fire 到 last fire 的累计跨度 |
+| `0x174` | `PASS_LAST_FIRE_TO_DONE` | R | last fire 到 compute done 的累计周期 |
+| `0x178` | `PASS_COLLECT_FIRST_WAIT` | R | compute start 到首个 collector packet 的累计周期 |
+| `0x17c` | `PASS_COLLECT_COLUMN_EMPTY` | R | collector column-empty wait 周期 |
+| `0x180` | `PASS_REPLAY_DURING_COMPUTE` | R | compute stage 内 raw-HWC replay active 周期 |
+| `0x184` | `PASS_COMPUTE_IDLE_STAGE` | R | compute stage 内没有 `compute_fire` 的周期 |
+| `0x188` | `PASSTRACE_WEIGHT_DONE` | R | 选定 pass 的 weight done 时间戳 |
+| `0x18c` | `PASSTRACE_FEED_START` | R | feeder start 时间戳 |
+| `0x190` | `PASSTRACE_FEED_READY` | R | first feeder ready 时间戳 |
+| `0x194` | `PASSTRACE_FEED_DONE` | R | feeder done 时间戳 |
+| `0x198` | `PASSTRACE_COMPUTE_START` | R | compute start 时间戳 |
+| `0x19c` | `PASSTRACE_FIRST_FIRE` | R | first compute fire 时间戳 |
+| `0x1a0` | `PASSTRACE_LAST_FIRE` | R | last compute fire 时间戳 |
+| `0x1a4` | `PASSTRACE_COMPUTE_DONE` | R | compute done 时间戳 |
+| `0x1a8` | `PASSTRACE_COLLECT_FIRST` | R | 首个 collector packet 时间戳 |
+| `0x1ac` | `PASSTRACE_COLLECT_LAST` | R | 最后 collector packet 时间戳 |
+| `0x1b0` | `PASSTRACE_PASS_DONE` | R | pass context 完成时间戳 |
+| `0x1b4` | `PASSPERF_VERSION` | R | bit31 为 trace-valid；`[30:0]` 版本号 `1` |
 
-The optional trace window records layer-local timestamps for one selected pass:
+## 16. 列级 PSUM 跟踪寄存器
 
-| Byte offset | Name | R/W | Meaning |
+列级 monitor 用于判断 collector 是否被特定输出列长期拖慢，不反馈主数据通路。
+
+| Byte offset | 名称 | 属性 | 含义 |
 |---:|---|---|---|
-| `0x188` | `PASSTRACE_WEIGHT_DONE` | R | Selected pass weight-done timestamp |
-| `0x18c` | `PASSTRACE_FEED_START` | R | Selected pass feeder-start timestamp |
-| `0x190` | `PASSTRACE_FEED_READY` | R | Selected pass first feeder-ready timestamp |
-| `0x194` | `PASSTRACE_FEED_DONE` | R | Selected pass feeder-done timestamp |
-| `0x198` | `PASSTRACE_COMPUTE_START` | R | Selected pass compute-start timestamp |
-| `0x19c` | `PASSTRACE_FIRST_FIRE` | R | Selected pass first compute-fire timestamp |
-| `0x1a0` | `PASSTRACE_LAST_FIRE` | R | Selected pass last compute-fire timestamp |
-| `0x1a4` | `PASSTRACE_COMPUTE_DONE` | R | Selected pass compute-done timestamp |
-| `0x1a8` | `PASSTRACE_COLLECT_FIRST` | R | Selected pass first collector packet timestamp |
-| `0x1ac` | `PASSTRACE_COLLECT_LAST` | R | Selected pass last collector packet timestamp |
-| `0x1b0` | `PASSTRACE_PASS_DONE` | R | Selected pass context completion timestamp |
-| `0x1b4` | `PASSPERF_VERSION` | R | bit31 trace-valid, `[30:0]` fixed version `1` |
+| `0x1b8` | `COLTRACE_CTRL` | R/W | bit31 trace-valid；`[4:0]` 选择列 |
+| `0x1bc` | `COLTRACE_FIRST_WR` | R | 选定列首次 PSUM FIFO 写时间戳 |
+| `0x1c0` | `COLTRACE_LAST_WR` | R | 最后写时间戳 |
+| `0x1c4` | `COLTRACE_WR_COUNT` | R | 写入数量 |
+| `0x1c8` | `COLTRACE_EMPTY_WAIT` | R | 选定列为空时 collector 等待周期 |
+| `0x1cc` | `COLTRACE_MISSING_MASK_OR` | R | 所有 missing-column mask 的 OR |
+| `0x1d0` | `COLTRACE_MISSING_MASK_FIRST` | R | 首个 missing-column mask |
+| `0x1d4` | `COLTRACE_MISSING_MASK_LAST` | R | 最后 missing-column mask |
+| `0x1d8` | `COLTRACE_VERSION` | R | 固定版本号 `1` |
 
-Runtime software prints aggregate lines as:
+## 17. 实验模式语义
 
-```text
-PASSPERF layer=... pass_count=... start_to_first=... fire_span=...
-         tail=... collect_wait=... collect_empty=...
-         replay_during_compute=... compute_idle=... version=...
-```
+- `STREAM_CFG[2] early_drain_enable`：当前 pass 已产生 PSUM 后提前启动 drain；进入下一 pass 前仍等待 feeder、compute 和 drain 完成。
+- `STREAM_CFG[3] pass_prefetch_enable`：仅在同一 COUT block 内预取下一 K pass 的 Weight 和 IFM，不预取 Bias，也不提前启动下一 pass compute。
+- `STREAM_CFG[4] psum_stream_overlap_enable`：达到保守 PSUM lead 后允许下一 pass 读取 partial PSUM；underflow 时停止 reader。
+- `STREAM_CFG[5] continuous_psum_enable`：使用 pass-context FIFO 连续收集 PSUM；non-final packet 写 partial RAM，final packet 进入 requant/activation/OFM。
+- `STREAM_CFG[7] during_compute_prefetch_enable`：实验性计算期间预取。该路径与 fast replay 共用 IFM FIFO 时缺少 pass 隔离，已在 Conv4 上板出现 byte mismatch，当前正式流程禁止启用。
 
-When tracing is enabled at build time with `-TilePerfTrace`, it also prints:
+## 18. Full-Tile HWC Cache
 
-```text
-PASSTRACE layer=... tile=... cout_block=... k_pass=...
-          weight_done=... feed_start=... feed_ready=... feed_done=...
-          compute_start=... first_fire=... last_fire=... compute_done=...
-          collect_first=... collect_last=... pass_done=... version=...
-```
-
-The intended first use is Conv5/Conv6/Conv8 raw-HWC with overlap64, early drain,
-pass prefetch, partial-PSUM overlap, and continuous PSUM enabled. If
-`start_to_first_fire` or `compute_idle_stage` dominates, the next work should
-focus on compute-start and array input cadence. If `fire_span` has low density,
-the issue is inside the active compute window. If `collect_column_empty`
-dominates, the next work should inspect per-column PSUM output alignment and
-collector aggregation.
-
-The first Vivado `2022.2` implementation for this diagnostic build completed in
-`D:/MPSoC/b_passtrace_22` with timing met (`WNS=+0.193 ns`, `TNS=0`,
-`WHS=+0.010 ns`, `THS=0`) and `0` routing errors. The exported artifacts are:
-
-```text
-bit SHA256=7712344B10C36969552A9547B1CED9F834C6381B3209316D9E0001DFDA4F4B04
-XSA SHA256=99F09A6ACC6E9D3DE287DDD8AB7BA05080F4CF887E477745D8359B9D3D076AD8
-```
-
-The first board run showed that a selected trace could be overwritten by the
-next pass before the continuous collector popped the selected context. The
-monitor now tracks the selected trace lifetime separately from the current
-compute lifetime. The fixed implementation is:
-
-```text
-build dir: D:/MPSoC/b_passtrace_fix2_22
-WNS=+0.113 ns, TNS=0, WHS=+0.010 ns, THS=0
-routing errors=0
-CLB LUTs=57226, CLB Registers=49831
-LUT as Memory=16638, BRAM Tile=63, URAM=8, DSP=184
-bit SHA256=3DC26E405921DCF04057CFFC8E8997D0A3481D4EBFF9585551B34A26FE7D2FBE
-XSA SHA256=258458C60231AE5D62CE1E4E0F9BB7D73C8F8043FEB2A0D440DF24C2ABC660AA
-```
-
-KV260 validation passed batch-chain and two DDR images:
-
-```text
-batch-chain: 20260615_230847_conv0_conv9_batch_chain_COM8.log
-image0:      20260615_231105_conv0_conv9_ddr_demo_COM8.log
-image1:      20260615_231547_conv0_conv9_ddr_demo_COM8.log
-```
-
-The selected Conv5/Conv6/Conv8 tile0 traces are valid. For `cout_block=0`,
-`k_pass=0`, compute begins nine cycles before the first compute fire, the
-52-pixel tile fires over a 52-cycle span, and the first collector packet appears
-about 112 cycles after compute done. The aggregate counters point toward
-collector column-empty / compute-idle behavior as the next item to explain:
-
-```text
-COLLECTPERF column_empty_wait=11628928
-PASSPERF compute_idle=11907808
-PASSPERF avg_start_to_first=9.00
-PASSPERF avg_collect_wait=1.50
-```
-
-## 21. 2026-06-15 column-level PSUM trace addendum
-
-`coltrace_monitor` is a diagnostic-only block attached to the PSUM FIFO write
-side and the continuous collector wait side. It does not feed back into the
-array, scheduler, FIFO, collector, or AXI control paths. The selected pass is
-the same `cout_block/k_pass` selected by `PASSTRACE_SELECT`.
-
-The column trace registers are:
-
-| Byte offset | Name | R/W | Meaning |
-|---:|---|---|---|
-| `0x1b8` | `COLTRACE_CTRL` | R/W | bit31 trace valid, `[4:0]` selected column |
-| `0x1bc` | `COLTRACE_FIRST_WR` | R | First PSUM FIFO write timestamp for the selected column |
-| `0x1c0` | `COLTRACE_LAST_WR` | R | Last selected-pass PSUM FIFO write timestamp |
-| `0x1c4` | `COLTRACE_WR_COUNT` | R | Selected-pass PSUM FIFO writes for the selected column |
-| `0x1c8` | `COLTRACE_EMPTY_WAIT` | R | Collector wait cycles while the selected column was empty |
-| `0x1cc` | `COLTRACE_MISSING_MASK_OR` | R | OR of all missing-column masks during the selected pass |
-| `0x1d0` | `COLTRACE_MISSING_MASK_FIRST` | R | First missing-column mask |
-| `0x1d4` | `COLTRACE_MISSING_MASK_LAST` | R | Last missing-column mask |
-| `0x1d8` | `COLTRACE_VERSION` | R | Current fixed value: `1` |
-
-The runtime selects each column after layer completion and prints:
-
-```text
-COLTRACE layer=... tile=... cout_block=... k_pass=... col=...
-         first_wr=... last_wr=... wr_count=... empty_wait=...
-         missing_or=... missing_first=... missing_last=...
-         version=... valid=...
-```
-
-Vivado/xsim `2022.2` external-golden tests for Conv5, Conv6, and Conv8 tile0
-all pass with the trace enabled. Their selected 52-pixel pass has the same
-column timing:
-
-```text
-column  first write  last write  writes  empty wait
-0       152127       152178      52      99
-1       152131       152182      52      103
-2       152135       152186      52      107
-3       152139       152190      52      111
-4       152143       152194      52      115
-5       152147       152198      52      119
-6       152151       152202      52      123
-7       152155       152206      52      127
-```
-
-This is a deterministic four-cycle phase shift per array column. Each column
-then produces one result per cycle for all 52 pixels. The collector is not
-seeing random starvation, lost packets, unequal packet counts, or downstream
-backpressure. `missing_first=0xff` and `missing_last=0x80` are consistent with
-the array filling from column 0 toward column 7.
-
-The important consequence is that a collector-only phase compensation cannot
-recover the full `COLLECT_COLUMN_EMPTY_WAIT` count: a complete `COLS*2` packet
-still depends on the latest column. The 28-cycle first-to-last-column skew is
-only part of the 127-cycle first-packet latency. Further optimization must
-either amortize the fixed pass startup over larger spatial tiles, or change
-partial-PSUM consumption so the next pass can consume per-column results
-without waiting for a fully assembled packet.
-## 2026-06-16 backend full-tile HWC cache note
-
-The current 3x3 raw-HWC cache is still the materialized 3x3 window cache. It is
-not yet a pure raw feature-map cache with a new address generator. The cache
-capacity requirement is therefore expressed in materialized words:
-
-```text
-required_words = tile_pixels * ceil(CIN / IFM_BANKS)
-IFM_BANKS      = 2
-```
-
-The experimental backend full-tile configuration is:
+当前交付配置为：
 
 ```text
 HWC_CACHE_AW=16
@@ -973,57 +673,20 @@ HWC_CACHE_STRIPES=4
 HWC_CACHE_USE_URAM=1
 ```
 
-This keeps the existing DMA/AXIS format, weight format, OFM packet format,
-quantization, and replay semantics unchanged. It only increases the cache depth
-so Conv5, Conv6, and Conv8 can use one 13x13 spatial tile:
+materialized 3x3 cache 的容量计算为：
 
 ```text
-Conv5/8: 169 * ceil(256/2) = 21632 words
-Conv6:   169 * ceil(512/2) = 43264 words
+Conv5/Conv8: 169 * ceil(256/2) = 21632 words
+Conv6:       169 * ceil(512/2) = 43264 words
 ```
 
-The first software switch is `-BackendFullTile`. It is intentionally
-non-default and should be paired with a hardware build whose cache parameters
-match the values above. The old four-tile backend schedule remains the safe
-path when the switch is not set.
-## During-Compute Next-Pass Prefetch
+因此 Conv5、Conv6 和 Conv8 可使用完整 `13x13` spatial tile。扩大 cache 不改变 AXIS/DMA、Weight、OFM 和量化格式，只减少空间 tile 边界重复开销。
 
-`STREAM_CFG[7]` is an experimental `during_compute_prefetch_enable` bit.
-Reset/default software leaves it at `0`.
+## 19. 当前设计边界
 
-When this bit is set together with raw-HWC mode and pass prefetch, the scheduler
-may start staging the next K pass while the current pass is still in compute.
-This is deliberately only staging:
-
-```text
-current pass:
-  PE weights and IFM FIFO entries are consumed by the active compute
-
-next pass:
-  weight stream may be accepted into the weight staging path
-  raw-HWC replay may append IFM vectors behind current-pass FIFO data
-  next compute does not start until the current pass dependency rules are met
-```
-
-The bit does not allow PE weights to be overwritten during the current compute,
-does not start the next compute early, and does not change DMA stream formats,
-raw-HWC tile layout, OFM packet order, quantization, or layer scheduling visible
-to software. If the current feeder/replay has not completed before compute,
-the optimization naturally falls back to the old pass-prefetch timing.
-
-`STREAM_CFG` readback at AXI-Lite offset `0x19` is:
-
-```text
-bit0 batch stream
-bit1 raw-HWC mode
-bit2 early drain
-bit3 pass prefetch
-bit4 psum stream overlap
-bit5 continuous PSUM
-bit6 column PSUM
-bit7 during-compute next-pass prefetch
-```
-
-The first validation target is the backend full-tile raw-HWC path for Conv5,
-Conv6, and Conv8. Existing prepacked IFM paths and default board-validated
-ELFs leave this bit clear.
+- 默认有效参数为 `ROWS=18`、`COLS=8`、`COUT_TILE=16`、`IFM_BANKS=2`。
+- 正式主线对应稳定 `b_hwcreplay_22`，固定图片 DDR demo 约 `280.340 ms`。
+- Raw-HWC cache 保存的是 materialized 3x3 window 数据，不是通用原始 feature-map cache。
+- Pass prefetch 不跨 COUT block；下一 pass compute 仍受 Weight、IFM 和 partial-PSUM 依赖约束。
+- IFM ping-pong、双 staging 和 during-compute prefetch 未通过稳定板级验证，不属于默认配置。
+- 完整实验演进、失败路径和历史性能数据见 `historical_progress.md`。

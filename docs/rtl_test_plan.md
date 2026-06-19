@@ -1,1075 +1,240 @@
-# RTL Test Plan and Checks
+# RTL 测试计划与检查项
 
-本文档记录当前 RTL 回归测试的思路、数据来源、检查项和覆盖边界。当前测试以可复现的 directed pattern 为主，重点验证卷积主数据流、AXI/stream 握手、配置保护和 OFM 后处理链路。
+> 当前交付基线：`ROWS=18`、`COLS=8`、Vivado/xsim 2022.2、稳定 `b_hwcreplay_22` 数据流。
 
-## 总体思路
+## 1. 总体策略
 
-顶层测试不读取外部图片或权重文件，而是在 testbench 内部用固定公式生成 IFM、weight 和 bias，然后用同一组数据计算 golden convolution。输出端按 pixel/channel 逐项比较，另用计数器检查关键握手和事件数量。
+测试按风险从模块到系统分为四层：
 
-主路径覆盖：
+1. 模块单元测试：握手、边界、饱和、计数和 backpressure；
+2. 小规模顶层 directed test：验证 scheduler 与数据流组合；
+3. 外部 RTL semantic golden：验证真实量化层 byte-exact；
+4. KV260 板级链路：验证 DMA、AXI-Lite、软件调度和最终 YOLO decode。
 
-```text
-AXI-Lite config
-  -> bias/weight/IFM AXIS or stream input
-  -> IFM line buffer/window feeder
-  -> systolic compute
-  -> PSUM drain / ping-pong partial sum
-  -> requant
-  -> activation
-  -> OFM writeback
-  -> OFM AXIS/full-stream sink
-```
+共同检查项：
 
-顶层 golden 数据生成：
+- 只在 `valid && ready` 时推进；
+- backpressure 下 payload、地址和 TLAST 保持稳定；
+- 输出数量、顺序和地址连续；
+- `bias/weight/ifm_axis_error=0`；
+- 量化、LUT、Pooling 与 golden byte-exact；
+- first mismatch 打印 pixel、channel、address、RTL 和 golden。
 
-- IFM: `feat[ch][y][x] = ((ch * 3 + y * 5 + x * 2) % 9) - 4`
-- Weight: `weight[k][co] = ((k * 2 + co * 3) % 7) - 3`
-- Bias: `bias[co] = co - 9`
-- Golden: 遍历 `K_TOTAL`，按 `stride/pad` 计算 3x3 convolution，再按 RTL requant 公式量化输出
-- Quant: 配置 `shift` 保持软件导出的 raw shift；RTL 内部实际右移为 `shift + 15`
-
-## 顶层测试
+## 2. AXIS 顶层测试
 
 ### `tb_conv_accel_core_axi_lite_axis_stream_smoke`
 
-目的：
-
-- 验证 AXI-Lite + bias/weight/IFM AXIS + OFM AXIS 的最小端到端主链路。
-- 使用 5x5 feature map、`COLS=2`、`COUT_TOTAL=4`、单 tile。
-
-检查项：
-
-- AXI-Lite 配置写入和启动完成。
-- bias/weight/IFM stream 服务次数符合预期。
-- IFM window feeder、compute fire、PSUM write 数量符合预期。
-- OFM byte 写入数量为 `num_pixels * cout_total`。
-- OFM AXIS `TLAST` 数量和 debug 计数正确。
-- 输出逐 pixel、逐 channel 与 golden 对比。
-- bias/weight/IFM AXIS `TKEEP/TLAST` error 为 0。
-
-当前结果：
-
-- `57 pass, 0 fail`
+验证 AXI-Lite 配置、Bias/Weight/IFM AXIS 输入、阵列计算、OFM 输出和 done/TLAST 的最小闭环。
 
 ### `tb_conv_accel_core_axi_lite_axis_stream_ps_driver`
 
-目的：
-
-- 验证更接近 PS 驱动方式的 AXI-Lite + 全 AXIS 顶层。
-- 覆盖 8x8 feature map、3 个 spatial tile、`COUT_TOTAL=18`。
-- 覆盖 `K_TOTAL > ROWS` 的多 K pass，以及 `COUT_TOTAL > COUT_TILE` 的多 COUT block。
-
-检查项：
-
-- 3 个 tile 的 start/done/clear 流程。
-- 每个 tile 的 bias/weight/line fill 服务次数。
-- 多 K pass partial sum 累加和最终输出。
-- 多 COUT block 的 `cout_base` 切换和最后 block mask。
-- 每个 tile 的 OFM `TLAST`。
-- 所有 tile 输出拼接到 HWC 地址后与 golden 对比。
-
-当前结果：
-
-- `1169 pass, 0 fail`
+模拟 PS 软件按 request 驱动 Bias、Weight 和 IFM，检查请求顺序、packet 数、busy/done 和错误标志。
 
 ### `tb_conv_accel_core_axi_lite_axis_stream_backpressure`
 
-目的：
-
-- 在 AXI OFM 输出端主动拉低 `m_axis_tready`，验证 OFM AXIS 背压链路。
-- 与 PS driver 场景同样覆盖 8x8、3 tile、multi-pass 和 multi-COUT。
-
-检查项：
-
-- 确认 OFM ready stall 真的被触发。
-- 背压期间不丢 byte、不重复 byte、不提前 `TLAST`。
-- `debug_core_wr_count`、`debug_axis_wr_count`、`debug_tlast_count` 和 `debug_last_tlast_index` 正确。
-- 背压后最终 HWC 输出仍与 golden 一致。
-
-当前结果：
-
-- `1170 pass, 0 fail`
+在 OFM 输出侧插入固定 stall，要求 `m_axis_ofm_tvalid`、`tdata`、`tlast` 在等待期间保持稳定，恢复后无丢包或重复。
 
 ### `tb_conv_accel_core_axi_lite_full_stream_backpressure`
 
-目的：
+对 full-stream wrapper 执行同样的 backpressure 检查，并覆盖内部 packet FIFO 到 byte stream 的转换。
 
-- 验证 full-stream wrapper 的 OFM ready 背压。
-- 覆盖 8x8、3 tile、multi-pass 和 multi-COUT。
+### 阵列参数化 Smoke
 
-检查项：
+| 测试 | 配置 | 用途 |
+|---|---|---|
+| `tb_conv_accel_core_axi_lite_axis_stream_r16_c16_smoke` | 16x16 | 旧阵列参数兼容性 |
+| `tb_conv_accel_core_axi_lite_axis_stream_r18_c16_smoke` | 18x16 | 两通道 3x3 K-pass 结构 |
+| `tb_conv_accel_core_axi_lite_axis_stream_r32_c16_smoke` | 32x16 | 较大 ROWS 参数化边界 |
 
-- 确认 OFM ready stall 真的被触发。
-- IFM full-stream line loader 写入 bank 数据正确。
-- 背压后 OFM 写回数量和最终 golden 对比正确。
+这些测试保留为参数化回归，不代表当前交付配置；当前正式配置是 18x8。
 
-当前结果：
+### 输入 Zero-Point 顶层测试
 
-- `1166 pass, 0 fail`
+- `tb_conv_accel_core_axi_lite_axis_stream_input_zp`
+- `tb_conv_accel_core_axi_lite_full_stream_input_zp`
 
-### `tb_conv_accel_core_axi_lite_axis_stream_r16_c16_smoke`
+外部 IFM 发送 uint8 activation，RTL 在写入 line buffer 前执行：
 
-目的：
+```text
+ifm_s8 = saturate_s8(ifm_u8 - input_zero_point)
+```
 
-- 验证 `ROWS=16, COLS=16` 参数化场景。
-- 强化不同 array shape 下的 K pass、COUT tile 和 stream 连接。
+定向值覆盖：
 
-检查项：
+```text
+zp=36, input=36  -> 0
+zp=36, input=22  -> -14
+zp=36, input=86  -> 50
+zp=36, input=255 -> 127
+zp=200,input=0   -> -128
+```
 
-- 输出数量、服务次数、AXIS debug 计数。
-- Golden 输出逐项对比。
+AXI-Lite `0x0f` 配置 zero-point；window、MAC、requant、OFM、TLAST 和 debug counter 必须继续匹配 signed-IFM golden。
 
-当前结果：
-
-- `217 pass, 0 fail`
-
-### `tb_conv_accel_core_axi_lite_axis_stream_r18_c16_smoke`
-
-目的：
-
-- 验证非 9/16/32 整齐关系的 `ROWS=18, COLS=16`。
-- 使用 `IFM_BANKS=2`，覆盖不同 IFM bank 映射。
-
-检查项：
-
-- K pass 与 bank/channel 映射。
-- 输出数量、AXIS debug 计数、golden 对比。
-
-当前结果：
-
-- `217 pass, 0 fail`
-
-### `tb_conv_accel_core_axi_lite_axis_stream_r32_c16_smoke`
-
-目的：
-
-- 验证 `ROWS=32, COLS=16` 参数化场景。
-- 覆盖较宽 ROWS 下的 feeder 到 systolic FIFO stagger。
-
-检查项：
-
-- 输出数量、服务次数、AXIS debug 计数。
-- Golden 输出逐项对比。
-
-当前结果：
-
-- `217 pass, 0 fail`
-
-### `tb_conv_accel_core_axi_lite_axis_stream_input_zp`
-
-Purpose:
-
-- Verify the formal IFM input-zero-point hardware semantics at top level.
-- The testbench keeps the golden convolution on internal signed IFM values, but sends `feat + input_zero_point` as external uint8 activation bytes through the IFM AXIS path.
-- Uses `input_zero_point=36` and confirms that the IFM loader subtracts it before line-buffer storage.
-
-Checks:
-
-- AXI-Lite register `0x0f` programs the input zero point.
-- IFM AXIS input is uint8; internal line-buffer data is centered signed int8.
-- Window, MAC, requant, OFM writeback, TLAST, and debug counters still match the signed-IFM golden.
-
-Current local result:
-
-- `1169 pass, 0 fail`
-
-### `tb_conv_accel_core_axi_lite_full_stream_input_zp`
-
-Purpose:
-
-- Verify the same non-zero input-zero-point semantics through the full-stream wrapper.
-- Covers the `conv_accel_core_axi_lite_stream -> ifm_line_stream_loader` configuration path that does not use the AXIS IFM wrapper.
-
-Checks:
-
-- AXI-Lite register `0x0f` reaches the full-stream IFM line loader.
-- The full-stream IFM source sends uint8 `feat + input_zero_point`; internal loader checks compare centered signed bytes.
-- End-to-end OFM output still matches the signed-IFM golden.
-
-Current result:
-
-- `1165 pass, 0 fail`
-
-## 关键模块测试
+## 3. 关键模块测试
 
 ### `tb_ofm_activation`
 
-目的：
-
-- 验证 activation 模块在 bypass、ReLU、LUT 模式下的数据和 metadata 对齐。
-- 验证 back-to-back packet 与下游 backpressure。
-
-检查项：
-
-- `out_addr`、`out_cout_base`、`out_channel_valid` 与 data 同周期对齐。
-- full-throughput 连续 3 packet 不错位。
-- `out_ready=0` 时保持输出稳定，`in_ready=0`。
-- LUT 模式按写入 LUT 转换。
-
-当前结果：
-
-- `204 pass, 0 fail`
+检查 bypass、ReLU、LUT、valid/ready 流水和输出 backpressure。输入停顿时不得重复消费，输出停顿时数据必须保持。
 
 ### `tb_ofm_requant_writer`
 
-目的：
-
-- 验证 PSUM packet 到 INT8 OFM packet 的 requant 流水。
-- 验证连续 packet 下 metadata 和 quantized data 对齐。
-
-检查项：
-
-- signed multiply、round、`effective_shift = raw_shift + 15`、zero-point、saturation 与 testbench golden 一致。
-- back-to-back packet 输出顺序正确。
-- packet 地址、`cout_base`、channel mask 不错位。
-- Output backpressure holds requant pipeline state stable when `ofm_ready=0`, and `packet_ready` deasserts until the held output is accepted.
-
-当前结果：
-
-- `58 pass, 0 fail`
+检查 int32 PSUM、int32 Bias、Q15 multiplier、`effective_shift=shift+15`、rounding、output zero-point 和 uint8 饱和。
 
 ### `tb_ofm_writeback`
 
-目的：
-
-- 验证 OFM packet 展开成 HWC byte write。
-- 验证最后 lane 同周期 push 时 `busy` 不提前掉低。
-
-检查项：
-
-- 地址公式：`(pixel_base + pixel_idx) * cout_total + (cout_base + lane)`。
-- channel mask 屏蔽无效 lane。
-- `wr_ready=0` 时保持 lane，恢复后继续写。
-- final-lane same-cycle push 后 `busy` 保持，后续 packet 不丢。
-- Burst stress sends 12 full-mask packets while `wr_ready` periodically stalls, checking every byte address/data.
-
-当前结果：
-
-- `121 pass, 0 fail`
+检查 packet 地址、channel 打包、最终 pass 标志、OFM byte 顺序、TLAST 和 backpressure。
 
 ### `tb_axi_lite_cfg_bridge`
 
-目的：
-
-- 验证 AXI-Lite bridge 写/读握手、partial write 和 busy 保护。
-
-检查项：
-
-- AW/W 同时到达、分离到达、W-first 到达。
-- CTRL partial write 不把 status 位错误合并成 start/clear side effect。
-- `0x0f` input-zero-point write/read, lower-byte partial write, and upper-byte partial no-op behavior.
-- `layer_busy=1` 时 start 被忽略，配置寄存器冻结。
-- idle 后 start 和配置写入正常生效。
-
-当前结果：
-
-- `59 pass, 0 fail`
+检查 AW/W 独立握手、WSTRB merge、读写响应、非法地址和 busy freeze。
 
 ### `tb_layer_config_regs`
 
-目的：
+覆盖 layer 参数、quant/LUT、stream 配置、性能计数、start 清零、done 后保持和只读寄存器。
 
-- 验证配置寄存器本体的 busy freeze 和 start/done 行为。
+### IFM Loader
 
-检查项：
+- `tb_axis_ifm_line_loader`：AXIS line packet、TKEEP/TLAST、短包/长包和 zero-point；
+- `tb_ifm_line_stream_loader`：多 bank line fill、DMA 写地址、饱和和 done；
+- `tb_axis_hwc_tile_cache`：HWC load、18-lane bank、CIN tail、raw replay 和 fast replay。
 
-- busy 时 FM/K/activation/tile/pixel 配置不被改写。
-- busy 时 `input_zero_point` 配置不被改写。
-- busy 时 start pulse 被忽略。
-- busy 时 clear done 仍可工作。
-- idle 时配置和 start 正常接受。
+### OFM Pooling
 
-当前结果：
+- `tb_ofm_pooling`：bypass、2x2 maxpool stride2、奇偶边界和 backpressure；
+- `tb_conv_accel_core_pooling`：Conv、Activation、Pooling 模块级串联；
+- `tb_conv_accel_core_axi_lite_axis_stream_pooling`：配置和 AXIS 顶层串联；
+- `tb_conv_accel_core_axi_lite_axis_stream_conv0_crop_pool_ext`：真实 Conv0 crop+pool golden。
 
-- `34 pass, 0 fail`
+## 4. Layer06 真实数据测试
 
-### `tb_axis_ifm_line_loader`
+Layer06 代表 `52x52x64 -> 52x52x128` 的多通道 3x3 卷积，用于验证 K/COUT 分块和 partial PSUM。
 
-目的：
+| 测试 | 主要覆盖内容 |
+|---|---|
+| `tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_ext_tile4` | 18x16 外部 golden 小 tile |
+| `tb_conv_accel_core_axi_lite_axis_stream_r18_c8_b2_layer06_ext_tile4` | 当前 18x8 主配置 |
+| `tb_conv_accel_core_axi_lite_axis_stream_r18_c8_b2_layer06_pool_ext_tile4` | Conv+Activation+Pool |
+| `tb_conv_accel_core_axi_lite_axis_stream_r18_c8_b2_conv4_pool_ext_tile4` | 后续 Conv+Pool 真实数据 |
+| `tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_tile4_fifo16_backpressure` | 小 OFM FIFO 和 backpressure |
+| `tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_ext_tiles` | 顶部、中部、底部 tile |
+| `tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_ext_full` | 完整层输出 |
 
-- 验证 IFM line AXIS loader 的行写入协议。
+检查输出 byte-exact、数量、TLAST、debug counter 和 AXIS error。`full_fifo256` 只作诊断，不纳入短回归。
 
-检查项：
+## 5. 层间与板级调度测试
 
-- `fill_req` 后 ready 拉高。
-- 一行 `fm_w` 个 beat，每 beat 写所有 bank。
-- `input_zero_point=36` 时覆盖 `36->0`, `22->-14`, `86->50`, `255->127` 饱和上限。
-- `input_zero_point=200` 时覆盖 `0->-128` 饱和下限。
-- `input_zero_point=0` 时输出 byte 等于原始输入 byte，保持旧 directed pattern 兼容。
-- `TKEEP` 和 `TLAST` 错误检测。
-- `fm_w=0` 时不进入活跃状态，不误写。
+### KV260 `conv3_pool -> conv4_pool`
 
-当前结果：
+验证连续两层配置、DMA buffer 切换、上一层 Pooling 输出作为下一层 IFM，以及第二层输出与 golden 一致。
 
-- `80 pass, 0 fail`
+### Conv0 至 Conv9 Batch Chain
 
-### `tb_ifm_line_stream_loader`
+要求每层 RTL golden comparison 通过，最终 Conv9 tensor 经软件 decode 后与 `repro/expected/decode_golden.json` 一致。
 
-Purpose:
+### 固定图片 DDR Demo
 
-- Verify the bus-agnostic IFM line stream loader and the uint8-to-centered-sint8 conversion before the line buffer.
-
-Checks:
-
-- `input_zero_point=0` preserves existing byte order and values.
-- `input_zero_point=36` covers zero, negative, positive, and high saturation cases.
-- `input_zero_point=200` covers low saturation.
-- `dma_line_advance`, `dma_wr_x`, `dma_wr_fy`, and bank write enables remain correct.
-
-Current result:
-
-- `81 pass, 0 fail`
-
-### `tb_ofm_pooling`
-
-目的：
-
-- 验证 activation 后的 packet-level pooling。
-- 覆盖 bypass 和 `2x2` uint8 maxpool stride-2。
-- 验证 output backpressure 下 `in_ready` 能停止上游输入。
-
-检查项：
-
-- bypass 模式 metadata/data 原样透传。
-- `4x4 -> 2x2` pooling 输出地址按 pooled local pixel 重新编号。
-- 每个 lane 的输出等于四个 activated uint8 输入的最大值。
-- 输出被下游 hold 时，不接受新的输入 packet。
-
-当前结果：
-
-- `50 pass, 0 fail`
-
-### `tb_conv_accel_core_pooling`
-
-目的：
-
-- 验证小规模 deterministic 顶层 `Conv -> Requant -> Activation -> Pool -> OFM`。
-- 使用 `POOL_CFG` 打开 `2x2` stride-2 pooling，默认无 pool 测试保持兼容。
-
-检查项：
-
-- 卷积 compute/psum 计数仍按 pool 前 conv output pixel 数统计。
-- OFM byte 写出数量按 pool 后 pixel 数统计。
-- 输出 byte 与 testbench 内部 RTL semantic golden 的 activation 后 maxpool 一致。
-
-当前结果：
-
-- `139 pass, 0 fail`
-
-### `tb_conv_accel_core_axi_lite_axis_stream_pooling`
-
-目的：
-
-- 验证 pool-enabled AXI-Lite + AXIS 顶层 `Conv -> Requant -> Activation -> Pool -> OFM AXIS`。
-- 覆盖 pool 后输出 byte 数、AXIS TLAST 和 debug byte counter。
-- 使用 `IFM_U8_FROM_CENTERED` 和 `input_zero_point=128`，确保 AXIS 输入按外部 uint8 activation 语义送入。
-
-检查项：
-
-- OFM byte 写出数量按 pool 后 pixel 数统计。
-- AXIS `TLAST` 只在 pool 后 tile 输出最后一个 byte 置位。
-- debug core/sink write count、TLAST count、last TLAST index 与 pool 后输出数量一致。
-- 输出 byte 与 testbench 内部 RTL semantic golden 的 activation 后 maxpool 一致。
-
-配置语义：
-
-- pool 打开时，`OFM_SIZE/NUM_PIXELS/TILE_OFM_H` 仍描述 pooling 前的 convolution output tile。
-- `TILE_PIXEL_BASE` 描述最终写回地址空间；pooling 多 tile 调度时应写 pool 后 OFM 的 pixel base。
-
-当前结果：
-
-- `81 pass, 0 fail`
-
-### `tb_conv_accel_core_axi_lite_axis_stream_conv0_crop_pool_ext`
-
-目的：
-
-- 验证真实数据驱动的 `Conv0 -> Requant -> LUT activation -> 2x2 Pool -> OFM AXIS`。
-- 使用真实 facemask 图片 crop、真实 Conv0 权重、int32 bias、量化参数和 activation LUT。
-- 覆盖 external golden + pooling 的 byte-for-byte 对比。
-
-数据来源：
-
-- Full Conv0 export: `D:/MPSoC/python_prj/rtl_golden/facemask_conv0`
-- Crop fixture: `D:/MPSoC/python_prj/rtl_golden/facemask_conv0_crop16x8_pool`
-- 生成脚本：`tools/golden/export_rtl_conv0_golden.py --pool-stride2`
-- xsim mem 转换脚本：`tb/make_conv0_xsim_mem.py` 和 `tb/make_conv0_crop_xsim_mem.py`
-
-配置：
-
-- Crop: source image quantized IFM at `(x=96, y=96, w=16, h=8)`
-- Shape: `16x8x3 -> 16x8x16 -> pool 8x4x16`
-- Array: `ROWS=18, COLS=8, IFM_BANKS=2`
-- Quant: `mult=18898`, raw `shift=9`, effective shift `24`, output `zp=69`
-- Input zero point: `0`; crop centered range `38..105`, `sat_count=0`
-
-当前结果：
-
-- `529 pass, 0 fail`
-
-说明：
-
-- A full-width `416x4` Conv0 tile was too slow for regular xsim use without progress instrumentation, so the checked regression uses a small real-data crop. It still exercises the same RTL semantic data path and external golden comparison.
-
-## Layer06 real-image external golden tests
-
-These tests verify a real intermediate layer shape:
-
-- Layer: `52x52x64 -> 52x52x128`
-- Array: `ROWS=18, COLS=16, IFM_BANKS=2`
-- K scheduling: `64*3*3=576`, `K_PASSES=32`
-- COUT scheduling: `COUT_TILE=COLS*2=32`, `COUT_BLOCKS=4`
-- Total schedule blocks per full spatial tile: `32*4=128`
-
-Data source:
-
-- Binary golden export: `D:/MPSoC/python_prj/rtl_golden/facemask_layer06_rtl`
-- xsim `$readmemh` files: `D:/MPSoC/python_prj/rtl_golden/facemask_layer06_rtl/xsim_mem`
-- Export scripts are versioned in this repo under `tools/golden/`.
-- Conversion script: `tb/make_layer06_xsim_mem.py`
-- Quant config: `mult=18055`, raw `shift=7`, effective shift `22`, `zp=75`
-- IFM input zero point: `input_zero_point=36`, programmed through config register `0x0f`
-- Activation: LUT mode, loaded from `activation_lut_u8.mem`
-
-Golden data policy:
-
-- RTL pass/fail compares against RTL semantic golden, not direct PyTorch layer output.
-- Large full-layer golden dumps and model weights stay under external `D:/MPSoC/python_prj`.
-- Only small curated regression fixtures should be copied into repository `golden/`.
-- The external data root can be changed with the `PYTHON_PRJ` environment variable or the generator script `--project` argument.
-
-The external IFM stream is uint8 activation data. The RTL line loader converts each byte to internal signed int8 as `saturate_s8(ifm_u8 - input_zero_point)` before writing the line buffer. Padding outside the feature map is still internal signed zero. Layer06 has `ifm_u8` range `22..86`, centered range `-14..50`, and `sat_count=0`.
-
-The regenerated Layer06 golden follows this RTL semantic: `psum = conv_accumulator + int32_bias`, then `requant = round(psum * mult / 2^(raw_shift + 15)) + zp`. The `+15` comes from the software parameter generator storing `mult = round(base * 2^15)`. This produces a rich OFM distribution again. Compared with the PyTorch quantized layer output, a small number of bytes may differ because PyTorch uses float-bias semantics while the RTL golden uses integer bias.
-
-### `tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_ext_tile4`
-
-Purpose:
-
-- Verify external IFM/weight/bias/LUT/golden import on the top 4 output rows.
-- Quickly check real 64-channel input blocking, 32 K passes, 4 COUT blocks, requant, activation, and HWC OFM writeback.
-
-Checks:
-
-- OFM byte-by-byte matches `golden_ofm_u8_hwc.mem`.
-- Output count is `52*4*128`.
-- `bias/weight/ifm_axis_error=0`.
-- AXIS TLAST and debug counters match expected counts.
-- First mismatch prints tile, pixel, global pixel, channel, address, RTL byte, and golden byte.
-
-Current result:
-
-- `26641 pass, 0 fail`; xsim elapsed about `00:00:21`
-
-### `tb_conv_accel_core_axi_lite_axis_stream_r18_c8_b2_layer06_ext_tile4`
-
-Purpose:
-
-- Verify the same real Layer06 tile under the current KV260 default profile: `ROWS=18, COLS=8, COUT_TILE=16`.
-- Exercise `K_PASSES=32` and `COUT_BLOCKS=8`, matching the board smoke scheduler.
-
-Checks:
-
-- External IFM/weight/bias/LUT/golden import.
-- Current r18_c8 parameterization for weight lanes, COUT block order, requant, activation, and HWC OFM byte writeback.
-
-Current result:
-
-- `26641 pass, 0 fail`; xsim elapsed about `00:05:36` on 2026-06-06.
-
-### `tb_conv_accel_core_axi_lite_axis_stream_r18_c8_b2_layer06_pool_ext_tile4`
-
-Purpose:
-
-- Verify the real model stage corresponding to single-scale `conv3_pool` under the current KV260 profile.
-- Exercise `52x52x64 -> Conv/LUT 52x52x128 -> 2x2/s2 maxpool 26x26x128` for the first `tile_ofm_h=4` conv tile.
-- Confirm pool-enabled `TILE_PIXEL_BASE` and OFM byte counts use the pooled output address space.
-
-Checks:
-
-- External IFM/weight/bias/LUT import is shared with the Layer06 conv-only tests.
-- Golden is `golden_pool2x2s2_u8_hwc.mem`, generated from the RTL semantic Layer06 activation output.
-- Output count is `26*2*128 = 6656` bytes for the first conv tile.
-- AXIS TLAST and debug counters match the pooled output byte count.
-
-Current result:
-
-- `6673 pass, 0 fail`; xsim elapsed about `00:00:19` on 2026-06-06.
-
-### `tb_conv_accel_core_axi_lite_axis_stream_r18_c8_b2_conv4_pool_ext_tile4`
-
-Purpose:
-
-- Verify the next 3x3 single-scale stage after `conv3_pool` without requiring 1x1 RTL support.
-- Exercise `26x26x128 -> Conv/LUT 26x26x256 -> 2x2/s2 maxpool 13x13x256` for the first `tile_ofm_h=4` conv tile.
-- Cover the larger scheduling point `K_PASSES=64`, `COUT_BLOCKS=16`, and `1024` weight pass services per spatial tile.
-
-Checks:
-
-- External IFM/weight/bias/LUT/golden import from `facemask_single_scale_rtl/04_conv4_pool/xsim_mem`.
-- Output count is `13*2*256 = 6656` bytes for the first conv tile.
-- AXIS TLAST and debug counters match the pooled output byte count.
-- OFM byte stream is compared byte-for-byte against RTL semantic golden.
-
-Current result:
-
-- `6673 pass, 0 fail`; xsim elapsed about `00:01:31` on 2026-06-06.
-- KV260 `conv_accel_conv4_pool_tiles_smoke.elf` passed on 2026-06-06. Log: `build_system_xck26_kv260/board_smoke_logs/20260606_140410_conv4_pool_tiles_COM8.log`; full pooled OFM compare was `43264` bytes with `0 mismatch`.
-
-### KV260 `conv3_pool -> conv4_pool` chained smoke
-
-Purpose:
-
-- Verify real inter-layer software scheduling: the `conv3_pool` hardware OFM buffer is reused directly as the `conv4_pool` hardware IFM stream.
-- Cover the first two adjacent 3x3+pool stages currently supported without 1x1 RTL changes.
-- Separate chain semantics from PyTorch-reference semantics.
-
-Checks:
-
-- Stage 1: `52x52x64 -> 52x52x128 -> 26x26x128`, 13 spatial tiles, output `86528` bytes.
-- Stage 2: `26x26x128 -> 26x26x256 -> 13x13x256`, 7 spatial tiles, output `43264` bytes.
-- `conv4_pool` expected output is generated from the RTL semantic `conv3_pool` output, not from PyTorch `layer07_pooling_MaxPool2d_u8_hwc.bin`.
-- Each tile checks OFM debug delta, TLAST count, service counts, address parsing, and final byte-for-byte golden compare.
-
-Current result:
-
-- First attempt using the standalone Conv4 golden failed at `byte=4415` because the expected data was generated from PyTorch intermediate bytes.
-- After regenerating chain Conv4 golden from `facemask_layer06_rtl/golden_pool2x2s2_u8_hwc.bin`, KV260 `conv_accel_conv3_conv4_chain_smoke.elf` passed on 2026-06-06.
-- Log: `build_system_xck26_kv260/board_smoke_logs/20260606_141427_conv3_conv4_chain_COM8.log`; `conv3_pool full compare=86528 bytes`, `conv4_pool full compare=43264 bytes`, final `PASS`.
-
-### `tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_tile4_fifo16_backpressure`
-
-Purpose:
-
-- Verify top-level OFM backpressure correctness with a deliberately shallow OFM AXIS byte FIFO.
-- Combines `OFM_FIFO_DEPTH=16` with periodic downstream `m_axis_tready` stalls.
-- Covers the same top 4 output rows, 64 input channels, 32 K passes, and 4 COUT blocks as tile4.
-
-Checks:
-
-- Output byte count is unchanged by backpressure.
-- AXIS TLAST and debug counters match the expected tile output.
-- The ready/valid path from final PSUM packet FIFO through requant into the OFM packet FIFO does not drop or duplicate packets when the downstream byte FIFO is full.
-
-Current result:
-
-- `26642 pass, 0 fail`
-
-### `tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_ext_tiles`
-
-Purpose:
-
-- Verify three spatial boundary tiles with real external data.
-- Covers top tile `tile_oy_base=0`, middle tile `tile_oy_base=24`, and bottom tile `tile_oy_base=48`.
-
-Checks:
-
-- Same checks as external tile4.
-- Confirms non-zero `tile_pixel_base` addressing and bottom padding behavior.
-
-Current result:
-
-- `79889 pass, 0 fail`; xsim elapsed about `00:02:16`
-
-### `tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_ext_full`
-
-Purpose:
-
-- Verify the complete `52x52x64 -> 52x52x128` layer as one full spatial tile with real external data.
-- Covers all `346112` OFM bytes.
-
-Checks:
-
-- Same checks as external tile4 over the full spatial tile.
-- Uses `OFM_FIFO_DEPTH=1024`; depth 256 was insufficient for the full continuous output burst in this RTL configuration.
-
-Current result:
-
-- `346129 pass, 0 fail`; xsim elapsed about `00:10:33`
-
-### OFM backpressure implementation note
-
-`ofm_requant_writer` now has an explicit `packet_ready/ofm_ready` handshake. The requant pipeline advances only when the downstream OFM packet FIFO can accept data, or when the pipeline output is empty. This replaces the older fixed-slack dependency on `almost_full`, so correctness no longer depends on reserving a particular number of FIFO entries for the requant pipeline.
-
-The full-layer shallow-FIFO diagnostic wrapper `tb_conv_accel_core_axi_lite_axis_stream_r18_c16_b2_layer06_full_fifo256` is intentionally not listed in the default xsim regression because it timed out in targeted runs. Use the tile4 shallow-FIFO backpressure test for regular correctness coverage, and keep full-layer tests at normal FIFO depth for targeted/nightly external-golden verification.
-
-### Current short xsim baseline
-
-The daily offline baseline for the current KV260 profile is:
+使用：
 
 ```text
-ROWS=18, COLS=8, IFM_BANKS=2, COUT_TILE=16
+repro/images/maksssksksss0.png
 ```
 
-Run the short baseline with:
+当前稳定基线输出一个 `with_mask` 检测，score 约 `0.357321`，十层 PL 推理约 `280.340 ms`。
 
-```powershell
-powershell -ExecutionPolicy Bypass -File tb/run_short_xsim_regression.ps1
-```
+## 6. Raw-HWC 与后端 Full-Tile 测试
 
-The script runs `tb_axis_ofm_byte_writer`, the r18_c8 Conv0 crop + pool
-external-golden smoke, AXI-Lite quant/LUT, requant, and OFM requant writer
-tests. The r18_c8 deterministic smoke is retained as a control-path diagnostic,
-and can be reproduced with `-RunDeterministicDiagnostics`, but core correctness
-for the current KV260 profile should be judged first from the real Conv0
-external-golden fixture. On 2026-06-04,
-`tb_conv_accel_core_axi_lite_axis_stream_conv0_crop_pool_r18_c8_b2_ext`
-passed with `529 pass, 0 fail`; the deterministic fixture reproduced a raw psum
-mismatch after aligning its quant config to `mult=32767, shift=0, zp=0`.
-Layer06 external golden tests remain targeted/nightly because the full-layer
-case is heavier than the daily smoke set.
+### Conv6 3x3 Raw-HWC
 
-### `tb_axis_hwc_tile_cache`
+- `tb_conv_accel_core_axi_lite_axis_stream_conv6_3x3_raw_hwc_ext_tile0_cout16`
+- `tb_conv_accel_core_axi_lite_axis_stream_conv6_3x3_raw_hwc_ext_tile3_cout16`
 
-Purpose:
+检查 raw load byte 数、replay packet 数、OFM 数量、TLAST、AXIS error 和 byte-exact 输出。
 
-- Verify the raw-HWC IFM tile cache in both native `1x1` and packed `3x3`
-  replay modes.
-- The `1x1` mode packs 18 consecutive channels across two 72-bit banks.
-- The `3x3` mode stores one nine-byte window per channel and output pixel:
-  even/odd channels select the two banks, and one synchronous read from both
-  banks emits the 18-lane K pass.
-- Exercise the four-stripe storage organization used to infer eight URAMs in
-  the Conv6 hardware build.
+### 后端 Full-Tile
 
-Checks:
-
-- Raw HWC load byte order, `input_zero_point` centering, TLAST/TKEEP handling,
-  tail channels, padding/out-of-range replay as internal zero, and
-  `vector_ready` backpressure.
-- For `3x3`, verifies both pass-base `0` and pass-base `18` so kernel-position
-  and channel mapping cross a bank chunk boundary.
-- Throughput guard: with `vector_ready` held high, replay must deliver vectors
-  at roughly one vector per cycle after startup. This catches regressions to the
-  previous two-cycle/vector synchronous-read cadence.
-
-Current result:
-
-- Icarus: `261 pass, 0 fail`.
-- Vivado/xsim `2022.2`: `261 pass, 0 fail`.
-
-### `tb_conv_accel_core_axi_lite_axis_stream_conv6_3x3_raw_hwc_ext_tile0_cout16`
-
-Purpose:
-
-- Directed architecture probe for raw-HWC cache on a real `3x3` Conv6 tile.
-- Uses `ROWS=18`, `COLS=8`, `COUT_TILE=16`, `CIN=512`, `OFM=13x13`,
-  `tile_oy_base=0`, `tile_ofm_h=4`, and only the first COUT tile.
-- Keeps the old prepacked IFM path disabled only for this wrapper by setting
-  `STREAM_CFG[1] = raw_hwc_mode`.
-
-Checks:
-
-- Raw HWC tile load count, raw AXIS beat count, cache replay packet count,
-  compute/psum counts, OFM byte count, TLAST/debug counters, and byte-exact
-  comparison against the external RTL-semantic golden.
-- The generated external subset is under
-  `D:/MPSoC/python_prj/rtl_golden/facemask_chain_conv0_conv6_rtl/06_head_conv6_3x3/xsim_mem_cout16`.
-
-Current result:
-
-- `854 pass, 0 fail`; Conv6 tile0 loads `4160` 64-bit raw-HWC beats and
-  replays `13312` pixel/pass packets with `raw_stalls=0`.
-
-### `tb_conv_accel_core_axi_lite_axis_stream_conv6_3x3_raw_hwc_ext_tile3_cout16`
-
-Purpose:
-
-- Cover Conv6's bottom spatial tile, where `tile_oy_base=12` and
-  `tile_ofm_h=1`.
-- Verify clamped physical-row loading and bottom padding with the packed
-  72-bit cache layout.
-
-Current result:
-
-- `230 pass, 0 fail`; the tile loads `1664` raw-HWC AXIS beats with
-  `raw_stalls=0`.
-
-Implementation result:
-
-- Vivado `2022.2` full implementation uses `8 URAM`, `45.5 BRAM`,
-  `54214 LUT`, `46902 FF`, and `183 DSP`.
-- Timing closes at `WNS=+0.017 ns`, `TNS=0`, `WHS=+0.010 ns`, `THS=0`;
-  route status is `89791` fully routed nets and zero routing errors.
-- Board tests remain pending because the June 9, 2026 probe returned an empty
-  JTAG chain and no KV260 UART/COM8 was present.
-
-Compatibility checks run with the same RTL:
-
-- `tb_conv_accel_core_axi_lite_axis_stream_conv7_native1x1_raw_hwc_ext_tile0`:
-  `13334 pass, 0 fail`
-- `tb_conv_accel_core_axi_lite_axis_stream_r18_c8_b2_conv5_ext_tail_cout16`:
-  `227 pass, 0 fail`
-
-### Continuous PSUM collector experimental checks
-
-Purpose:
-
-- Verify the opt-in `STREAM_CFG[5]` continuous PSUM collector path.
-- Keep the default/legacy drain path available while exercising the backend
-  Conv5/Conv6/Conv8 raw-HWC path with overlap64, early drain, pass prefetch,
-  and partial-PSUM overlap.
-- Check the new explicit-BRAM ping-pong storage and the collector pass-context
-  FIFO before board implementation.
-
-Checks:
-
-- `tb_psum_output_collector`: context FIFO, column skew, non-final partial
-  packets, final packets, backpressure, and context-full stall accounting.
-- `tb_psum_pingpong_buffer_bram`: independent bank write/read behavior and
-  synchronous read latency.
-- `tb_layer_scheduler_continuous_psum`: collector context handoff and fallback
-  behavior when the collector is disabled.
-- Top external-golden xsim:
-  - `tb_conv_accel_core_axi_lite_axis_stream_conv5_3x3_raw_hwc_overlap64_ext_tile0_cout16`
-  - `tb_conv_accel_core_axi_lite_axis_stream_conv6_3x3_raw_hwc_ext_tile0_cout16`
-  - `tb_conv_accel_core_axi_lite_axis_stream_conv8_3x3_raw_hwc_ext_tile0_cout16`
-
-Current result:
-
-- Icarus selected regression passes for collector, BRAM, scheduler, config,
-  core, and top stream tests.
-- Vivado/xsim `2022.2` module-level selected regression passes.
-- Vivado/xsim `2022.2` Conv5/Conv6/Conv8 raw-HWC tile0 continuous PSUM tests
-  pass with `854 pass, 0 fail` each.
-- Vivado/xsim `2022.2` Conv5/Conv6/Conv8 raw-HWC tile3 continuous PSUM tests
-  pass with `230 pass, 0 fail` each; this covers the board-reproduced tail
-  tile mismatch caused by stale partial-PSUM bank credit.
-- Fixed build `D:/MPSoC/b_psumcollector_fix3_22` passes KV260 batch-chain and
-  two DDR image demos. Measured DDR totals are about `0.3713 s`; collector
-  context-full stall and PSUM-overlap underflow are both `0`.
-
-### Pass timeline diagnostic checks
-
-Purpose:
-
-- Add diagnostic observability for the remaining pass-level bubbles after the
-  continuous PSUM collector.
-- Keep the datapath unchanged while measuring pass timing around feeder,
-  compute, raw-HWC replay, and collector events.
-- Support one selected `cout_block/k_pass` timestamp trace for Conv5/Conv6/Conv8
-  raw-HWC board runs.
-
-Checks:
-
-- `tb_pass_timeline_monitor`: artificial event sequences verify aggregate
-  counts and selected-pass timestamps for weight done, feeder events, compute
-  fire span, collector packets, and pass completion.
-- `tb_layer_config_regs`: verifies the `0x164..0x1b4` pass timeline register
-  readback path and `PASSTRACE_SELECT` write/read behavior.
-- `tb_conv_layer_top_stream` and `tb_conv_accel_core`: verify the new monitor
-  wiring does not disturb existing top-level behavior.
-- `tb/test_kv260_image_demo.py`: verifies UART parser compatibility for
-  `PASSPERF` and `PASSTRACE` lines.
-- Vitis `2022.2` build: verifies that the experimental DDR demo can be built
-  with `-TilePerfTrace -PassTraceCoutBlock 0 -PassTraceKPass 0` plus the
-  current raw-HWC/overlap/continuous-PSUM switches.
-
-Current result:
-
-- Icarus selected regression:
-
-  ```text
-  tb_pass_timeline_monitor 22 pass, 0 fail
-  tb_layer_config_regs     158 pass, 0 fail
-  tb_conv_layer_top_stream 184 pass, 0 fail
-  tb_conv_accel_core       93 pass, 0 fail
-  ```
-
-- Python UART parser test passes.
-- Vitis `2022.2` experimental DDR ELF builds successfully.
-- Vivado `2022.2` implementation for `D:/MPSoC/b_passtrace_22` completed:
-  `WNS=+0.193 ns`, `TNS=0`, `WHS=+0.010 ns`, `THS=0`, and `0` routing
-  errors. The build fixed the Tcl source-list coverage for
-  `pass_timeline_monitor.v`.
-- The first board trace build passed batch-chain but did not keep trace-valid
-  asserted for the raw-HWC continuous layers. The monitor was fixed to track the
-  selected trace lifetime separately from the current compute lifetime.
-- Vivado `2022.2` implementation for the fixed build
-  `D:/MPSoC/b_passtrace_fix2_22` completed with `WNS=+0.113 ns`, `TNS=0`,
-  `WHS=+0.010 ns`, `THS=0`, and `0` routing errors.
-- KV260 validation passed:
-
-  ```text
-  batch-chain: 20260615_230847_conv0_conv9_batch_chain_COM8.log
-  DDR image0:  20260615_231105_conv0_conv9_ddr_demo_COM8.log
-  DDR image1:  20260615_231547_conv0_conv9_ddr_demo_COM8.log
-  ```
-
-- `PASSTRACE` now captures Conv5/Conv6/Conv8 tile0 at `cout_block=0`,
-  `k_pass=0`. The samples show `compute_start -> first_fire = 9` cycles and a
-  52-cycle fire span for the 52-pixel tile, while collector first packet appears
-  about 112 cycles after compute done.
-- `tools/demo/summarize_uart_perf.py` now tolerates UART logs where metric
-  records are concatenated, which is common when `TILEPERF` tracing is enabled.
-
-### Column-level PSUM trace checks
-
-Purpose:
-
-- Test the specific hypothesis that the continuous collector is stalled by
-  unequal or irregular per-column PSUM FIFO production.
-- Observe one selected pass without feeding diagnostic signals back into the
-  data path.
-
-Checks:
-
-- `tb_coltrace_monitor`: first/last write timestamps, write count, selected
-  column empty-wait, and missing-mask capture.
-- `tb_layer_config_regs`: `0x1b8..0x1d8` readback, selected-column write, busy
-  freeze, trace-valid, and version.
-- Conv5/Conv6/Conv8 raw-HWC tile0 xsim with continuous PSUM and column trace:
-  require byte-exact output, trace-valid, and `wr_count == num_pixels` for all
-  eight columns.
-- Python UART parsing: parse and rank `COLTRACE` lines without disturbing
-  existing `PERF`, `PASSPERF`, or `PASSTRACE` summaries.
-
-Current result:
+覆盖 Conv5、Conv6、Conv8 完整 `13x13` spatial tile。Conv6 是容量上界：
 
 ```text
-tb_coltrace_monitor       PASS
-tb_psum_output_collector  PASS
-tb_pass_timeline_monitor  23 pass, 0 fail
-tb_layer_config_regs      169 pass, 0 fail
-Conv5 raw-HWC tile0       PASS, 863/0 with detailed trace
-Conv6 raw-HWC tile0       PASS
-Conv8 raw-HWC tile0       PASS
+169 * ceil(512/2) = 43264 words
 ```
 
-The selected 52-pixel pass produces 52 consecutive writes on every column.
-Column `n` begins `4*n` cycles after column 0; empty-wait increases from 99
-cycles on column 0 to 127 cycles on column 7. This is fixed array propagation,
-not random collector starvation. A collector-only phase correction is
-therefore not an accepted optimization. Future tests should target either
-larger Conv5/Conv8 spatial tiles or per-column partial-PSUM streaming.
+旧 4-tile 调度继续作为对照。Full-tile 模式不得改变 AXIS/DMA、Weight、OFM 或量化语义。
 
-### Backend full-tile raw-HWC cache checks
+### Conv3 Raw-HWC 大 Tile A/B
 
-Purpose:
+26-row tile 超过 `IFM_FIFO_DEPTH=1024`；`18/18/16` 三 tile 可以运行，但慢于正式 Conv4/5/6/8 配置，因此仅作为诊断项。
 
-- Validate the enlarged materialized 3x3 raw-HWC cache before synthesis.
-- Cover the backend layers that can use a single 13x13 spatial tile when
-  `HWC_CACHE_DEPTH=43264`.
+## 7. PSUM 与性能诊断测试
 
-Checks:
+### 连续 PSUM Collector
 
-- Conv5 full 13x13 raw-HWC tile with `CIN=256`, `COUT_TOTAL=16`.
-- Conv6 full 13x13 raw-HWC tile with `CIN=512`, `COUT_TOTAL=16`; this is the
-  maximum capacity case at `169 * ceil(512/2) = 43264` materialized words.
-- Conv8 full 13x13 raw-HWC tile with `CIN=256`, `COUT_TOTAL=16`.
-- Byte-exact comparison against the external RTL-semantic golden.
-- Raw-HWC load byte count, OFM byte count, TLAST/debug counters, and AXIS error
-  counters remain correct.
+- `tb_psum_output_collector`：context FIFO、column skew、partial/final packet 和 context-full stall；
+- `tb_psum_pingpong_buffer_bram`：独立 bank 读写与同步读延迟；
+- `tb_layer_scheduler_continuous_psum`：context handoff 和关闭时 fallback。
 
-Current result:
+Conv5/6/8 tile0 当前为 `854 pass, 0 fail`，tile3 为 `230 pass, 0 fail`；板级 `context_full_stall=0`、underflow 为 `0`。
 
-```text
-tb_conv_accel_core_axi_lite_axis_stream_conv5_3x3_raw_hwc_fulltile_cout16  2726 pass, 0 fail
-tb_conv_accel_core_axi_lite_axis_stream_conv6_3x3_raw_hwc_fulltile_cout16  2726 pass, 0 fail
-tb_conv_accel_core_axi_lite_axis_stream_conv8_3x3_raw_hwc_fulltile_cout16  2726 pass, 0 fail
-```
+### Pass 时间线
 
-Board result with the matching 2022.2 hardware build:
+- `tb_pass_timeline_monitor` 验证聚合计数和选定 pass 时间戳；
+- 配置测试覆盖 `0x164..0x1b4`；
+- UART parser 覆盖 `PASSPERF` 与 `PASSTRACE`。
 
-```text
-build dir: D:/MPSoC/b_hwcfulltile_22
-batch-chain: PASS, log=20260616_125655_conv0_conv9_batch_chain_COM8.log
-DDR demo maksssksksss0.png: PASS, total=335.564 ms
-DDR demo maksssksksss1.png: PASS, total=335.779 ms
-```
+代表样本为 `compute_start -> first_fire = 9` cycles，52-pixel pass 的 fire span 为 52 cycles。
 
-### During-compute next-pass prefetch checks
+### 列级 PSUM 跟踪
 
-Purpose:
+- `tb_coltrace_monitor` 验证 first/last write、write count、empty wait 和 missing mask；
+- 配置测试覆盖 `0x1b8..0x1d8`；
+- Conv5/6/8 要求八列均满足 `wr_count == num_pixels`。
 
-- Verify the experimental `STREAM_CFG[7]` path that starts next-K staging while
-  the current pass is still computing.
-- Confirm that it does not overwrite active PE weights, does not start the next
-  compute early, and leaves default behavior unchanged when disabled.
-- Cover the backend raw-HWC full-tile layers where current analysis shows the
-  largest `compute_stage - compute_fire` opportunity.
+实测 column `n` 相对 column 0 固定晚 `4*n` cycles，这是阵列传播相位，不是随机 starvation。
 
-Checks:
+## 8. 实验路径测试边界
 
-- Scheduler directed test covers the old pass-prefetch behavior and the new
-  during-compute prefetch behavior.
-- AXI-Lite config tests cover readback, output bit, and busy-freeze behavior for
-  `STREAM_CFG[7]`.
-- Conv5, Conv6, and Conv8 full 13x13 raw-HWC tiles run byte-exact with:
+### 计算期间下一 Pass 预取
 
-```text
-RawHwcComputeStartLevel=64
-EarlyDrain
-PassPrefetch
-DuringComputePrefetch
-PsumStreamOverlap
-ContinuousPsum
-ColumnPsum
-```
+`STREAM_CFG[7]` 只允许准备下一 K pass，不应覆盖 active PE Weight 或提前启动 compute。该路径与 fast replay 共用 IFM FIFO 时在 Conv4 上板出现 byte mismatch，正式回归禁止启用。
 
-Current local result:
+### IFM Ping-Pong 与双 Staging
 
-```text
-Icarus selected scheduler/config regression PASS
-tb_layer_scheduler_during_compute_prefetch PASS, 0 fail
-tb_layer_config_regs PASS, 173 pass / 0 fail
-tb_axi_lite_cfg_bridge PASS, 99 pass / 0 fail
+相关实验多次在 Conv4/Conv5 板级链路失败，尚无能够完全复现板级卡点的顶层仿真。代码保留在实验分支，不属于当前交付主线。
 
-xsim Conv5 full raw-HWC tile PASS, 2726 pass / 0 fail
-xsim Conv6 full raw-HWC tile PASS, 2726 pass / 0 fail
-xsim Conv8 full raw-HWC tile PASS, 2726 pass / 0 fail
-```
+## 9. Cortex-A53 INT8 CPU 基线
 
-The xsim progress traces show `prefetch_pass` advancing during the current
-compute window when `DuringComputePrefetch` is enabled. The next required
-validation is a 2022.2 hardware build and board A/B against the current
-`b_hwcfulltile_colpsum_22` baseline.
-
-Board result with the matching 2022.2 hardware build:
-
-```text
-build dir: D:/MPSoC/b_kprefetch_22
-batch-chain: PASS
-  log=20260616_193348_conv0_conv9_batch_chain_COM8.log
-
-DDR demo maksssksksss0.png:
-  PASS, total=288.002 ms
-  log=20260616_193623_conv0_conv9_ddr_demo_COM8.log
-
-DDR demo maksssksksss1.png:
-  PASS, total=287.993 ms
-  log=20260616_193752_conv0_conv9_ddr_demo_COM8.log
-```
-
-A/B against `b_hwcfulltile_colpsum_22` shows the optimization is on the
-critical path:
-
-```text
-baseline total       ~= 330.798 ms
-during-prefetch total = 288.002 ms
-saved                 ~= 42.8 ms
-
-baseline compute_stage = 175.733 ms
-new compute_stage      = 121.022 ms
-baseline compute_idle  = 101.410 ms
-new compute_idle       = 46.699 ms
-```
-
-The remaining checks are clean: `PREFETCHPERF miss=0`, `PREFETCHPERF stall=0`,
-`PSUMOVLPERF underflow=0`, and `COLLECTPERF context_full_stall=0`.
-
-### Conv3 Raw-HWC Large-Tile Board A/B
-
-`-RawHwcConv3` was added as an experimental software-only extension using the
-existing `b_kprefetch_22` bitstream. The initial `26`-row Conv3 tile exceeded
-the during-compute prefetch staging FIFO (`52*26=1352` vectors versus
-`IFM_FIFO_DEPTH=1024`) and timed out with `ST_IFM_REQ` asserted. The validated
-schedule uses three tiles of `18/18/16` rows.
-
-Board result:
-
-```text
-batch-chain RawHwcConv3/4/5/6/8: PASS
-DDR maksssksksss0.png: 286.653 ms
-DDR maksssksksss1.png: 286.646 ms
-```
-
-This is functional but not a regression target because it is slower than the
-RawHwcConv4/5/6/8 setting (`282.951 ms`). Use it only for diagnostics unless
-the raw-HWC loader/replay format changes.
-
-### Optimized single-core A53 INT8 CPU baseline
-
-Purpose:
-
-- Provide a CPU-only software baseline for the single-scale YOLOv3-tiny path.
-- Keep the comparison independent of PL accelerator, AXI DMA, AXI-Lite
-  registers, `STREAM_CFG`, and hardware tile scheduling.
-- Reuse the same RTL-semantic Conv0->Conv9 golden data and software YOLO decode
-  path used by the hardware chain.
-
-Build:
+构建：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/manual_build_cpu_yolo_baseline.ps1
 ```
 
-Output:
+检查每层 `CPU_LAYER golden_mismatch=0`，UART `DET` 与 Conv9 decode golden 一致。默认 KCO 标量 C 约 `2.54 s`，可选 NEON 约 `2.78 s`。
 
-```text
-build_vitis_2022_2/conv_accel_r18_c16_smoke/manual_build/cpu_yolo_baseline.elf
-```
-
-Checks:
-
-- Run the ELF on Cortex-A53 #0 through the existing XSCT download flow with
-  `-skip_bit` or `-fast`; no PL programming is required for this CPU-only path.
-- Require every `CPU_LAYER` line to report `golden_mismatch=0`.
-- Compare the UART `DET` output against the Conv9 decode golden with
-  `tools/golden/compare_yolo_uart.py`.
-
-Board result on `COM8`:
-
-```text
-first correctness-oriented OIHW C baseline:
-  CPU_TOTAL ~= 50.33 s
-
-cache + -O3 only:
-  CPU_TOTAL ~= 49.97 s
-
-KCO scalar optimized C:
-  CPU_TOTAL ~= 2.52 s
-
-current default build:
-  log=build_vitis_2022_2/cpu_yolo_board_logs/20260617_114841_cpu_yolo_kco_scalar_a53_COM8.log
-  CPU_TOTAL us=2540175
-  layer_us=2506628
-  decode_us=19530
-  all layer golden_mismatch=0
-  DET with_mask score=0.357321
-  compare_yolo_uart.py PASS, count=1
-```
-
-The current default uses KCO weight layout (`[ci][ky][kx][out_channel]`) and
-single-thread optimized scalar C with `-O3 -mcpu=cortex-a53`. The optional
-`-UseNeon` build was tested but measured slower (`CPU_TOTAL ~= 2.78 s`) because
-the simple row-accumulate intrinsic path adds more accumulator load/store
-traffic than it saves on Cortex-A53. Keep scalar KCO as the software baseline
-unless a blocked NEON microkernel or multi-core runtime is implemented.
-
-The long combined xsim run still did not progress past design load in this
-workspace session, but the full-program board runs validated the combined
-full-tile, early-drain, pass-prefetch, PSUM-overlap, and continuous-PSUM mode.
-
-## 回归命令
+## 10. 回归命令
 
 单个 xsim 顶层：
 
 ```powershell
-vivado -mode batch -source tcl/run_xsim_regression.tcl -tclargs -top tb_conv_accel_core_axi_lite_axis_stream_backpressure
+& 'C:\Xilinx\Vivado\2022.2\bin\vivado.bat' `
+  -mode batch `
+  -source tcl\run_xsim_regression.tcl `
+  -tclargs -top tb_conv_accel_core_axi_lite_axis_stream_backpressure
 ```
 
-多个顶层建议用 PowerShell 循环逐个传入 `-top`：
+短回归：
 
 ```powershell
-$tops = @(
-  'tb_conv_accel_core_axi_lite_axis_stream_ps_driver',
-  'tb_conv_accel_core_axi_lite_axis_stream_backpressure',
-  'tb_conv_accel_core_axi_lite_full_stream_backpressure'
-)
-foreach ($top in $tops) {
-  vivado -mode batch -source tcl/run_xsim_regression.tcl -tclargs -top $top
-  if ($LASTEXITCODE -ne 0) { throw "xsim failed for $top" }
-}
+powershell -ExecutionPolicy Bypass -File tb/run_short_xsim_regression.ps1
 ```
 
-## 当前仍未覆盖的风险
+多个顶层必须逐个传入 `-top`，不要在同一个 `-top` 参数后直接排列多个模块名。
 
-- 顶层数据仍是 deterministic directed pattern，不是大规模随机 workload。
-- OFM 背压目前是固定长度 stall，不是长时间随机 `tready` 抖动。
-- Real layer06 已覆盖一组非 identity `mult/shift/zp` 和 LUT activation；仍未覆盖多层、多组量化参数的随机/扫参组合。
-- 当前没有综合后门级仿真，也没有形式验证。
-- FIFO 深度与实际 DMA/DDR 最大 stall 的关系仍需要结合系统时序和带宽评估。
-- Packed cache 目前只对 Conv6 启用并完成 directed test。其它当前网络的
-  `3x3, stride=1, pad=1` 层均满足容量约束，但启用前仍需逐层 xsim 和
-  板级 bit-exact 验证。
+## 11. 当前仍未覆盖的风险
+
+- 尚无形式验证和综合后门级仿真；
+- 长时间随机 AXIS backpressure 覆盖仍有限；
+- 随机量化参数、LUT 和 zero-point 扫描不足；
+- FIFO 深度与 DDR/DMA 最大 stall 的关系仍需系统级压力测试；
+- 实验性 replay/compute overlap 和 IFM staging 缺少可稳定复现板级失败的仿真；
+- 完整网络只验证当前单尺度口罩检测配置，未覆盖通用 YOLOv3-tiny 双尺度结构。
