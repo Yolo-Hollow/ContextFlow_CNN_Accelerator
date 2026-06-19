@@ -37,6 +37,7 @@ sw/vitis_2022_2/         bare-metal runtime, scheduler, and board scripts
 tools/                   golden-data, UART log, and demo analysis tools
 docs/                    design notes, dataflow/register docs, test plans
 golden/                  policy for curated golden data
+repro/                   minimal model data, test image, and expected output
 release/kv260_hwcreplay_22/
                          final XSA and bitstream for handoff
 2022_Peking_University_Master_Thesis_Template_iofu728_pkuthss_/
@@ -105,7 +106,7 @@ Run the fixed-image DDR demo on the board:
 ```powershell
 powershell -ExecutionPolicy Bypass `
   -File sw/vitis_2022_2/scripts/run_kv260_image_demo.ps1 `
-  -Image D:\MPSoC\python_prj\facemask\images\maksssksksss0.png `
+  -Image repro\images\maksssksksss0.png `
   -PortName COM8 `
   -BuildDirName D:\MPSoC\b_hwcreplay_22 `
   -CaptureSeconds 240
@@ -139,10 +140,12 @@ Run a targeted xsim test:
   -tclargs -top tb_conv_accel_core_axi_lite_axis_stream_conv6_3x3_raw_hwc_fulltile_cout16
 ```
 
-Many real-data tests depend on external golden data under
-`D:/MPSoC/python_prj/rtl_golden/`. The repository keeps generation scripts under
-`tools/golden/`, but does not track the full dataset, model weights, or large
-golden dumps.
+The main Conv0-to-Conv9 Vitis build, fixed-image DDR demo, and final decode
+check use the curated deployment package under `repro/`; they do not require
+the original training project. Full model re-export and a few legacy targeted
+RTL tests still require external source data. Generation scripts remain under
+`tools/golden/`, while the full dataset and PyTorch checkpoints stay outside
+this handoff repository.
 
 ## Thesis PDF
 

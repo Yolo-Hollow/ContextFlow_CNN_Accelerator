@@ -17,14 +17,9 @@ OUTPUT_ZERO_POINT = 80
 MODEL_SIZE = 416.0
 DEFAULT_CONFIDENCE = 0.25
 DEFAULT_IOU = 0.45
-DEFAULT_INPUT = Path(
-    r"D:\MPSoC\python_prj\rtl_golden\facemask_chain_conv0_conv9_rtl"
-    r"\09_head_detect_conv9_1x1\golden_ofm_u8_hwc.bin"
-)
-DEFAULT_OUTPUT = Path(
-    r"D:\MPSoC\python_prj\rtl_golden\facemask_chain_conv0_conv9_rtl"
-    r"\09_head_detect_conv9_1x1\decode_golden.json"
-)
+REPO_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_INPUT = REPO_ROOT / "repro" / "expected" / "conv9_golden_ofm_u8_hwc.bin"
+DEFAULT_OUTPUT = REPO_ROOT / "repro" / "expected" / "decode_golden.json"
 
 
 @dataclass

@@ -12,14 +12,8 @@ C_SOURCE = ROOT / "sw" / "vitis_2022_2" / "src" / "yolo_decode.c"
 C_INCLUDE = ROOT / "sw" / "vitis_2022_2" / "src"
 C_UNIT = ROOT / "tb" / "test_yolo_decode_c.c"
 C_HOST = ROOT / "tb" / "yolo_decode_host.c"
-TENSOR = Path(
-    r"D:\MPSoC\python_prj\rtl_golden\facemask_chain_conv0_conv9_rtl"
-    r"\09_head_detect_conv9_1x1\golden_ofm_u8_hwc.bin"
-)
-GOLDEN = Path(
-    r"D:\MPSoC\python_prj\rtl_golden\facemask_chain_conv0_conv9_rtl"
-    r"\09_head_detect_conv9_1x1\decode_golden.json"
-)
+TENSOR = ROOT / "repro" / "expected" / "conv9_golden_ofm_u8_hwc.bin"
+GOLDEN = ROOT / "repro" / "expected" / "decode_golden.json"
 GCC = Path(r"C:\msys64\ucrt64\bin\gcc.exe")
 
 

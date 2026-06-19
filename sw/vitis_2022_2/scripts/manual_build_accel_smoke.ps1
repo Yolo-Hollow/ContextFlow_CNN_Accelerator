@@ -19,7 +19,8 @@ param(
     [int]$PassTraceCoutBlock = 0,
     [int]$PassTraceKPass = 0,
     [int]$RawHwcComputeStartLevel = 0,
-    [int]$TailCyclesOverride = 0
+    [int]$TailCyclesOverride = 0,
+    [string]$ReproRoot = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -27,6 +28,10 @@ $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $SwDir = Split-Path -Parent $ScriptDir
 $Root = Split-Path -Parent (Split-Path -Parent $SwDir)
+if ([string]::IsNullOrWhiteSpace($ReproRoot)) {
+    $ReproRoot = Join-Path $Root "repro"
+}
+$ModelRoot = Join-Path $ReproRoot "model"
 
 $Workspace = Join-Path $Root "build_vitis_2022_2"
 $AppDir = Join-Path $Workspace "conv_accel_r18_c16_smoke"
@@ -120,7 +125,7 @@ if ($Mode -eq "conv4_pool_tiles") {
     $Defines += "-DACCEL_SMOKE_CONV4_POOL_TILES=1"
     & $Python `
         (Join-Path $ScriptDir "generate_single_scale_layer_header.py") `
-        "D:\MPSoC\python_prj\rtl_golden\facemask_single_scale_rtl\04_conv4_pool" `
+        (Join-Path $ModelRoot "04_conv4_pool") `
         (Join-Path $AppSrcDir "conv4_pool_data.h") `
         --prefix conv4_pool
 }
@@ -129,7 +134,7 @@ if ($Mode -eq "conv3_conv4_chain") {
     & $Python (Join-Path $ScriptDir "generate_layer06_tile4_header.py") (Join-Path $AppSrcDir "layer06_tile4_data.h")
     & $Python `
         (Join-Path $ScriptDir "generate_single_scale_layer_header.py") `
-        "D:\MPSoC\python_prj\rtl_golden\facemask_chain_conv3_conv4_rtl\04_conv4_pool" `
+        (Join-Path $ModelRoot "04_conv4_pool") `
         (Join-Path $AppSrcDir "conv4_pool_data.h") `
         --prefix conv4_pool
 }
@@ -138,19 +143,19 @@ if ($Mode -eq "conv4_conv5_chain") {
     $Defines += "-DACCEL_CHAIN_CONV4_CONV5=1"
     & $Python `
         (Join-Path $ScriptDir "generate_single_scale_layer_header.py") `
-        "D:\MPSoC\python_prj\rtl_golden\facemask_single_scale_rtl\04_conv4_pool" `
+        (Join-Path $ModelRoot "04_conv4_pool") `
         (Join-Path $AppSrcDir "conv4_pool_data.h") `
         --prefix conv4_pool
     & $Python `
         (Join-Path $ScriptDir "generate_single_scale_layer_header.py") `
-        "D:\MPSoC\python_prj\rtl_golden\facemask_chain_conv4_conv5_rtl\05_conv5_pool_like_tiny" `
+        (Join-Path $ModelRoot "05_conv5_pool_like_tiny") `
         (Join-Path $AppSrcDir "conv5_pool_data.h") `
         --prefix conv5_pool
 }
 if ($Mode -eq "conv0_conv4_chain") {
     $Source = Join-Path $AppSrcDir "main_conv3_conv4_chain.c"
     $Defines += "-DACCEL_CHAIN_CONV0_CONV4=1"
-    $ChainRoot = "D:\MPSoC\python_prj\rtl_golden\facemask_chain_conv0_conv4_rtl"
+    $ChainRoot = $ModelRoot
     $Layers = @(
         @{ Dir = "00_conv0_pool"; Prefix = "conv0_pool"; OmitIfm = $false },
         @{ Dir = "01_conv1_pool"; Prefix = "conv1_pool"; OmitIfm = $true },
@@ -175,7 +180,7 @@ if ($Mode -eq "conv0_conv4_chain") {
 if ($Mode -eq "conv0_conv5_chain") {
     $Source = Join-Path $AppSrcDir "main_conv3_conv4_chain.c"
     $Defines += "-DACCEL_CHAIN_CONV0_CONV5=1"
-    $ChainRoot = "D:\MPSoC\python_prj\rtl_golden\facemask_chain_conv0_conv4_rtl"
+    $ChainRoot = $ModelRoot
     $Layers = @(
         @{ Dir = "00_conv0_pool"; Prefix = "conv0_pool"; OmitIfm = $false },
         @{ Dir = "01_conv1_pool"; Prefix = "conv1_pool"; OmitIfm = $true },
@@ -198,7 +203,7 @@ if ($Mode -eq "conv0_conv5_chain") {
     }
     & $Python `
         (Join-Path $ScriptDir "generate_single_scale_layer_header.py") `
-        "D:\MPSoC\python_prj\rtl_golden\facemask_chain_conv0_conv5_rtl\05_conv5_pool_like_tiny" `
+        (Join-Path $ModelRoot "05_conv5_pool_like_tiny") `
         (Join-Path $AppSrcDir "conv5_pool_data.h") `
         --prefix conv5_pool `
         --omit-ifm
@@ -206,15 +211,15 @@ if ($Mode -eq "conv0_conv5_chain") {
 if ($Mode -eq "conv0_conv6_chain") {
     $Source = Join-Path $AppSrcDir "main_conv3_conv4_chain.c"
     $Defines += "-DACCEL_CHAIN_CONV0_CONV6=1"
-    $BackboneRoot = "D:\MPSoC\python_prj\rtl_golden\facemask_chain_conv0_conv4_rtl"
+    $BackboneRoot = $ModelRoot
     $Layers = @(
         @{ Root = $BackboneRoot; Dir = "00_conv0_pool"; Prefix = "conv0_pool"; OmitIfm = $false },
         @{ Root = $BackboneRoot; Dir = "01_conv1_pool"; Prefix = "conv1_pool"; OmitIfm = $true },
         @{ Root = $BackboneRoot; Dir = "02_conv2_pool"; Prefix = "conv2_pool"; OmitIfm = $true },
         @{ Root = $BackboneRoot; Dir = "03_conv3_pool"; Prefix = "conv3_pool"; OmitIfm = $true },
         @{ Root = $BackboneRoot; Dir = "04_conv4_pool"; Prefix = "conv4_pool"; OmitIfm = $true },
-        @{ Root = "D:\MPSoC\python_prj\rtl_golden\facemask_chain_conv0_conv5_rtl"; Dir = "05_conv5_pool_like_tiny"; Prefix = "conv5_pool"; OmitIfm = $true },
-        @{ Root = "D:\MPSoC\python_prj\rtl_golden\facemask_chain_conv0_conv6_rtl"; Dir = "06_head_conv6_3x3"; Prefix = "conv6"; OmitIfm = $true }
+        @{ Root = $ModelRoot; Dir = "05_conv5_pool_like_tiny"; Prefix = "conv5_pool"; OmitIfm = $true },
+        @{ Root = $ModelRoot; Dir = "06_head_conv6_3x3"; Prefix = "conv6"; OmitIfm = $true }
     )
     foreach ($Layer in $Layers) {
         $Args = @(
@@ -233,16 +238,16 @@ if ($Mode -eq "conv0_conv6_chain") {
 if ($Mode -eq "conv0_conv7_chain") {
     $Source = Join-Path $AppSrcDir "main_conv3_conv4_chain.c"
     $Defines += "-DACCEL_CHAIN_CONV0_CONV7=1"
-    $BackboneRoot = "D:\MPSoC\python_prj\rtl_golden\facemask_chain_conv0_conv4_rtl"
+    $BackboneRoot = $ModelRoot
     $Layers = @(
         @{ Root = $BackboneRoot; Dir = "00_conv0_pool"; Prefix = "conv0_pool"; OmitIfm = $false; Emulate1x1 = $false },
         @{ Root = $BackboneRoot; Dir = "01_conv1_pool"; Prefix = "conv1_pool"; OmitIfm = $true; Emulate1x1 = $false },
         @{ Root = $BackboneRoot; Dir = "02_conv2_pool"; Prefix = "conv2_pool"; OmitIfm = $true; Emulate1x1 = $false },
         @{ Root = $BackboneRoot; Dir = "03_conv3_pool"; Prefix = "conv3_pool"; OmitIfm = $true; Emulate1x1 = $false },
         @{ Root = $BackboneRoot; Dir = "04_conv4_pool"; Prefix = "conv4_pool"; OmitIfm = $true; Emulate1x1 = $false },
-        @{ Root = "D:\MPSoC\python_prj\rtl_golden\facemask_chain_conv0_conv5_rtl"; Dir = "05_conv5_pool_like_tiny"; Prefix = "conv5_pool"; OmitIfm = $true; Emulate1x1 = $false },
-        @{ Root = "D:\MPSoC\python_prj\rtl_golden\facemask_chain_conv0_conv6_rtl"; Dir = "06_head_conv6_3x3"; Prefix = "conv6"; OmitIfm = $true; Emulate1x1 = $false },
-        @{ Root = "D:\MPSoC\python_prj\rtl_golden\facemask_chain_conv0_conv7_rtl"; Dir = "07_head_conv7_1x1"; Prefix = "conv7"; OmitIfm = $true; Emulate1x1 = $true }
+        @{ Root = $ModelRoot; Dir = "05_conv5_pool_like_tiny"; Prefix = "conv5_pool"; OmitIfm = $true; Emulate1x1 = $false },
+        @{ Root = $ModelRoot; Dir = "06_head_conv6_3x3"; Prefix = "conv6"; OmitIfm = $true; Emulate1x1 = $false },
+        @{ Root = $ModelRoot; Dir = "07_head_conv7_1x1"; Prefix = "conv7"; OmitIfm = $true; Emulate1x1 = $true }
     )
     foreach ($Layer in $Layers) {
         $Args = @(
@@ -264,17 +269,17 @@ if ($Mode -eq "conv0_conv7_chain") {
 if ($Mode -eq "conv0_conv8_chain") {
     $Source = Join-Path $AppSrcDir "main_conv3_conv4_chain.c"
     $Defines += "-DACCEL_CHAIN_CONV0_CONV8=1"
-    $BackboneRoot = "D:\MPSoC\python_prj\rtl_golden\facemask_chain_conv0_conv4_rtl"
+    $BackboneRoot = $ModelRoot
     $Layers = @(
         @{ Root = $BackboneRoot; Dir = "00_conv0_pool"; Prefix = "conv0_pool"; OmitIfm = $false; Emulate1x1 = $false },
         @{ Root = $BackboneRoot; Dir = "01_conv1_pool"; Prefix = "conv1_pool"; OmitIfm = $true; Emulate1x1 = $false },
         @{ Root = $BackboneRoot; Dir = "02_conv2_pool"; Prefix = "conv2_pool"; OmitIfm = $true; Emulate1x1 = $false },
         @{ Root = $BackboneRoot; Dir = "03_conv3_pool"; Prefix = "conv3_pool"; OmitIfm = $true; Emulate1x1 = $false },
         @{ Root = $BackboneRoot; Dir = "04_conv4_pool"; Prefix = "conv4_pool"; OmitIfm = $true; Emulate1x1 = $false },
-        @{ Root = "D:\MPSoC\python_prj\rtl_golden\facemask_chain_conv0_conv5_rtl"; Dir = "05_conv5_pool_like_tiny"; Prefix = "conv5_pool"; OmitIfm = $true; Emulate1x1 = $false },
-        @{ Root = "D:\MPSoC\python_prj\rtl_golden\facemask_chain_conv0_conv6_rtl"; Dir = "06_head_conv6_3x3"; Prefix = "conv6"; OmitIfm = $true; Emulate1x1 = $false },
-        @{ Root = "D:\MPSoC\python_prj\rtl_golden\facemask_chain_conv0_conv7_rtl"; Dir = "07_head_conv7_1x1"; Prefix = "conv7"; OmitIfm = $true; Emulate1x1 = $true },
-        @{ Root = "D:\MPSoC\python_prj\rtl_golden\facemask_chain_conv0_conv8_rtl"; Dir = "08_head_conv8_3x3"; Prefix = "conv8"; OmitIfm = $true; Emulate1x1 = $false }
+        @{ Root = $ModelRoot; Dir = "05_conv5_pool_like_tiny"; Prefix = "conv5_pool"; OmitIfm = $true; Emulate1x1 = $false },
+        @{ Root = $ModelRoot; Dir = "06_head_conv6_3x3"; Prefix = "conv6"; OmitIfm = $true; Emulate1x1 = $false },
+        @{ Root = $ModelRoot; Dir = "07_head_conv7_1x1"; Prefix = "conv7"; OmitIfm = $true; Emulate1x1 = $true },
+        @{ Root = $ModelRoot; Dir = "08_head_conv8_3x3"; Prefix = "conv8"; OmitIfm = $true; Emulate1x1 = $false }
     )
     foreach ($Layer in $Layers) {
         $Args = @(
@@ -336,18 +341,18 @@ if ($Mode -eq "conv0_conv9_batch_chain" -or $Mode -eq "conv0_conv9_ddr_demo") {
         $Defines += "-DACCEL_CHAIN_CONV0_CONV9_DDR=1"
         $Defines += "-DACCEL_PERF_ONLY=1"
     }
-    $BackboneRoot = "D:\MPSoC\python_prj\rtl_golden\facemask_chain_conv0_conv4_rtl"
+    $BackboneRoot = $ModelRoot
     $Layers = @(
         @{ Root = $BackboneRoot; Dir = "00_conv0_pool"; Prefix = "conv0_pool"; OmitIfm = $false; Emulate1x1 = $false },
         @{ Root = $BackboneRoot; Dir = "01_conv1_pool"; Prefix = "conv1_pool"; OmitIfm = $true; Emulate1x1 = $false },
         @{ Root = $BackboneRoot; Dir = "02_conv2_pool"; Prefix = "conv2_pool"; OmitIfm = $true; Emulate1x1 = $false },
         @{ Root = $BackboneRoot; Dir = "03_conv3_pool"; Prefix = "conv3_pool"; OmitIfm = $true; Emulate1x1 = $false },
         @{ Root = $BackboneRoot; Dir = "04_conv4_pool"; Prefix = "conv4_pool"; OmitIfm = $true; Emulate1x1 = $false },
-        @{ Root = "D:\MPSoC\python_prj\rtl_golden\facemask_chain_conv0_conv5_rtl"; Dir = "05_conv5_pool_like_tiny"; Prefix = "conv5_pool"; OmitIfm = $true; Emulate1x1 = $false },
-        @{ Root = "D:\MPSoC\python_prj\rtl_golden\facemask_chain_conv0_conv6_rtl"; Dir = "06_head_conv6_3x3"; Prefix = "conv6"; OmitIfm = $true; Emulate1x1 = $false },
-        @{ Root = "D:\MPSoC\python_prj\rtl_golden\facemask_chain_conv0_conv7_rtl"; Dir = "07_head_conv7_1x1"; Prefix = "conv7"; OmitIfm = $true; Emulate1x1 = !($Mode -eq "conv0_conv9_batch_chain" -or $Mode -eq "conv0_conv9_ddr_demo") },
-        @{ Root = "D:\MPSoC\python_prj\rtl_golden\facemask_chain_conv0_conv8_rtl"; Dir = "08_head_conv8_3x3"; Prefix = "conv8"; OmitIfm = $true; Emulate1x1 = $false },
-        @{ Root = "D:\MPSoC\python_prj\rtl_golden\facemask_chain_conv0_conv9_rtl"; Dir = "09_head_detect_conv9_1x1"; Prefix = "conv9"; OmitIfm = $true; Emulate1x1 = !($Mode -eq "conv0_conv9_batch_chain" -or $Mode -eq "conv0_conv9_ddr_demo") }
+        @{ Root = $ModelRoot; Dir = "05_conv5_pool_like_tiny"; Prefix = "conv5_pool"; OmitIfm = $true; Emulate1x1 = $false },
+        @{ Root = $ModelRoot; Dir = "06_head_conv6_3x3"; Prefix = "conv6"; OmitIfm = $true; Emulate1x1 = $false },
+        @{ Root = $ModelRoot; Dir = "07_head_conv7_1x1"; Prefix = "conv7"; OmitIfm = $true; Emulate1x1 = !($Mode -eq "conv0_conv9_batch_chain" -or $Mode -eq "conv0_conv9_ddr_demo") },
+        @{ Root = $ModelRoot; Dir = "08_head_conv8_3x3"; Prefix = "conv8"; OmitIfm = $true; Emulate1x1 = $false },
+        @{ Root = $ModelRoot; Dir = "09_head_detect_conv9_1x1"; Prefix = "conv9"; OmitIfm = $true; Emulate1x1 = !($Mode -eq "conv0_conv9_batch_chain" -or $Mode -eq "conv0_conv9_ddr_demo") }
     )
     foreach ($Layer in $Layers) {
         $Args = @(

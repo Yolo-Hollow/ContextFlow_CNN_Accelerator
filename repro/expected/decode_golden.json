@@ -1,0 +1,74 @@
+{
+  "description": "Software decode golden for the RTL-semantic single-scale Conv0-Conv9 chain.",
+  "input_tensor": "D:\\MPSoC\\accelerator_systolic\\repro\\expected\\conv9_golden_ofm_u8_hwc.bin",
+  "tensor_layout": "HWC, channel = anchor * 8 + value",
+  "value_order": [
+    "x",
+    "y",
+    "w",
+    "h",
+    "objectness",
+    "with_mask",
+    "without_mask",
+    "mask_weared_incorrect"
+  ],
+  "shape_hwc": [
+    13,
+    13,
+    24
+  ],
+  "quant": {
+    "scale": 0.28766438364982605,
+    "zero_point": 80
+  },
+  "anchors": [
+    [
+      81.0,
+      82.0
+    ],
+    [
+      135.0,
+      169.0
+    ],
+    [
+      344.0,
+      319.0
+    ]
+  ],
+  "stride": 32.0,
+  "confidence_threshold": 0.25,
+  "iou_threshold": 0.45,
+  "nms": "class-aware, descending score, source-index tie break",
+  "letterbox": {
+    "model_size": 416,
+    "original_size_wh": [
+      512,
+      366
+    ],
+    "scale": 0.8125,
+    "pad_x": 0,
+    "pad_y": 59
+  },
+  "detection_count": 1,
+  "detections": [
+    {
+      "index": 0,
+      "class_id": 0,
+      "class_name": "with_mask",
+      "score": 0.35732137743190334,
+      "source_index": 210,
+      "model_xyxy": [
+        157.16646304023732,
+        150.17348618808168,
+        185.69123430739802,
+        192.68421115955366
+      ],
+      "original_xyxy": [
+        193.4356468187536,
+        112.21352146225438,
+        228.54305760910526,
+        164.53441373483525
+      ]
+    }
+  ]
+}

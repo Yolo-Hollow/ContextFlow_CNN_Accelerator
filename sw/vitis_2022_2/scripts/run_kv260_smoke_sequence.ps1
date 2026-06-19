@@ -74,8 +74,8 @@ $JtagProbeTcl = Join-Path $ScriptDir "probe_jtag_targets.tcl"
 $Python = "python"
 $YoloDecodeScript = Join-Path $Root "tools\golden\yolo_single_scale_decode.py"
 $YoloCompareScript = Join-Path $Root "tools\golden\compare_yolo_uart.py"
-$Conv9Tensor = "D:\MPSoC\python_prj\rtl_golden\facemask_chain_conv0_conv9_rtl\09_head_detect_conv9_1x1\golden_ofm_u8_hwc.bin"
-$YoloDecodeGolden = "D:\MPSoC\python_prj\rtl_golden\facemask_chain_conv0_conv9_rtl\09_head_detect_conv9_1x1\decode_golden.json"
+$Conv9Tensor = Join-Path $Root "repro\expected\conv9_golden_ofm_u8_hwc.bin"
+$YoloDecodeGolden = Join-Path $Root "repro\expected\decode_golden.json"
 
 New-Item -ItemType Directory -Force $LogDir | Out-Null
 $Stamp = Get-Date -Format "yyyyMMdd_HHmmss"

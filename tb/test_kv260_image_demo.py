@@ -10,11 +10,8 @@ ROOT = Path(__file__).resolve().parents[1]
 PREPARE_PATH = ROOT / "tools" / "demo" / "prepare_ddr_image.py"
 VISUALIZE_PATH = ROOT / "tools" / "demo" / "visualize_uart_detections.py"
 PERF_PATH = ROOT / "tools" / "demo" / "summarize_uart_perf.py"
-FIXTURE_IMAGE = Path(r"D:\MPSoC\python_prj\facemask\images\maksssksksss0.png")
-FIXTURE_TENSOR = Path(
-    r"D:\MPSoC\python_prj\rtl_golden\facemask_chain_conv0_conv4_rtl"
-    r"\00_conv0_pool\ifm_u8_hwc.bin"
-)
+FIXTURE_IMAGE = ROOT / "repro" / "images" / "maksssksksss0.png"
+FIXTURE_TENSOR = ROOT / "repro" / "model" / "00_conv0_pool" / "ifm_u8_hwc.bin"
 
 
 def load_module(path, name):

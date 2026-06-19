@@ -1,0 +1,93 @@
+{
+    "description":  "RTL semantic golden metadata for one single-scale YOLOv3-tiny layer.",
+    "name":  "head_detect_conv9_1x1",
+    "project":  ".",
+    "source_layer_file":  "ifm_u8_hwc.bin",
+    "model_index":  20,
+    "infer_index":  9,
+    "array":  {
+                  "rows":  18,
+                  "cols":  8,
+                  "ifm_banks":  2,
+                  "cout_tile":  16
+              },
+    "shape":  {
+                  "ifm_hwc":  [
+                                  13,
+                                  13,
+                                  512
+                              ],
+                  "conv_ofm_hwc":  [
+                                       13,
+                                       13,
+                                       24
+                                   ],
+                  "final_ofm_hwc":  [
+                                        13,
+                                        13,
+                                        24
+                                    ],
+                  "layout":  "HWC uint8 bytes",
+                  "expected_bytes":  4056,
+                  "k_total":  512,
+                  "k_passes":  29,
+                  "cout_total":  24,
+                  "cout_blocks":  2
+              },
+    "conv":  {
+                 "kernel":  1,
+                 "stride":  1,
+                 "pad":  0,
+                 "padding_value":  "internal signed zero"
+             },
+    "pool":  {
+                 "mode":  "bypass",
+                 "position":  "after activation"
+             },
+    "quant":  {
+                  "weight_scale":  0.004771752282977104,
+                  "conv_scale":  0.28766438364982605,
+                  "conv_zero_point":  80,
+                  "activation_scale":  null,
+                  "activation_zero_point":  null,
+                  "rtl_mult":  23304,
+                  "rtl_raw_shift":  8,
+                  "rtl_effective_shift":  23,
+                  "rtl_izp":  11,
+                  "rtl_ozp":  80,
+                  "rtl_azp":  80,
+                  "bias_mode":  "int32"
+              },
+    "ifm_centering":  {
+                          "input_zero_point":  11,
+                          "source_u8_min":  6,
+                          "source_u8_max":  42,
+                          "centered_min_before_sat":  -5,
+                          "centered_max_before_sat":  31,
+                          "centered_s8_min":  -5,
+                          "centered_s8_max":  31,
+                          "sat_low_count":  0,
+                          "sat_high_count":  0,
+                          "sat_count":  0
+                      },
+    "stats":  {
+                  "psum_min":  -23607,
+                  "psum_max":  6059,
+                  "requant_min_signed":  14,
+                  "requant_max_signed":  97,
+                  "activation_min_u8":  14,
+                  "activation_max_u8":  97,
+                  "final_min_u8":  14,
+                  "final_max_u8":  97,
+                  "pytorch_reference_mismatch":  null
+              },
+    "files":  {
+                  "metadata":  "manifest.json",
+                  "golden_ofm_u8_hwc":  "golden_ofm_u8_hwc.bin"
+              },
+    "notes":  [
+                  "IFM bytes are centered as saturate_s8(ifm_u8 - input_zero_point).",
+                  "Requant uses mult / 2^(raw_shift + 15).",
+                  "This manifest is curated for the repository-local reproducibility package."
+              ]
+}
