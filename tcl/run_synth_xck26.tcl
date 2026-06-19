@@ -6,24 +6,20 @@ file mkdir $build_dir
 set top conv_accel_core_axi_lite_axis_stream
 set part xck26-sfvc784-2LV-c
 set jobs 8
-set rows 32
-set cols 32
-set k_tile 32
-set cout_tile 64
-set ifm_banks 5
+set rows 18
+set cols 8
+set k_tile 18
+set cout_tile 16
+set ifm_banks 2
 set ifm_fifo_depth 1024
 set ifm_fifo_aw 10
 set psum_fifo_depth 1024
 set psum_fifo_aw 10
-set hwc_cache_aw 12
-set hwc_cache_depth 4096
-set hwc_cache_stripes 1
-set hwc_cache_use_uram 0
-set tail_cycles 0
-set ifm_pingpong_fifo_enable 1
-set hwc_replay_pipeline_enable 1
-set hwc_cache_extra_read_latency 0
-set hwc_replay_extra_wait_cycles 0
+set hwc_cache_aw 16
+set hwc_cache_depth 43264
+set hwc_cache_stripes 4
+set hwc_cache_use_uram 1
+set tail_cycles 1
 set run_name ""
 set out_of_context 0
 
@@ -80,18 +76,6 @@ for {set i 0} {$i < [llength $argv]} {incr i} {
     } elseif {$arg eq "-tail_cycles"} {
         incr i
         set tail_cycles [lindex $argv $i]
-    } elseif {$arg eq "-ifm_pingpong_fifo_enable"} {
-        incr i
-        set ifm_pingpong_fifo_enable [lindex $argv $i]
-    } elseif {$arg eq "-hwc_replay_pipeline_enable"} {
-        incr i
-        set hwc_replay_pipeline_enable [lindex $argv $i]
-    } elseif {$arg eq "-hwc_cache_extra_read_latency"} {
-        incr i
-        set hwc_cache_extra_read_latency [lindex $argv $i]
-    } elseif {$arg eq "-hwc_replay_extra_wait_cycles"} {
-        incr i
-        set hwc_replay_extra_wait_cycles [lindex $argv $i]
     } elseif {$arg eq "-name"} {
         incr i
         set run_name [lindex $argv $i]
@@ -174,7 +158,7 @@ if {(1 << $psum_fifo_aw) != $psum_fifo_depth} {
     error "PSUM_FIFO_DEPTH must equal 2^PSUM_FIFO_AW"
 }
 
-puts "=== synth top=$top part=$part rows=$rows cols=$cols k_tile=$k_tile cout_tile=$cout_tile ifm_banks=$ifm_banks ifm_fifo_depth=$ifm_fifo_depth ifm_fifo_aw=$ifm_fifo_aw psum_fifo_depth=$psum_fifo_depth psum_fifo_aw=$psum_fifo_aw hwc_cache_aw=$hwc_cache_aw hwc_cache_depth=$hwc_cache_depth hwc_cache_stripes=$hwc_cache_stripes hwc_cache_use_uram=$hwc_cache_use_uram tail_cycles=$tail_cycles ifm_pingpong_fifo_enable=$ifm_pingpong_fifo_enable hwc_replay_pipeline_enable=$hwc_replay_pipeline_enable hwc_cache_extra_read_latency=$hwc_cache_extra_read_latency hwc_replay_extra_wait_cycles=$hwc_replay_extra_wait_cycles ooc=$out_of_context ==="
+puts "=== synth top=$top part=$part rows=$rows cols=$cols k_tile=$k_tile cout_tile=$cout_tile ifm_banks=$ifm_banks ifm_fifo_depth=$ifm_fifo_depth ifm_fifo_aw=$ifm_fifo_aw psum_fifo_depth=$psum_fifo_depth psum_fifo_aw=$psum_fifo_aw hwc_cache_aw=$hwc_cache_aw hwc_cache_depth=$hwc_cache_depth hwc_cache_stripes=$hwc_cache_stripes hwc_cache_use_uram=$hwc_cache_use_uram tail_cycles=$tail_cycles ooc=$out_of_context ==="
 read_verilog -sv [abs_files $root $rtl_files]
 
 if {$out_of_context} {
@@ -186,11 +170,7 @@ if {$out_of_context} {
         -generic "HWC_CACHE_AW=$hwc_cache_aw" -generic "HWC_CACHE_DEPTH=$hwc_cache_depth" \
         -generic "HWC_CACHE_STRIPES=$hwc_cache_stripes" \
         -generic "HWC_CACHE_USE_URAM=$hwc_cache_use_uram" \
-        -generic "TAIL_CYCLES_CONFIG=$tail_cycles" \
-        -generic "IFM_PINGPONG_FIFO_ENABLE=$ifm_pingpong_fifo_enable" \
-        -generic "HWC_REPLAY_PIPELINE_ENABLE=$hwc_replay_pipeline_enable" \
-        -generic "HWC_CACHE_EXTRA_READ_LATENCY=$hwc_cache_extra_read_latency" \
-        -generic "HWC_REPLAY_EXTRA_WAIT_CYCLES=$hwc_replay_extra_wait_cycles"
+        -generic "TAIL_CYCLES_CONFIG=$tail_cycles"
 } else {
     synth_design -top $top -part $part -flatten_hierarchy rebuilt -directive default \
         -generic "ROWS=$rows" -generic "COLS=$cols" -generic "K_TILE=$k_tile" \
@@ -200,11 +180,7 @@ if {$out_of_context} {
         -generic "HWC_CACHE_AW=$hwc_cache_aw" -generic "HWC_CACHE_DEPTH=$hwc_cache_depth" \
         -generic "HWC_CACHE_STRIPES=$hwc_cache_stripes" \
         -generic "HWC_CACHE_USE_URAM=$hwc_cache_use_uram" \
-        -generic "TAIL_CYCLES_CONFIG=$tail_cycles" \
-        -generic "IFM_PINGPONG_FIFO_ENABLE=$ifm_pingpong_fifo_enable" \
-        -generic "HWC_REPLAY_PIPELINE_ENABLE=$hwc_replay_pipeline_enable" \
-        -generic "HWC_CACHE_EXTRA_READ_LATENCY=$hwc_cache_extra_read_latency" \
-        -generic "HWC_REPLAY_EXTRA_WAIT_CYCLES=$hwc_replay_extra_wait_cycles"
+        -generic "TAIL_CYCLES_CONFIG=$tail_cycles"
 }
 
 set report_prefix [file join $build_dir $run_name]

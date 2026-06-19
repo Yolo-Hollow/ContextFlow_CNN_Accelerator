@@ -62,9 +62,8 @@ module tb_systolic_top_feeder_multipass_stream;
     ) dut (
         .clk(clk), .rst(rst),
         .feeder_start(feeder_start), .feeder_done(feeder_done), .feeder_busy(feeder_busy),
-        .feeder_prefetch(1'b0),
         .feeder_fill_req(feeder_fill_req), .feeder_fill_fy(feeder_fill_fy),
-        .kernel_1x1(1'b0), .raw_hwc_mode(1'b0), .ifm_pingpong_enable(1'b0),
+        .kernel_1x1(1'b0), .raw_hwc_mode(1'b0),
         .compute_start(compute_start), .tail_cycles_config(16'd0),
         .raw_hwc_compute_start_level(16'd0), .feeder_compute_ready(),
         .num_pixels(16'd9), .compute_done(compute_done),
@@ -79,14 +78,10 @@ module tb_systolic_top_feeder_multipass_stream;
         .psum_stream_data(psum_stream_data), .psum_stream_valid(psum_stream_valid),
         .psum_stream_compute_ready(psum_stream_compute_ready),
         .use_psum_stream(use_psum_stream),
-        .psum_column_stream_data({COLS*2*PSUM_W{1'b0}}),
-        .psum_column_stream_valid({COLS{1'b0}}),
-        .use_column_psum_stream(1'b0),
         .wgt_fifo_wr_en(wgt_fifo_wr_en), .wgt_fifo_wr_data(wgt_fifo_wr_data),
         .wgt_fifo_full(wgt_fifo_full),
         .psum_fifo_rd_en(psum_fifo_rd_en), .psum_fifo_rd_data(psum_fifo_rd_data),
-        .psum_fifo_empty(psum_fifo_empty), .psum_fifo_wr_en_dbg(),
-        .ifm_fifo_full(ifm_fifo_full)
+        .psum_fifo_empty(psum_fifo_empty), .ifm_fifo_full(ifm_fifo_full)
     );
 
     reg pp_wr_en, pp_wr_bank;

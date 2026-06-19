@@ -4,6 +4,17 @@
 
 本文档作为当前项目的主入口。旧版 `accelerator_systolic.md` 保留早期设计记录和阶段性实验过程；本文档只记录当前 RTL 状态、已验证内容、已知限制和后续路线。
 
+## Mainline handoff note
+
+For the handoff repository, the RTL/TB/Tcl mainline is restored to the stable raw-HWC replay baseline used by `D:/MPSoC/b_hwcreplay_22` (about `280.34 ms` on the fixed DDR demo). The later IFM ping-pong / double-staging experiments are preserved on branch `experiment-ifm-pingpong-debug-current`, but they are not part of the default build or regression path because board validation did not converge.
+
+The default hardware profile is:
+
+```text
+ROWS=18, COLS=8, COUT_TILE=16, IFM_BANKS=2
+HWC_CACHE_AW=16, HWC_CACHE_DEPTH=43264, HWC_CACHE_STRIPES=4
+HWC_CACHE_USE_URAM=1, TAIL_CYCLES=1
+```
 ## 1. 当前目标
 
 当前目标是实现一个面向简化 YOLOv3-tiny 推理流程的整数卷积加速器。当前 RTL 主链路已经覆盖：

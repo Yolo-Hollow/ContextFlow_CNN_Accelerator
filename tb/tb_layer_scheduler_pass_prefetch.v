@@ -79,7 +79,7 @@ module `TB_LAYER_SCHEDULER_PASS_PREFETCH_MODULE;
         .psum_wr_bank(psum_wr_bank), .psum_rd_bank(psum_rd_bank),
         .bias_load_start(bias_load_start), .bias_load_done(bias_load_done),
         .weight_load_start(weight_load_start), .weight_load_done(weight_load_done),
-        .feeder_start(feeder_start), .feeder_prefetch(), .feeder_done(feeder_done),
+        .feeder_start(feeder_start), .feeder_done(feeder_done),
         .feeder_compute_ready(feeder_compute_ready),
         .feeder_overlap_mode(1'b1),
         .raw_hwc_mode(1'b1),
