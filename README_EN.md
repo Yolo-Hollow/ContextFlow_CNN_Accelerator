@@ -1,4 +1,6 @@
-# LASA: A Layer-Adaptive Systolic Accelerator for Edge AI on MPSoC
+﻿# LASA: A Layer-Adaptive Systolic Accelerator for Edge AI on MPSoC
+
+**Language / 语言: English | [中文](README.md)**
 
 LASA (Layer-Adaptive Systolic Accelerator) is an INT8 inference system for
 single-scale YOLOv3-tiny on the AMD/Xilinx Kria KV260. The project includes

@@ -1,5 +1,7 @@
 ﻿# LASA：面向边缘 AI 部署的 MPSoC 层自适应脉动阵列加速器
 
+**语言 / Language：中文 | [English](README_EN.md)**
+
 LASA（Layer-Adaptive Systolic Accelerator）是一套面向 AMD/Xilinx Kria
 KV260 的 YOLOv3-tiny INT8 推理系统。项目覆盖 Verilog RTL、Vivado Block
 Design、Vitis 裸机运行时、量化模型部署数据、RTL/板级验证工具以及可直接使用的
