@@ -1,0 +1,23 @@
+\begin{figure*}[t]
+\centering
+\begin{tikzpicture}[font=\small,
+  done/.style={draw,rounded corners,fill=LasaGreen!18,minimum width=31mm,minimum height=10mm,align=center},
+  wait/.style={draw,rounded corners,fill=LasaPending,minimum width=31mm,minimum height=10mm,align=center},
+  arr/.style={->,thick,LasaGray}]
+\node[done] (rtl) {RTL/形式化与回归\\已完成};
+\node[done,right=7mm of rtl] (impl) {200 MHz实现门禁\\已完成};
+\node[done,right=7mm of impl] (exact) {128张逐节点\\byte-exact};
+\node[done,right=7mm of exact] (raw) {5000张raw-head\\mAP一致};
+\node[done,below=9mm of rtl] (perf) {3$\times$1000性能\\已完成};
+\node[done,right=7mm of perf] (soak) {600 s稳定性\\已完成};
+\node[done,right=7mm of soak] (prod) {5000张product\\PASS};
+\node[wait,right=7mm of prod] (abl) {消融/CPU/自检\\待补};
+\draw[arr] (rtl)--(impl); \draw[arr] (impl)--(exact); \draw[arr] (exact)--(raw);
+\draw[arr] (perf)--(soak); \draw[arr] (soak)--(prod); \draw[arr] (prod)--(abl);
+\node[draw,dashed,fit=(rtl)(impl)(exact)(raw)(perf)(soak)(prod),inner sep=3mm,label=below:{当前可证实论文事实}] {};
+\node[draw,dashed,LasaOrange,fit=(abl),inner sep=3mm,label=below:{投稿冻结硬门禁}] {};
+\end{tikzpicture}
+\caption{论文证据链与冻结状态。绿色项目已由文件和哈希闭环；黄色项目
+仍需真实实验，当前初稿只给出方法和表格位置，不提前填入结果。}
+\label{fig:evidence-matrix}
+\end{figure*}

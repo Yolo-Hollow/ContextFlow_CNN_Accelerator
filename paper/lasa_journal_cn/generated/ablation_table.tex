@@ -1,0 +1,24 @@
+\begin{table*}[t]
+\centering
+\caption{受控消融结果表（当前为冻结前执行合同；数值必须由同源 200 MHz 变体自动回填）。}
+\label{tab:ablation-plan}
+\small
+\resizebox{0.98\textwidth}{!}{%
+\begin{tabular}{lrrrrrrl}
+\toprule
+变体 & 延迟/ms & 相对加速 & DDR字节 & compute idle & context gap & 资源增量 & byte-exact\\
+\midrule
+稀疏3$\times$3模拟1$\times$1 & PENDING & PENDING & PENDING & PENDING & PENDING & PENDING & 必须PASS \\
+原生1$\times$1 & PENDING & PENDING & PENDING & PENDING & PENDING & PENDING & 必须PASS \\
+逐pass IFM & PENDING & PENDING & PENDING & PENDING & PENDING & PENDING & 必须PASS \\
+HWC物化/重放 & PENDING & PENDING & PENDING & PENDING & PENDING & PENDING & 必须PASS \\
+无预载/无handoff & PENDING & PENDING & PENDING & PENDING & PENDING & PENDING & 必须PASS \\
+仅预载 & PENDING & PENDING & PENDING & PENDING & PENDING & PENDING & 必须PASS \\
+预载+handoff & PENDING & PENDING & PENDING & PENDING & PENDING & PENDING & 必须PASS \\
+完整跨pass重叠 & PENDING & PENDING & PENDING & PENDING & PENDING & PENDING & 必须PASS \\
+固定保守tile & PENDING & PENDING & PENDING & PENDING & PENDING & PENDING & 必须PASS \\
+层自适应tile（本文） & 34.943 & 1.000 & PENDING & PENDING & PENDING & -- & PASS \\
+\bottomrule
+\end{tabular}
+}
+\end{table*}

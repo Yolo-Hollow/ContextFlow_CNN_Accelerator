@@ -1,0 +1,173 @@
+\section{工作负载与问题模型}
+\label{sec:problem}
+
+\subsection{分段卷积工作负载}
+
+对输出位置 $(y,x)$ 和输出通道 $c_o$，卷积可写为
+\begin{equation}
+Y[y,x,c_o]=b[c_o]+\sum_{k=0}^{K-1}X_{y,x}[k]W[c_o,k],
+\label{eq:conv}
+\end{equation}
+其中 $K=k_hk_wC_{in}$。设阵列规约方向有 $R=18$ 行，并行输出宽度为
+$C_T=32$，则层 $l$ 的计算轮次和输出通道块数为
+\begin{equation}
+P_l=\left\lceil\frac{K_l}{R}\right\rceil,\qquad
+Q_l=\left\lceil\frac{C_{out,l}}{C_T}\right\rceil .
+\label{eq:pq}
+\end{equation}
+一次空间 tile 因而包含 $P_lQ_l$ 个计算上下文。$P_l$ 决定部分和反馈深度，
+$Q_l$ 决定同一输入窗口被多少组输出权重复用。
+
+\input{layer_table.tex}
+
+\cref{tab:layer-config} 表明，单一网络内同时存在三类压力。m0--m6 的特征图
+较宽，空间 tile 受输入行缓存和像素容量限制；m13 的 $P_lQ_l=8192$，其复用
+机会主要来自长规约维和大量输出通道；m19 具有 192 个计算轮次和 5 个空间
+tile，是分支融合后最紧的缓存层。两个检测头输出 255 通道，需要 8 个输出块，
+最后一个块只有 31 个有效通道。固定阵列的效率因此取决于数据流能否同时覆盖
+长规约、空间分块和尾通道，而非只取决于峰值乘加数。
+
+\subsection{片外流量放大}
+
+设一个空间 tile 的原始 HWC 输入为 $B_X$ 字节，全部 $P_l$ 轮窗口向量在片上
+占用 $B_M$ 字节。首先考虑每个计算上下文重新读取原始 tile 的串行方式，其
+片外输入流量为
+\begin{equation}
+D_{raw}=P_lQ_lB_X .
+\label{eq:draw}
+\end{equation}
+该方式保持外部 HWC 格式，却将二维复用完全转化为 DDR 访问。另一种方式由
+软件预先展开窗口。若一套展开窗口的字节数为 $B_M$，每个输出通道块仍需流送
+一次，因而
+\begin{equation}
+D_{im2col}=Q_lB_M .
+\label{eq:dim2col}
+\end{equation}
+软件展开还增加处理器读写和中间张量空间。LASA 只从 DDR 接收一次原始 tile：
+\begin{equation}
+D_{LASA}=B_X .
+\label{eq:dlasa}
+\end{equation}
+窗口生成单元在片上写入一次 $B_M$，随后由 $Q_l$ 个输出通道块读取。这里
+$B_M$ 的写入和读取均属于片上缓存流量，不计入式\eqref{eq:dlasa}。因此，两种
+串行组织相对 LASA 的理论片外流量放大比分别为
+\begin{equation}
+R_{raw}=P_lQ_l,\qquad
+R_{im2col}=\frac{Q_lB_M}{B_X}.
+\label{eq:traffic-ratio}
+\end{equation}
+
+\begin{table}[t]
+\centering
+\caption{代表层的分段规模和原始 HWC 重读放大上界。}
+\label{tab:traffic-examples}
+\small
+\begin{tabular}{lrrr}
+\toprule
+层 & $P_l$ & $Q_l$ & $R_{raw}$ \\
+\midrule
+m0 & 2 & 1 & 2 \\
+m13 & 256 & 32 & 8192 \\
+m19 & 192 & 8 & 1536 \\
+P4检测头 & 15 & 8 & 120 \\
+P5检测头 & 29 & 8 & 232 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table*}[t]
+\centering
+\caption{串行流送与 LASA 的理论模型比较。表中片外与片上流量分别统计。}
+\label{tab:model-comparison}
+\small
+\setlength{\tabcolsep}{5pt}
+\begin{tabular}{p{25mm}p{35mm}p{35mm}p{49mm}}
+\toprule
+指标 & 原始 HWC 逐上下文流送 & 软件预展开流送 & LASA 片上物化重放 \\
+\midrule
+片外输入流量 & $P_lQ_lB_X$ & $Q_lB_M$ & $B_X$ \\
+额外片上容量 & 输入缓冲 & 展开流缓冲 & $B_M$ 窗口缓存 \\
+重复布局处理 & 每个上下文或每轮 & 软件生成一次、DDR重读 $Q_l$ 次 & PL生成一次、片上读取 $Q_l$ 次 \\
+单 tile 主时延 & $\sum_{q,p}(T_I+T_W+T_C+T_F)$ & $T_{im2col}+\sum_{q,p}(T_V+T_W+T_C+T_F)$ & $T_M+\sum_{q,p}\max(T_W^{next},T_C,T_F)+T_{tail}$ \\
+主要适用条件 & 短 $K$、复用较低 & 主机重排能力充足 & 长 $K$、输出块多且缓存可容纳 \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\cref{tab:traffic-examples} 给出代表层。m13 的原始 tile 重读上界达到 8192，
+m19 为 1536；即使规约维较短，两个检测头也会因 8 个输出通道块形成 120 和
+232 的二维分段乘积。它们说明片上重放不是只面向单个最深层，而是统一处理
+长规约与宽输出两种复用。式\eqref{eq:traffic-ratio} 是架构收益上界：边界行
+复用、突发粒度和尾 tile 会改变实际字节数，实测归因应以 DMA 计数器为准。
+
+从运算强度看，设一个 tile 的乘加数为 $M_t$，权重和输出字节分别为 $B_W$、
+$B_Y$。只考虑层边界可见数据，三种数据组织的运算强度可写为
+\begin{align}
+I_{raw}&=\frac{2M_t}{P_lQ_lB_X+B_W+B_Y},\\
+I_{im2col}&=\frac{2M_t}{Q_lB_M+B_W+B_Y},\\
+I_{LASA}&=\frac{2M_t}{B_X+B_W+B_Y}.
+\label{eq:arithmetic-intensity}
+\end{align}
+物化重放不减少权重和输出的必要流量，而是消除输入项随 $P_lQ_l$ 或 $Q_l$
+增长的部分。当输入项主导分母时，运算强度提升接近式\eqref{eq:traffic-ratio}；
+当权重或输出主导时，收益自然收敛。该模型解释了为何 m13/m19 对输入重放最
+敏感，而早期大空间层仍需依靠 tile 选择控制边界启动。
+
+\begin{figure*}[t]
+\centering
+\placeholderbox{50mm}{视觉占位：上方为 $P_lQ_l$ 次 DDR 输入；下方为一次 HWC 输入、一次片上物化和多轮重放\\箭头分别标注 $D_{raw}$、$D_{im2col}$、$D_{LASA}$}
+\caption{本文的核心冲突。串行方式将长 $K$ 分段产生的复用转化为片外输入；
+LASA 把复用保留在片上，使 DDR 输入量只与原始 tile 相关。}
+\label{fig:conflict-placeholder}
+\end{figure*}
+
+\subsection{计算边界的时延模型}
+
+把一个上下文划分为输入准备 $T_I$、权重装载 $T_W$、阵列计算 $T_C$ 和部分和
+反馈及提交 $T_F$。串行控制的时延为
+\begin{equation}
+T_{serial}=\sum_{q=1}^{Q_l}\sum_{p=1}^{P_l}
+(T_I+T_W+T_C+T_F).
+\label{eq:tserial}
+\end{equation}
+物化重放将重复 $T_I$ 合并为一次物化 $T_M$。若下一权重、当前计算和当前反馈
+使用独立缓冲区，稳态时延近似为
+\begin{equation}
+T_{LASA}\approx T_M+
+\sum_{q,p}\max(T_W^{next},T_C,T_F)+T_{tail},
+\label{eq:tlasa}
+\end{equation}
+其中 $T_{tail}$ 表示最后结果提交。式\eqref{eq:tlasa} 给出调度目标：片上重放
+消除重复输入阶段，上下文调度使其余三个阶段尽量由最长阶段主导。数据依赖
+决定部分和反馈仍需按序完成，因而 LASA 的设计重点是缩短可见边界，而不是
+改变卷积运算量。
+
+由式\eqref{eq:tserial}和\eqref{eq:tlasa}还可得到两个边界。若计算完全覆盖权重
+和反馈，则稳态由 $\sum T_C$ 主导，调度已接近固定阵列的计算下界；若某一阶段
+持续大于 $T_C$，相应等待会直接出现在性能计数器中。因而模型既给出收益上界，
+也给出归因方法：输入字节验证物化重放，权重等待验证提前装载，反馈间隔验证
+双槽缓冲，上下文空闲周期验证直接切换。本文用完整网络有效吞吐评价整体结果，
+把各类等待保留为后续受控分析的观测量。
+
+\subsection{相关工作的定位}
+
+已有空间架构围绕权重驻留、输出驻留和行驻留组织局部复用
+\cite{chen2016eyeriss,eyerissv2,sze2017efficient}；MAERI、Simba 和 Timeloop
+进一步研究不同层形状下的数据流映射与设计空间
+\cite{maeri2018,simba2019,timeloop2019}。FINN、fpgaConvNet、DNNBuilder 和
+FLEXCNN 说明定制流水与折叠硬件能够覆盖完整网络
+\cite{finn2017,fpgaConvNet2015,dnnBuilder2018,flexcnn2020}。FEATHER 将布局
+重排纳入片上数据流切换\cite{feather2024}，多种 YOLO FPGA 加速器则展示了
+检测网络的工程可行性\cite{yolov2fpga2018,yolov3fpga2019,tinyyoloaccel2022,
+multicoreyolo2023}。
+
+LASA 的研究位置是外部 HWC 接口与多轮固定阵列之间的窄边界。经典行驻留和
+输出驻留强调卷积循环内部的数据复用，可重构数据流强调不同层对循环映射的
+选择，网络生成框架强调从模型到硬件实例的自动转换。LASA 选择固定的阵列
+计算数据流，把变化集中在阵列之前的窗口生成和阵列周围的上下文调度。该选择
+减少了可重构互连，同时要求片上缓存完整表达 HWC 到分段向量的映射。
+
+因此，LASA 的输入窗口只在片上生成一次，并在部分和存在真实依赖的情况下
+跨轮重放。与扩大阵列或任意
+切换数据流相比，该方法保持固定计算结构，把优化集中在输入流量和计算边界，
+从而能够用完整网络的字节一致性和板端计数器验证其效果。

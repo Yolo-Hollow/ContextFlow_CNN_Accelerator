@@ -1,0 +1,298 @@
+\section{实验结果}
+\label{sec:results}
+
+\subsection{完整网络性能}
+
+\begin{table}[t]
+\centering
+\caption{完整网络板端性能。每次预热20张并计时1000张，共3次独立运行。}
+\label{tab:academic-performance}
+\small
+\setlength{\tabcolsep}{4.5pt}
+\begin{tabular}{lrr}
+\toprule
+指标 & 数值 & 单位 \\
+\midrule
+Resident 平均延迟 & \ResidentMeanMs{} & ms \\
+Resident P95 & \ResidentPNinetyFiveMs{} & ms \\
+PL 13个卷积 & \PLMeanMs{} & ms \\
+A53及后处理 & \AFTMeanMs{} & ms \\
+双头解码/NMS & \DecodeMeanMs{} & ms \\
+吞吐率 & \ResidentFPS{} & FPS \\
+PL有效吞吐 & \PLEffectiveGOPS{} & GOPS \\
+阵列利用率 & \ArrayUtilization{} & \% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\cref{tab:academic-performance} 给出主要结果。完整网络包含约 2.782 GMAC，即
+5.565 GOP。13 个卷积平均用时 \PLMeanMs{} ms，对应
+\PLEffectiveGOPS{} GOPS。576-MAC 阵列在 200 MHz 下的理论峰值为
+230.4 GOPS，按式\eqref{eq:utilization} 得到 \ArrayUtilization{}\% 的完整网络
+有效利用率。resident 平均延迟为 \ResidentMeanMs{} ms，P95 为
+\ResidentPNinetyFiveMs{} ms，吞吐率达到 \ResidentFPS{} FPS。P95 只比均值
+高 0.022 ms，说明参数常驻和持久调度下的执行时间稳定。
+
+PL 占 resident 时间约 96.2\%，A53 张量算子与后处理合计
+\AFTMeanMs{} ms。双头候选生成和 NMS 只占 \DecodeMeanMs{} ms，四核并行的
+池化、上采样和重量化拼接构成其余 A53 时间。由此可见，完整系统的性能中心
+仍是卷积阵列，而软硬件分工没有把主要瓶颈转移到处理器。
+
+\input{layer_latency_table.tex}
+
+分层结果进一步说明工作负载与理论模型的一致性。m13 和 m19 分别耗时
+\MThirteenMeanMs{} ms 与 \MNineteenMeanMs{} ms，合计占 PL 时间
+\LongLayerPLShare{}\%。二者正是 $P_l$ 最大且物化容量最紧的层。早期层虽然
+空间尺寸大，但较短的规约维和分层 tile 将单层时间保持在约 2--3 ms；两个
+检测头的 255 通道尾块总计低于 1.5 ms。
+
+若只看峰值，576 个 MAC 在 200 MHz 下每毫秒可以完成 115.2 MMAC；完整网络
+的理想计算时间约为 24.15 ms。实测 PL 时间为 33.607 ms，二者差额包含卷积
+边界、尾轮、尾通道、窗口填充和数据等待。71.9\% 利用率把这些开销统一反映在
+完整网络上，避免用某个规则层的稳态周期代表全网。m13/m19 的占比同时说明，
+后续提高总体吞吐应优先缩短长层的反馈和窗口访问，而非继续优化已经低于
+1 ms 的检测头。
+
+三次 1000 张运行使用相同常驻参数但独立会话。均值和 P95 的接近表明缓存预热
+后没有随图像内容变化的卷积控制路径；YOLOv3-tiny 的层形状和 dispatch 数固定，
+候选数变化只影响较短的 A53 后处理。该确定性有利于实时系统以 P95 而非单次
+最小值规划帧周期。
+
+\begin{figure*}[t]
+\centering
+\placeholderbox{50mm}{视觉占位：左侧为13个PL层延迟堆叠，右侧为PL、A53张量算子、解码和resident总时间\\醒目标注 28.618 FPS、165.6 GOPS、71.9\%}
+\caption{完整网络的性能分解。m13 与 m19 构成长 $K$ 主体，A53 非卷积算子在
+四核协同后只占 resident 时间的小部分。}
+\label{fig:performance-placeholder}
+\end{figure*}
+
+\subsection{同一网表的运行时与映射消融}
+
+\input{generated/ablation_tables.tex}
+
+\cref{tab:a3-runtime-ablation} 在同一个 A3 布局布线网表上逐级开启运行时
+流水机制，因此差值不包含布局、频率或资源变化。基础配置 0x2B 已包含 HWC 输入、
+轮次预取和连续部分和；0x3B 增加部分和流重叠，0x3F 再增加提前反馈，0xBF
+进一步允许计算期间预取。前三档的 resident 均值均约为 40.02 ms，说明单独提前
+反馈不足以改变当前长层的主等待关系。0xBF 将均值降至 34.978 ms，相对 0x2B
+获得 \AblRuntimeFullSpeedup{} 倍加速，延迟降低 \AblRuntimeReductionPct{}\%。
+四档各包含 3 个独立会话和 3000 张正式计时图像，相同输入的输出校验和逐项
+一致，因而该差值可归因于计算期预取形成的跨上下文重叠。
+
+\cref{tab:a3-secondary-ablation} 进一步隔离阵列映射和空间分块。对于 m14、m16
+和两个检测头，原生 1$\times$1 路径相对“中心权重有效、其余权重为零”的
+等价 3$\times$3 映射分别获得 \AblMFourteenSpeedup{}、
+\AblMSixteenSpeedup{}、\AblPFourSpeedup{} 和 \AblPFiveSpeedup{} 倍加速。
+两种映射具有相同的非零 MAC，但稀疏 3$\times$3 映射仍按九个核位置调度，
+同时增加 $K$ 维轮次、上下文数和重复权重流量。结果说明原生路径的收益来自
+避免结构性零运算，而不是改变卷积数值。
+
+层自适应分块在长层上同样产生可测收益。m13 将 tile 高度由 4 增至 8 后，
+上下文数和重复权重流量减半，层延迟加速 \AblMThirteenSpeedup{} 倍；m19 将
+高度由 3 增至 6 后加速 \AblMNineteenSpeedup{} 倍。m19 的增幅较小，是因为
+其较大的特征宽度使单个 tile 已能形成较长稳态区，而增加 tile 主要重复边界
+启动和参数传输。全部 12 个配置还分别在 128 张代表图上完成字节一致性验证，
+未观测到 PL、DMA、部分和下溢或超时错误。
+
+\subsection{同板 CPU 基线}
+
+\begin{table}[t]
+\centering
+\caption{同一完整 INT8 负载的 KV260 单图 resident 对照。}
+\label{tab:cpu-baseline}
+\small
+\setlength{\tabcolsep}{4.0pt}
+\begin{tabular}{lrr}
+\toprule
+实现 & 延迟/ms & 吞吐/FPS \\
+\midrule
+四核 A53+NEON & \CPUFourCoreLatencyMs{} & \CPUFourCoreFPS{} \\
+LASA 完整系统 & \ResidentMeanMs{} & \ResidentFPS{} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+四核 A53+NEON 在 \CPUFourCoreClockGHz{} GHz 下完成同一张图的完整 resident
+推理耗时 \CPUFourCoreLatencyMs{} ms，对应 \CPUFourCoreFPS{} FPS 和
+\CPUFourCoreEffectiveGOPS{} GOPS；其中 A53 张量变换为
+\CPUFourCoreTensorMs{} ms，双头解码与 NMS 为 \CPUFourCoreDecodeMs{} ms，
+其余时间由 13 个卷积占用。两个原始检测头与整数参考逐字节一致，说明比较中的
+延迟差异来自卷积执行方式，而非网络裁剪或数值语义变化。
+
+以完整 resident 边界计算，LASA 的 \ResidentMeanMs{} ms 相对该同板 CPU
+基线获得 \CPUFourCoreSpeedup{} 倍加速。CPU 结果用于给出同器件、同负载的
+直接参照；LASA 的主性能分布仍采用 3 次独立会话共 3000 张计时结果。
+
+\subsection{整数正确性与稳定性}
+
+\begin{table*}[t]
+\centering
+\caption{已完成的板端正确性与稳定性验证。}
+\label{tab:academic-correctness}
+\small
+\setlength{\tabcolsep}{5pt}
+\begin{tabular}{lrrrrl}
+\toprule
+验证 & 图像/时长 & 比较对象 & 记录或字节 & 最大差异 & 结果 \\
+\midrule
+逐节点一致性 & 128张 & 22个整数节点 & 2816条 & 0 byte & 通过 \\
+双原始检测头 & 128张 & P4/P5 & 27,580,800 byte & 0 byte & 通过 \\
+完整数据集指标 & 5000张 & 10000个检测头 & 12项及每类AP & 0 & 通过 \\
+A53产品后处理 & \ProductImages{}张 & 检测结果 & score/bbox/COCO指标 & $\ProductScoreDelta$ / $\ProductBBoxDelta$ px / \ProductMetricDelta{} & 通过 \\
+持续运行 & \SoakSeconds{} s & 输出与运行状态 & 连续会话 & 错误计数0 & 通过 \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+128 张逐节点测试共生成 \NodeRecords{} 条记录，覆盖 PL 卷积、普通池化、特殊
+池化、上采样、分支重量化拼接和两个原始检测头，所有字节均与整数参考一致。
+这一结果同时覆盖 m19 尾 tile、255 通道尾块、非 8 字节对齐的 AXI 末拍和长轮次
+部分和反馈。完整 5000 张评测中，板端原始检测头经统一主机后处理后，12 项
+COCO 指标和每类 AP 均与整数参考相同。
+
+板端 A53 进一步以 accuracy 配置完成 \ProductImages{} 张双头解码和 NMS。逐图检测数、
+类别、源索引、输出顺序与 NMS 保留集合均与主机实现一致；score 最大绝对差为
+$\ProductScoreDelta$，边界框坐标最大绝对差为
+$\ProductBBoxDelta$ 像素，12 项 COCO 指标最大差为 \ProductMetricDelta{}。由此，网络整数
+计算和产品后处理两条路径均在完整数据集上闭合到同一评测结果。
+
+持续运行达到 \SoakSeconds{} s，观测最高温度为 \SoakTempC{}\,$^{\circ}$C，
+输入校验、顺序、DMA、PL状态、超时和输出确定性错误均为 0。性能测试的每条
+记录还携带输出校验和，使相同速度但错误输出的执行无法进入统计。正确性结果
+表明，片上重放和上下文重叠没有改变软件可见 HWC 顺序。
+
+逐节点和完整数据集承担不同验证职责。逐节点比较能够定位首个数值偏差，并覆盖
+窗口边界、部分和、重量化和 A53 张量操作；完整数据集比较则覆盖所有图像内容和
+检测头动态范围。持续运行进一步覆盖跨图上下文复用和长期状态。三种验证共同
+说明系统在局部算子、完整网络和时间维度上保持同一整数语义。
+
+\subsection{模型精度}
+
+\input{accuracy_table.tex}
+
+\cref{tab:accuracy} 区分上游复现与部署比较。640 输入的 FP32 结果用于确认
+YOLOv3-tiny 权重和 COCO 评测流程；固定 416 输入下，FP32 的 AP50:95/AP50 为
+17.494\%/33.493\%，当前 INT8 参数为 14.304\%/30.212\%，分别下降 3.190 和
+3.281 个百分点。板端与主机整数参考的原始检测头完全一致，因此该差值来自
+模型量化参数，而不是硬件计算偏差。量化训练可在保持层形状、tile 和调度不变
+的条件下替换参数组，架构性能与整数正确性评价具有独立含义。
+
+从目标尺度看，INT8 的小、中、大目标 AP 分别为 4.325\%、15.245\% 和
+23.686\%，FP32-416 对应 5.324\%、18.436\% 和 29.263\%。下降在大目标上更
+明显，说明当前参数组的动态范围和检测头量化仍有改进空间。该观察用于描述模型
+状态；板端与整数参考的逐字节一致性已经把硬件误差从精度差异中排除。
+
+\subsection{实现代价、时序与功耗估算}
+
+\input{resource_table.tex}
+
+最终系统使用 \LUTCount{} LUT、\BRAMCount{} BRAM、\URAMCount{} URAM 和
+\DSPCount{} DSP，其中阵列使用 \ArrayDSPCount{} 个 DSP。URAM 的 48 个块主要
+用于物化向量和长层数据，BRAM 用于行缓存、部分和及局部队列。CLB 占用
+\CLBPercent{}\%，说明存储和控制连线比逻辑总量更接近器件布局限制。
+
+路由后建立时间余量为 \WNSValue{} ns，保持时间余量为 \WHSValue{} ns，所有
+失败端点、未布线网络和 DRC 错误均为 0。4 ps 建立余量说明 200 MHz 已接近当前
+放置布线边界。后续扩大阵列或缓存时，首先需要隔离长控制路径和 URAM 周围的
+跨区连线，而非只依据剩余 LUT 或 DSP 判断可扩展性。
+
+正式 routed DCP 的 vectorless post-route 功耗估算为 \PostRoutePowerTotalW{} W，
+其中动态功耗 \PostRoutePowerDynamicW{} W、器件静态功耗
+\PostRoutePowerStaticW{} W。PS8 动态功耗为 \PostRoutePowerPSDynamicW{} W；
+由总动态功耗扣除 PS8 得到 PL 动态功耗 \PostRoutePowerPLDynamicW{} W，
+加速器层次占 \PostRoutePowerAccelDynamicW{} W。工具采用 typical process、
+25\,$^\circ$C 环境温度、12.5\% vectorless toggle rate 和 0.5 static probability，
+未加载 SAIF；估算结温为 \PostRoutePowerJunctionC{}\,$^\circ$C，置信度为
+\PostRoutePowerConfidence{}。该结果用于描述实现功耗构成，属于布局布线后估算，
+不作为板级实测 GOPS/W。
+
+资源分布也反映两项机制的代价。物化重放主要消耗 URAM、行缓存和地址控制，
+上下文调度主要增加双缓冲和窄状态；阵列本体占 576 个 DSP，全系统其余 74 个
+DSP 用于数据变换和系统逻辑。因而当前设计的扩展瓶颈首先表现为 URAM 容量、
+CLB 布局和控制扇出，而不是 DSP 总量。该结果与 m13/m19 的容量分析一致。
+
+\subsection{与相关加速方向的比较}
+
+\begin{table*}[t]
+\centering
+\caption{代表性加速方向与本文关注能力的比较。}
+\label{tab:academic-related}
+\small
+\begin{tabular}{lccccc}
+\toprule
+方向 & 层形状映射 & 外部HWC输入 & 跨轮片上重放 & 完整双头网络 & 板端逐节点验证 \\
+\midrule
+固定数据流空间架构\cite{chen2016eyeriss,jouppi2017tpu} & 部分 & 内部格式 & 部分 & 否 & 否 \\
+可重构数据流\cite{maeri2018,simba2019} & 是 & 部分 & 部分 & 否 & 否 \\
+FPGA生成框架\cite{finn2017,fpgaConvNet2015,dnnBuilder2018} & 是 & 部分 & 部分 & 部分 & 部分 \\
+YOLO FPGA加速器\cite{yolov2fpga2018,tinyyoloaccel2022,multicoreyolo2023} & 部分 & 部分 & 部分 & 是 & 少见 \\
+LASA & 是 & 是 & 是 & 是 & 是 \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+外部工作在器件、网络版本、输入尺寸、batch 和后处理范围上差异较大，单一 GOPS
+或 FPS 排序难以反映完整系统能力。\cref{tab:academic-related} 因而比较与本文
+问题直接相关的功能维度。LASA 的特点是把外部 HWC、跨轮重放、完整双检测头和
+逐节点板端验证同时纳入固定阵列设计。其 \PLEffectiveGOPS{} GOPS 是完整13层
+卷积的有效吞吐，\ResidentFPS{} FPS 则包含 A53 张量变换和双尺度后处理，两种
+口径分别对应阵列效率和系统体验。
+
+\subsubsection{近等计算负载的定量比较}
+
+\begin{table*}[t]
+\centering
+\caption{YOLOv3-tiny近等计算负载的定量比较。GOP/图按公开吞吐率与延迟反推；
+等级A表示标准网络家族且算术量偏差不超过5\%，等级B表示网络图或系统边界发生改变。}
+\label{tab:near-equal-workload}
+\small
+\setlength{\tabcolsep}{4.2pt}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{llcccccccc}
+\toprule
+工作 & 器件/精度 & 频率/MHz & 延迟/ms & 吞吐/GOPS & GOP/图 & 偏差 & 周期/图(M) & 等级 & 计时与网络说明 \\
+\midrule
+Yu等\cite{yu2020parameterisable} & Zedboard/FP16 & 100 & \ARCLatencyMs{} & \ARCGOPS{} & \ARCGOPPerImage{} & $-0.11\%$ & \ARCCyclesPerImage{} & A & 参数化完整网络加速 \\
+Velicheti等\cite{tinyyoloaccel2022} & DE5a-Net/FP8 & 234.38 & \HPECLatencyMs{} & \HPECGOPS{} & \HPECGOPPerImage{} & $+0.37\%$ & \HPECCyclesPerImage{} & A & 加速器含双尺度YOLO处理 \\
+任仕伟等\cite{ren2022endtoend} & XCZU9EG/动态16位 & 300 & \BITLatencyMs{} & \BITGOPS{} & \BITGOPPerImage{} & $+0.16\%$ & \BITCyclesPerImage{} & B & 416输入，网络重组与规模缩减 \\
+LASA & XCK26/INT8 & 200 & \PLMeanMs{} & \PLEffectiveGOPS{} & \LASAGOPPerImage{} & 基准 & \LASACyclesPerImage{} & A & 完整13卷积，PL计时 \\
+\bottomrule
+\end{tabular}}
+\end{table*}
+
+为在不同器件之间建立可审计的数值锚点，本文先由论文报告的吞吐率 $S_i$ 和
+加速器延迟 $T_i$ 反推单图运算量
+\begin{equation}
+G_i=S_iT_i,
+\qquad
+\epsilon_i=\frac{|G_i-G_{\mathrm{LASA}}|}{G_{\mathrm{LASA}}},
+\label{eq:related-workload}
+\end{equation}
+并用 $C_i=f_iT_i$ 计算频率归一化的每帧周期数。LASA 的13层卷积包含
+2.782 GMAC，即 $G_{\mathrm{LASA}}=\LASAGOPPerImage{}$ GOP/图；该数值由
+\PLEffectiveGOPS{} GOPS 与 PL 卷积时间 \PLMeanMs{} ms 配对得到，而
+\ResidentMeanMs{} ms 的 resident 延迟还包含 A53 张量算子和后处理。
+
+\cref{tab:near-equal-workload} 中，ARC 2020与HPEC 2022反推得到的每图算术量
+分别为 \ARCGOPPerImage{} 和 \HPECGOPPerImage{} GOP，与LASA相差不足0.4\%。
+在这一近等卷积负载下，LASA相对HPEC 2022将PL延迟由 \HPECLatencyMs{} ms
+降至 \PLMeanMs{} ms，降低65.7\%，有效吞吐提高2.91倍；每帧周期由
+\HPECCyclesPerImage{} M降至 \LASACyclesPerImage{} M，减少70.7\%。相对
+ARC 2020，绝对延迟降低93.7\%。这些结果同时包含器件规模、位宽和实现工具的
+差异，因而用于说明完整负载下的实现效率，不把全部差值归因于单一微架构机制。
+
+反推算术量接近仍不是网络图等同的充分条件。任仕伟等的工作虽然得到
+\BITGOPPerImage{} GOP/图并报告416输入，但原文明确采用网络重组和规模缩减，
+因此列为B级。类似地，IEEE Access 2021的31.5 GOPS与121 ms对应3.812 GOP/图，
+且修改了原始YOLO算法\cite{adiono2021lowlatency}；TCSI 2024的95.08 GOPS与
+76.75 FPS仅对应1.239 GOP/图\cite{kim2024flexibleyolo}；TVLSI 2023使用
+448$\times$448输入并报告归一化帧率\cite{multicoreyolo2023}。这些结果保留在
+模型家族层面的能力比较中，不用于计算LASA的直接加速倍数。
+
+与面向单层峰值的结果相比，LASA 同时给出完整网络 resident 延迟、逐层 PL
+延迟、A53 非卷积分解和整数一致性。与为每层定制独立流水的方案相比，LASA
+复用同一 18$\times$16 阵列，资源规模不随层数线性增长；代价是长层需要多轮
+执行。片上物化重放正是折叠阵列保持 HWC 接口和高利用率的关键，使多轮执行
+不再要求等比例增加片外输入。
+
+\FloatBarrier

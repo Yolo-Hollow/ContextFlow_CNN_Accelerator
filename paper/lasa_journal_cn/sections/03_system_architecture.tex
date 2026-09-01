@@ -1,0 +1,75 @@
+\section{系统总体架构}
+\label{sec:system}
+
+\subsection{PS--PL 边界}
+
+\cref{fig:system} 给出本文系统边界。KV260 搭载 XCK26 SoC，处理系统侧为
+四核 Cortex-A53，PL 侧部署 \LASA 和四路 AXI DMA。DDR 同时容纳常驻参数、
+量化输入、两个 HWC ping-pong 区、route skip、分支临时张量和双检测头。
+四路 DMA 分别搬运 bias、weight、IFM 和 OFM；控制面使用 AXI-Lite 设置层
+描述符、量化参数、LUT、地址、字节数和启动命令，并读取完成状态、错误位
+与性能计数器。DMA 数据口和共享 DDR 通过 PS 高性能端口连接，PL 不直接
+承担文件系统、TCP 或 COCO 数据集协议。
+
+\input{figures/fig02_system.tex}
+
+完整推理采用“PL 规则密集算子、A53 图和不规则算子”的边界。13 个卷积均由
+\LASA 执行，包括 $C_{out}=255$ 的 P4/P5 检测头。A53 执行普通 2$\times$2
+池化、m10 后的右/下量化零点 padding 加 stride-1 pool、nearest 上采样、
+route 分支重量化与 HWC concat，以及双头 decode/NMS。该划分并非声称
+非卷积永久适合 CPU，而是为了在不改变 r5 bitstream 的前提下验证完整网络；
+它同时使本文可以单独测量 PL 卷积和 A53 辅助算子的代价。
+
+\subsection{常驻参数与 tensor arena}
+
+参数包使用独立的 bias 与 weight payload，并由 manifest 描述 13 层的偏移、
+长度、tile 重复、量化域和哈希。当前安全 tile 表下，权重约 18.614 MB、
+bias 64,256 B，分别位于 20 MiB 和 64 KiB 的既有 DDR 窗口内。软件启动时
+只传输和验证一次参数，之后每张图只更新输入与 feature tensor；因此
+resident 口径排除参数装载。
+
+feature 生命周期不是简单的单链 ping-pong。m8 的
+26$\times$26$\times$256 输出必须保留为 route skip，同时 pool9 产生主干
+13$\times$13$\times$256；m14 同时馈入 m15 和 m16；m16 上采样后与 m8
+经过重量化的 skip 拼接为 26$\times$26$\times$384。软件以静态 liveness
+表给每条边分配 64 B 对齐的低 2 GiB DDR 地址，所有 DMA 可见地址均小于
+\code{0x80000000}。cache 操作遵循“CPU 写后 flush、DMA 写后 invalidate”，
+协议同时校验字节数、TKEEP/TLAST、完成状态和计数器，防止因 cache 命中
+掩盖 DMA 不一致。
+
+\subsection{输入、输出与持久执行}
+
+系统提供 SD 冷启动和以太网持久 runner 两条通道。SD 卡包含 BOOT.bin、
+启动脚本、参数和可选数据集，适合无主机冷启动与稳定性验证；以太网通道
+使用静态 IP 和 chunk 级 CRC/sequence 协议，适合 5000 张数据集和性能测试。
+二者最终调用同一层调度、tensor op 和 decode 核心，因此传输通道不是模型
+实现分叉。
+
+以太网会话一次校验 BIT/XSA/ELF/参数哈希，输入按固定 416$\times$416 HWC
+量化包发送。板端可以返回三种逻辑输出：双 raw head、A53 detections 或仅
+timing/CRC。raw-head 模式用于隔离网络整数语义；product 模式用于验证 A53
+decode/NMS；performance 模式关闭 raw dump 和计时区内 UART/JSON。系统由此
+区分四种时间：
+\begin{itemize}[leftmargin=1.8em]
+  \item \textbf{resident}：输入张量已在 DDR，到 detections 就绪；
+  \item \textbf{PL}：13 个卷积 dispatch 的板端周期累计；
+  \item \textbf{pipeline}：主机发送、板端计算和结果返回的 chunk wall time；
+  \item \textbf{cold boot/SD I/O}：供部署重复性报告，不与 resident 混合。
+\end{itemize}
+
+\subsection{完整网络执行次序}
+
+\cref{fig:dag} 展示 13 个 PL 卷积和 A53 tensor op 的数据依赖。m8 以 pool
+bypass 输出 route；A53 完成 pool9 后继续 m10。m10 的 13$\times$13$\times$512
+张量先在右侧和底部补一个量化零点像素，再做 2$\times$2/stride-1 maxpool，
+与原网络的非对称 padding 语义一致。m14 输出分为 P5 分支和 P4 neck：前者
+经 m15 和 P5 detect，后者经 m16、nearest 上采样、route requant-concat、
+m19 和 P4 detect。双 raw head 分别为 172,380 B 和 43,095 B，最后由同一
+accuracy 或 demo profile 解码。
+
+\input{figures/fig07_dag.tex}
+
+这种系统边界保留了两个重要性质。第一，所有卷积都经过同一硬件数值语义，
+因此可用一个 RTL-semantic host 模型逐层比较；第二，训练或 QAT 只替换参数
+manifest，不改变 13 层图和硬件调度合同。当前 epoch-1 参数精度不足是模型
+release 问题，而不是通过重新定义板端后处理可以规避的硬件问题。

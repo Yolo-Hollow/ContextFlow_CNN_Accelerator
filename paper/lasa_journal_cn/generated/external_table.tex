@@ -1,0 +1,19 @@
+\begin{table*}[t]
+\centering
+\caption{外部工作的比较口径。当前初稿只冻结能力与字段；投稿前由原始论文自动生成数值，避免跨口径误排。}
+\label{tab:external-comparison}
+\small
+\resizebox{0.98\textwidth}{!}{%
+\begin{tabular}{lcccccccl}
+\toprule
+工作 & 器件 & MHz & 网络/输入 & 完整双头 & 后处理 & batch & 延迟/FPS & 口径备注\\
+\midrule
+YOLOv2 FPGA\cite{yolov2fpga2018} & 见原文 & 见原文 & YOLOv2 & -- & 见原文 & 见原文 & 见原文 & 非同网络 \\
+YOLOv3 FPGA\cite{yolov3fpga2019} & 见原文 & 见原文 & YOLOv3 & 见原文 & 见原文 & 见原文 & 见原文 & 核对完整性 \\
+Tiny-YOLOv3 accelerator\cite{tinyyoloaccel2022} & 见原文 & 见原文 & tiny/见原文 & 见原文 & 见原文 & 见原文 & 见原文 & 原文口径 \\
+Multicore YOLOv3-tiny\cite{multicoreyolo2023} & 见原文 & 见原文 & tiny/见原文 & 见原文 & 见原文 & 见原文 & 见原文 & 直接对照 \\
+本文 \LASA & XCK26 & 200 & tiny/416 & 是 & A53包含 & 1 & 34.943 ms/28.618 FPS & resident \\
+\bottomrule
+\end{tabular}
+}
+\end{table*}

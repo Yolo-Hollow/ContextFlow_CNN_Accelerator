@@ -1,0 +1,29 @@
+\begin{figure*}[t]
+\centering
+\resizebox{0.98\textwidth}{!}{%
+\begin{tikzpicture}[>=Latex,node distance=4mm and 5mm,
+  conv/.style={draw,rounded corners,fill=LasaBlue!13,minimum width=15mm,minimum height=7mm,font=\scriptsize,align=center},
+  cpu/.style={draw,rounded corners,fill=LasaOrange!16,minimum width=15mm,minimum height=7mm,font=\scriptsize,align=center},
+  head/.style={draw,rounded corners,fill=LasaGreen!18,minimum width=18mm,minimum height=7mm,font=\scriptsize,align=center},
+  f/.style={->,thick}]
+\node[conv] (m0) {m0}; \node[cpu,right=of m0] (p1) {pool1};
+\node[conv,right=of p1] (m2) {m2}; \node[cpu,right=of m2] (p3) {pool3};
+\node[conv,right=of p3] (m4) {m4}; \node[cpu,right=of m4] (p5) {pool5};
+\node[conv,right=of p5] (m6) {m6}; \node[cpu,right=of m6] (p7) {pool7};
+\node[conv,below=8mm of m6] (m8) {m8}; \node[cpu,right=of m8] (p9) {pool9};
+\node[conv,right=of p9] (m10) {m10}; \node[cpu,right=of m10] (p12) {pad+pool12};
+\node[conv,right=of p12] (m13) {m13}; \node[conv,right=of m13] (m14) {m14};
+\node[conv,below=8mm of m13] (m15) {m15}; \node[head,right=of m15] (p5h) {P5 head\\13$\times$13$\times$255};
+\node[conv,below=8mm of m14] (m16) {m16}; \node[cpu,right=of m16] (up) {nearest$\times$2};
+\node[cpu,right=of up] (cat) {requant\\concat}; \node[conv,right=of cat] (m19) {m19};
+\node[head,right=of m19] (p4h) {P4 head\\26$\times$26$\times$255};
+\foreach \a/\b in {m0/p1,p1/m2,m2/p3,p3/m4,m4/p5,p5/m6,m6/p7,p7/m8,m8/p9,p9/m10,m10/p12,p12/m13,m13/m14,m14/m15,m15/p5h,m14/m16,m16/up,up/cat,cat/m19,m19/p4h}{\draw[f] (\a)--(\b);}
+\draw[f,LasaRed] (m8.south) |- (cat.south);
+\node[draw,dashed,fit=(m0)(m2)(m4)(m6)(m8)(m10)(m13)(m14)(m15)(m16)(m19)(p4h)(p5h),inner sep=3mm,label={[font=\scriptsize]below:蓝/绿：13 次 PL 卷积 dispatch}] {};
+\node[font=\scriptsize,LasaRed,anchor=north] at (m8.south) {route skip};
+\end{tikzpicture}
+}
+\caption{完整 COCO80 YOLOv3-tiny DAG。m8 的 26$\times$26$\times$256
+输出既形成 route skip，也经 pool9 进入低分辨率主干；两头输出共 2535 个 anchor。}
+\label{fig:dag}
+\end{figure*}
