@@ -14,12 +14,11 @@
 - 阵列利用率：**71.87%**
 - 测量规模：3 次独立运行，每次 20 次预热和 1000 张计时图像
 
-机器可读的权威来源为 `paper/lasa_journal_cn/data/evidence_snapshot.json`。
+机器可读的权威来源为 `repro/evidence/contextflow_34p9_evidence.json`。
 
-以下两个相近数值采用不同测量范围，不能替代上述主要结果：
+以下相近数值采用不同测量范围，不能替代上述主要结果：
 
-- **34.978146 ms** 是 `paper/lasa_journal_cn_academic/data/ablation_snapshot.json` 中 `0xBF` 受控消融的最后阶段。
-- **34.925 ms** 是 `paper/lasa_journal_cn/sections/08_results.tex` 中一次较短的 SD 冷启动复测，包含 20 次预热和 100 张计时图像。
+- **34.978146 ms** 是 `repro/evidence/contextflow_ablation.json` 中 `0xBF` 受控消融的最后阶段。
 
 ## 硬件身份
 
@@ -35,4 +34,4 @@
 
 ## 证据位置
 
-测量哈希和摘要位于 `paper/lasa_journal_cn/` 下的证据快照与生成清单中。最终预印本位于 `output/pdf/ContexFlow_preprint_thesis.pdf`。
+性能、消融和同板 CPU 证据位于 `repro/evidence/`。最终预印本位于 `output/pdf/ContexFlow_preprint_thesis.pdf`。

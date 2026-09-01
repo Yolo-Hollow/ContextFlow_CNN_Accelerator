@@ -15,15 +15,13 @@ The headline result is the complete resident inference measurement:
 - measurement set: 3 runs, 20 warmups per run, 1000 timed images per run
 
 The canonical machine-readable source is
-`paper/lasa_journal_cn/data/evidence_snapshot.json`.
+`repro/evidence/contextflow_34p9_evidence.json`.
 
-Two nearby numbers use different measurement scopes and must not replace the
+The nearby number below uses a different measurement scope and must not replace the
 headline value:
 
 - **34.978146 ms** is the final `0xBF` controlled-ablation stage recorded in
-  `paper/lasa_journal_cn_academic/data/ablation_snapshot.json`.
-- **34.925 ms** is a shorter SD cold-boot repeatability run (20 warmups and 100
-  timed images) described in `paper/lasa_journal_cn/sections/08_results.tex`.
+  `repro/evidence/contextflow_ablation.json`.
 
 ## Hardware identity
 
@@ -40,6 +38,6 @@ The matching binaries are bundled in `release/contextflow_34p9/`:
 
 ## Evidence locations
 
-Measurement hashes and summaries are stored in the evidence snapshot and
-generated manifest under `paper/lasa_journal_cn/`. The final preprint is
-available at `output/pdf/ContexFlow_preprint_thesis.pdf`.
+Performance, ablation, and same-board CPU evidence is stored under
+`repro/evidence/`. The final preprint is available at
+`output/pdf/ContexFlow_preprint_thesis.pdf`.

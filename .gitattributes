@@ -11,3 +11,10 @@ paper/lasa_journal_cn/data/*.json text eol=lf
 paper/lasa_journal_cn/generated/*.json text eol=lf
 paper/lasa_journal_cn/generated/*.tex text eol=lf
 tools/coco80/model_spec.json text eol=lf
+
+# Reproduction manifests and documentation must produce cross-platform hashes.
+repro/**/*.json text eol=lf
+repro/*.json text eol=lf
+repro/**/*.md text eol=lf
+repro/*.md text eol=lf
+repro/SHA256SUMS text eol=lf
