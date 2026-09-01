@@ -22,6 +22,21 @@ module tb_ofm_packet_fifo;
     wire full;
     wire almost_full;
 
+    reg strict_in_valid;
+    wire strict_in_ready;
+    reg [ADDR_W-1:0] strict_in_addr;
+    reg [10:0] strict_in_cout_base;
+    reg [COUT_TILE-1:0] strict_in_channel_valid;
+    reg [COUT_TILE*8-1:0] strict_in_data;
+    wire strict_out_valid;
+    reg strict_out_ready;
+    wire [ADDR_W-1:0] strict_out_addr;
+    wire [10:0] strict_out_cout_base;
+    wire [COUT_TILE-1:0] strict_out_channel_valid;
+    wire [COUT_TILE*8-1:0] strict_out_data;
+    wire strict_full;
+    wire strict_almost_full;
+
     ofm_packet_fifo #(
         .COUT_TILE(COUT_TILE), .ADDR_W(ADDR_W), .DEPTH(DEPTH), .AW(AW)
     ) dut (
@@ -35,10 +50,24 @@ module tb_ofm_packet_fifo;
         .full(full), .almost_full(almost_full)
     );
 
+    ofm_packet_fifo #(
+        .COUT_TILE(COUT_TILE), .ADDR_W(ADDR_W), .DEPTH(DEPTH), .AW(AW),
+        .CONSERVATIVE_FULL_CREDIT(1)
+    ) strict_dut (
+        .clk(clk), .rst(rst),
+        .in_valid(strict_in_valid), .in_ready(strict_in_ready),
+        .in_addr(strict_in_addr), .in_cout_base(strict_in_cout_base),
+        .in_channel_valid(strict_in_channel_valid), .in_data(strict_in_data),
+        .out_valid(strict_out_valid), .out_ready(strict_out_ready),
+        .out_addr(strict_out_addr), .out_cout_base(strict_out_cout_base),
+        .out_channel_valid(strict_out_channel_valid), .out_data(strict_out_data),
+        .full(strict_full), .almost_full(strict_almost_full)
+    );
+
     always #5 clk = ~clk;
 
     integer pass, fail;
-    integer i, lane, pop_count;
+    integer i, lane, pop_count, strict_pop_count;
 
     task push_packet;
         input integer id;
@@ -71,6 +100,37 @@ module tb_ofm_packet_fifo;
         end
     endtask
 
+    task strict_push_packet;
+        input integer id;
+        begin
+            @(negedge clk);
+            if (!strict_in_ready) begin
+                $display("[FAIL] strict_in_ready low before push%0d", id);
+                fail = fail + 1;
+            end
+            strict_in_valid = 1'b1;
+            strict_in_addr = id[ADDR_W-1:0];
+            strict_in_cout_base = 11'd16 + id[10:0];
+            strict_in_channel_valid = 8'hf0 | id[7:0];
+            for (lane = 0; lane < COUT_TILE; lane = lane + 1)
+                strict_in_data[lane*8 +: 8] = id*16 + lane;
+            @(negedge clk);
+            strict_in_valid = 1'b0;
+        end
+    endtask
+
+    task strict_drive_packet;
+        input integer id;
+        begin
+            strict_in_valid = 1'b1;
+            strict_in_addr = id[ADDR_W-1:0];
+            strict_in_cout_base = 11'd16 + id[10:0];
+            strict_in_channel_valid = 8'hf0 | id[7:0];
+            for (lane = 0; lane < COUT_TILE; lane = lane + 1)
+                strict_in_data[lane*8 +: 8] = id*16 + lane;
+        end
+    endtask
+
     always @(posedge clk) begin
         if (!rst && out_valid && out_ready) begin
             if (out_addr !== pop_count[ADDR_W-1:0] ||
@@ -95,6 +155,35 @@ module tb_ofm_packet_fifo;
         end
     end
 
+    always @(posedge clk) begin
+        if (!rst && strict_out_valid && strict_out_ready) begin
+            if (strict_out_addr !== strict_pop_count[ADDR_W-1:0] ||
+                strict_out_cout_base !== 11'd16 + strict_pop_count ||
+                strict_out_channel_valid !==
+                    (8'hf0 | strict_pop_count[7:0])) begin
+                $display("[FAIL] strict pop%0d metadata addr=%0d cout=%0d mask=%h",
+                    strict_pop_count, strict_out_addr,
+                    strict_out_cout_base, strict_out_channel_valid);
+                fail = fail + 1;
+            end else begin
+                pass = pass + 1;
+            end
+            for (lane = 0; lane < COUT_TILE; lane = lane + 1) begin
+                if (strict_out_data[lane*8 +: 8] !==
+                    (strict_pop_count*16 + lane)) begin
+                    $display("[FAIL] strict pop%0d lane%0d got=%0d exp=%0d",
+                        strict_pop_count, lane,
+                        strict_out_data[lane*8 +: 8],
+                        strict_pop_count*16 + lane);
+                    fail = fail + 1;
+                end else begin
+                    pass = pass + 1;
+                end
+            end
+            strict_pop_count <= strict_pop_count + 1;
+        end
+    end
+
     initial begin
         clk = 0;
         rst = 1;
@@ -104,9 +193,16 @@ module tb_ofm_packet_fifo;
         in_channel_valid = 0;
         in_data = 0;
         out_ready = 0;
+        strict_in_valid = 0;
+        strict_in_addr = 0;
+        strict_in_cout_base = 0;
+        strict_in_channel_valid = 0;
+        strict_in_data = 0;
+        strict_out_ready = 0;
         pass = 0;
         fail = 0;
         pop_count = 0;
+        strict_pop_count = 0;
 
         repeat (3) @(negedge clk);
         rst = 0;
@@ -158,6 +254,57 @@ module tb_ofm_packet_fifo;
         out_ready = 1'b0;
         if (out_valid !== 1'b0 || full !== 1'b0) begin
             $display("[FAIL] FIFO should drain after same-cycle stream valid=%0d full=%0d", out_valid, full);
+            fail = fail + 1;
+        end else pass = pass + 1;
+
+        for (i = 0; i < DEPTH; i = i + 1)
+            strict_push_packet(i);
+
+        if (!strict_full || strict_in_ready) begin
+            $display("[FAIL] conservative FIFO should be full full=%0d ready=%0d",
+                strict_full, strict_in_ready);
+            fail = fail + 1;
+        end else pass = pass + 1;
+
+        // A conservative full-credit boundary consumes the old head but does
+        // not accept a replacement until the registered pointer advances.
+        @(negedge clk);
+        strict_out_ready = 1'b1;
+        strict_drive_packet(DEPTH);
+        #1;
+        if (strict_in_ready || !strict_out_valid ||
+            strict_out_addr !== {ADDR_W{1'b0}}) begin
+            $display("[FAIL] conservative full pop accepted replacement ready=%0d valid=%0d addr=%0d",
+                strict_in_ready, strict_out_valid, strict_out_addr);
+            fail = fail + 1;
+        end else pass = pass + 1;
+
+        @(posedge clk);
+        #1;
+        if (strict_full || !strict_in_ready || strict_pop_count != 1) begin
+            $display("[FAIL] conservative credit did not recover full=%0d ready=%0d pops=%0d",
+                strict_full, strict_in_ready, strict_pop_count);
+            fail = fail + 1;
+        end else pass = pass + 1;
+
+        // The held packet is accepted together with the next pop because the
+        // FIFO is no longer full; occupancy and packet order remain exact.
+        @(posedge clk);
+        #1;
+        if (!strict_in_ready || strict_pop_count != 2) begin
+            $display("[FAIL] conservative non-full exchange failed ready=%0d pops=%0d",
+                strict_in_ready, strict_pop_count);
+            fail = fail + 1;
+        end else pass = pass + 1;
+        @(negedge clk);
+        strict_in_valid = 1'b0;
+
+        wait(strict_pop_count == DEPTH + 1);
+        @(negedge clk);
+        strict_out_ready = 1'b0;
+        if (strict_out_valid !== 1'b0 || strict_full !== 1'b0) begin
+            $display("[FAIL] conservative FIFO should drain valid=%0d full=%0d",
+                strict_out_valid, strict_full);
             fail = fail + 1;
         end else pass = pass + 1;
 

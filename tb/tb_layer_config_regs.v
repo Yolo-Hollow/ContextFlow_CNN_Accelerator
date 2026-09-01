@@ -1,13 +1,21 @@
 `timescale 1ns / 1ps
 
 module tb_layer_config_regs;
+`ifdef TB_ENABLE_COLUMN_PSUM
+    localparam TEST_ENABLE_COLUMN_PSUM = 1;
+`else
+    // Match the release configuration unless this experiment is explicitly
+    // requested at compile time.
+    localparam TEST_ENABLE_COLUMN_PSUM = 0;
+`endif
     reg clk, rst;
     reg cfg_wr_en;
-    reg [6:0] cfg_addr;
+    reg [7:0] cfg_addr;
     reg [31:0] cfg_wdata;
     reg cfg_rd_en;
     wire [31:0] cfg_rdata;
     reg layer_busy, layer_done;
+    reg external_config_error;
     reg perf_wait_bias, perf_wait_weight, perf_wait_ifm, perf_wait_ofm;
     reg perf_compute_fire;
     reg perf_stage_bias, perf_stage_weight, perf_stage_feeder;
@@ -65,6 +73,7 @@ module tb_layer_config_regs;
     reg [31:0] raw_hwc_replay_active_cycles;
     reg [31:0] raw_hwc_replay_wait_ready_cycles;
     wire start_pulse;
+    wire datapath_reset_active;
     wire [8:0] fm_h, fm_w, ofm_h, ofm_w;
     wire [1:0] conv_stride, conv_pad;
     wire kernel_1x1;
@@ -95,17 +104,26 @@ module tb_layer_config_regs;
     wire [7:0] pass_trace_cout_block;
     wire [15:0] pass_trace_k_pass;
     wire [4:0] col_trace_selected_col;
+    wire configured_layer_last;
+    wire [8:0] configured_tile_h_max;
+    wire [31:0] configured_ifm_total_bytes;
+    wire [31:0] configured_ofm_total_bytes;
     wire [31:0] tail_cycles_selected =
         {16'd0, (tail_cycles_config == 16'd0) ? 16'd138 : tail_cycles_config};
     wire config_error;
 
     layer_config_regs #(
-        .IFM_FIFO_DEPTH(64)
+        .IFM_FIFO_DEPTH(64),
+        .ENABLE_COLUMN_PSUM(TEST_ENABLE_COLUMN_PSUM),
+        .ENABLE_TAGGED_CONTEXT(1),
+        .ABI_FEATURE_FLAGS(8'h07),
+        .ROWS(18), .COLS(16), .COUT_TILE(32)
     ) dut (
         .clk(clk), .rst(rst),
         .cfg_wr_en(cfg_wr_en), .cfg_addr(cfg_addr), .cfg_wdata(cfg_wdata),
         .cfg_rd_en(cfg_rd_en), .cfg_rdata(cfg_rdata),
         .layer_busy(layer_busy), .layer_done(layer_done),
+        .external_config_error(external_config_error),
         .dbg_expected_bytes(32'd0), .dbg_core_wr_count(32'd0),
         .dbg_axis_wr_count(32'd0), .dbg_tlast_count(32'd0),
         .dbg_last_tlast_index(32'd0),
@@ -189,7 +207,41 @@ module tb_layer_config_regs;
         .raw_hwc_load_unpack_cycles(raw_hwc_load_unpack_cycles),
         .raw_hwc_replay_active_cycles(raw_hwc_replay_active_cycles),
         .raw_hwc_replay_wait_ready_cycles(raw_hwc_replay_wait_ready_cycles),
+        .packed_ofm_axis_byte_count(32'd1734616),
+        .packed_ofm_axis_stall_cycles(32'd1234),
+        .packed_ofm_protocol_error(1'b1),
+        .datapath_error_status(32'h0000_0005),
+        .context_alloc_count(32'd401),
+        .context_input_issued_count(32'd402),
+        .context_array_retired_count(32'd403),
+        .context_collector_done_count(32'd404),
+        .context_gap_cycles(32'd405),
+        .context_ifm_ownership_stall_cycles(32'd406),
+        .context_weight_ownership_stall_cycles(32'd407),
+        .context_psum_credit_stall_cycles(32'd408),
+        .context_epoch_mismatch_count(32'd409),
+        .context_mismatch_count(32'd410),
+        .context_ifm_underflow_count(32'd411),
+        .context_psum_underflow_count(32'd412),
+        .context_fifo_drop_count(32'd413),
+        .context_bank_overwrite_count(32'd414),
+        .context_full_stall_cycles(32'd415),
+        .compute_pipe_compute_gap_count(32'd601),
+        .compute_pipe_preload_commit_count(32'd602),
+        .compute_pipe_preload_hit_count(32'd603),
+        .compute_pipe_preload_miss_count(32'd604),
+        .compute_pipe_eligible_handoff_count(32'd605),
+        .compute_pipe_next_cycle_hit_count(32'd606),
+        .compute_pipe_extra_gap_count(32'd607),
+        .compute_pipe_wait_bank_retire_count(32'd608),
+        .compute_pipe_wait_weight_count(32'd609),
+        .compute_pipe_wait_ifm_count(32'd610),
+        .compute_pipe_wait_psum_count(32'd611),
+        .compute_pipe_wait_collector_output_count(32'd612),
+        .compute_pipe_wait_control_count(32'd613),
+        .compute_pipe_protocol_error_count(32'd614),
         .start_pulse(start_pulse),
+        .datapath_reset_active(datapath_reset_active),
         .fm_h(fm_h), .fm_w(fm_w), .ofm_h(ofm_h), .ofm_w(ofm_w),
         .conv_stride(conv_stride), .conv_pad(conv_pad), .kernel_1x1(kernel_1x1),
         .activation_mode(activation_mode),
@@ -216,6 +268,10 @@ module tb_layer_config_regs;
         .pass_trace_cout_block(pass_trace_cout_block),
         .pass_trace_k_pass(pass_trace_k_pass),
         .col_trace_selected_col(col_trace_selected_col),
+        .configured_layer_last(configured_layer_last),
+        .configured_tile_h_max(configured_tile_h_max),
+        .configured_ifm_total_bytes(configured_ifm_total_bytes),
+        .configured_ofm_total_bytes(configured_ofm_total_bytes),
         .config_error(config_error)
     );
 
@@ -223,16 +279,23 @@ module tb_layer_config_regs;
 
     integer pass, fail;
     integer start_pulse_count;
+    integer datapath_reset_active_cycles;
 
     always @(posedge clk) begin
-        if (rst)
+        if (rst) begin
             start_pulse_count <= 0;
-        else if (start_pulse)
-            start_pulse_count <= start_pulse_count + 1;
+            datapath_reset_active_cycles <= 0;
+        end else begin
+            if (start_pulse)
+                start_pulse_count <= start_pulse_count + 1;
+            if (datapath_reset_active)
+                datapath_reset_active_cycles <=
+                    datapath_reset_active_cycles + 1;
+        end
     end
 
     task write_reg;
-        input [6:0] addr;
+        input [7:0] addr;
         input [31:0] data;
         begin
             @(negedge clk);
@@ -265,6 +328,7 @@ module tb_layer_config_regs;
         cfg_rd_en = 0;
         layer_busy = 0;
         layer_done = 0;
+        external_config_error = 0;
         perf_wait_bias = 0;
         perf_wait_weight = 0;
         perf_wait_ifm = 0;
@@ -353,6 +417,22 @@ module tb_layer_config_regs;
         repeat (3) @(negedge clk);
         rst = 0;
 
+        check_value(configured_layer_last, 0, "reset layer_last");
+        check_value(configured_tile_h_max, 0, "reset tile_h_max output");
+        check_value(configured_ifm_total_bytes, 0,
+                    "reset IFM total output");
+        check_value(configured_ofm_total_bytes, 0,
+                    "reset OFM total output");
+        cfg_addr = 7'h7a;
+        #1;
+        check_value(cfg_rdata, 0, "reset layer descriptor");
+        cfg_addr = 7'h7b;
+        #1;
+        check_value(cfg_rdata, 0, "reset IFM total bytes");
+        cfg_addr = 7'h7c;
+        #1;
+        check_value(cfg_rdata, 0, "reset OFM total bytes");
+
         write_reg(6'h01, {7'd0, 9'd5, 7'd0, 9'd7});
         write_reg(6'h02, {7'd0, 9'd3, 7'd0, 9'd4});
         write_reg(6'h03, {22'd0, 2'd1, 6'd0, 2'd2});
@@ -371,6 +451,9 @@ module tb_layer_config_regs;
         write_reg(6'h38, {16'd64, 16'd96});
         write_reg(7'h59, {1'b1, 7'd0, 8'd3, 16'd11});
         write_reg(7'h6e, 32'd5);
+        write_reg(7'h7a, {1'b1, 22'd0, 9'h123});
+        write_reg(7'h7b, 32'h0022_5500);
+        write_reg(7'h7c, 32'h001a_77d8);
 
         check_value(fm_h, 7, "fm_h");
         check_value(fm_w, 5, "fm_w");
@@ -394,7 +477,14 @@ module tb_layer_config_regs;
         check_value(pass_prefetch_enable, 1, "pass prefetch enable");
         check_value(psum_stream_overlap_enable, 1, "psum stream overlap enable");
         check_value(continuous_psum_enable, 1, "continuous psum enable");
-        check_value(column_psum_enable, 1, "column psum enable");
+        check_value(column_psum_enable, TEST_ENABLE_COLUMN_PSUM,
+                    "column psum compile-time gate");
+        check_value(config_error, TEST_ENABLE_COLUMN_PSUM ? 0 : 1,
+                    "unsupported column psum request status");
+        cfg_addr = 7'h19;
+        #1;
+        check_value({31'd0, cfg_rdata[6]}, TEST_ENABLE_COLUMN_PSUM,
+                    "column psum sanitized readback");
         check_value(during_compute_prefetch_enable, 1, "during compute prefetch enable");
         check_value(stream_bias_packets, 7, "stream bias packets");
         check_value(stream_weight_packets, 11, "stream weight packets");
@@ -405,6 +495,22 @@ module tb_layer_config_regs;
         check_value(pass_trace_cout_block, 3, "pass trace cout block");
         check_value(pass_trace_k_pass, 11, "pass trace k pass");
         check_value(col_trace_selected_col, 5, "column trace selected col");
+        check_value(configured_layer_last, 1, "layer descriptor last output");
+        check_value(configured_tile_h_max, 9'h123,
+                    "layer descriptor tile_h output");
+        check_value(configured_ifm_total_bytes, 32'h0022_5500,
+                    "IFM total bytes output");
+        check_value(configured_ofm_total_bytes, 32'h001a_77d8,
+                    "OFM total bytes output");
+        cfg_addr = 7'h7a;
+        #1;
+        check_value(cfg_rdata, 32'h8000_0123, "layer descriptor readback");
+        cfg_addr = 7'h7b;
+        #1;
+        check_value(cfg_rdata, 32'h0022_5500, "IFM total bytes readback");
+        cfg_addr = 7'h7c;
+        #1;
+        check_value(cfg_rdata, 32'h001a_77d8, "OFM total bytes readback");
         cfg_addr = 6'h1d;
         #1;
         check_value(cfg_rdata, 7, "stream bias completed");
@@ -775,6 +881,118 @@ module tb_layer_config_regs;
         cfg_addr = 7'h76;
         #1;
         check_value(cfg_rdata, 1, "coltrace version");
+        cfg_addr = 7'h77;
+        #1;
+        check_value(cfg_rdata, 2, "accelerator ABI version");
+        cfg_addr = 7'h78;
+        #1;
+        check_value(cfg_rdata, 32'h0f20_1012,
+                    "18x16 COUT32 tagged-context capability");
+        cfg_addr = 7'h7d;
+        #1;
+        check_value(cfg_rdata, 32'd1734616,
+                    "packed OFM AXIS byte count");
+        cfg_addr = 7'h7e;
+        #1;
+        check_value(cfg_rdata, 32'd1234,
+                    "packed OFM AXIS stall cycles");
+        cfg_addr = 7'h7f;
+        #1;
+        check_value(cfg_rdata, 32'h8000_0005,
+                    "datapath and packed OFM protocol error status");
+        cfg_addr = 8'h80;
+        #1;
+        check_value(cfg_rdata, 2, "context telemetry version");
+        cfg_addr = 8'h81;
+        #1;
+        check_value(cfg_rdata, 401, "context alloc count");
+        cfg_addr = 8'h82;
+        #1;
+        check_value(cfg_rdata, 402, "context input-issued count");
+        cfg_addr = 8'h83;
+        #1;
+        check_value(cfg_rdata, 403, "context array-retired count");
+        cfg_addr = 8'h84;
+        #1;
+        check_value(cfg_rdata, 404, "context collector-done count");
+        cfg_addr = 8'h85;
+        #1;
+        check_value(cfg_rdata, 405, "context gap cycles");
+        cfg_addr = 8'h86;
+        #1;
+        check_value(cfg_rdata, 406, "context IFM ownership stalls");
+        cfg_addr = 8'h87;
+        #1;
+        check_value(cfg_rdata, 407, "context weight ownership stalls");
+        cfg_addr = 8'h88;
+        #1;
+        check_value(cfg_rdata, 408, "context PSUM credit stalls");
+        cfg_addr = 8'h89;
+        #1;
+        check_value(cfg_rdata, 409, "context epoch mismatches");
+        cfg_addr = 8'h8a;
+        #1;
+        check_value(cfg_rdata, 410, "context descriptor mismatches");
+        cfg_addr = 8'h8b;
+        #1;
+        check_value(cfg_rdata, 411, "context IFM underflows");
+        cfg_addr = 8'h8c;
+        #1;
+        check_value(cfg_rdata, 412, "context PSUM underflows");
+        cfg_addr = 8'h8d;
+        #1;
+        check_value(cfg_rdata, 413, "context FIFO drops");
+        cfg_addr = 8'h8e;
+        #1;
+        check_value(cfg_rdata, 414, "context bank overwrites");
+        cfg_addr = 8'h8f;
+        #1;
+        check_value(cfg_rdata, 415, "context-full stall cycles");
+        cfg_addr = 8'h91;
+        #1;
+        check_value(cfg_rdata, 1, "compute-pipe telemetry version");
+        cfg_addr = 8'h92;
+        #1;
+        check_value(cfg_rdata, 601, "compute-pipe compute gaps");
+        cfg_addr = 8'h93;
+        #1;
+        check_value(cfg_rdata, 602, "compute-pipe preload commits");
+        cfg_addr = 8'h94;
+        #1;
+        check_value(cfg_rdata, 603, "compute-pipe preload hits");
+        cfg_addr = 8'h95;
+        #1;
+        check_value(cfg_rdata, 604, "compute-pipe preload misses");
+        cfg_addr = 8'h96;
+        #1;
+        check_value(cfg_rdata, 605, "compute-pipe eligible handoffs");
+        cfg_addr = 8'h97;
+        #1;
+        check_value(cfg_rdata, 606, "compute-pipe next-cycle hits");
+        cfg_addr = 8'h98;
+        #1;
+        check_value(cfg_rdata, 607, "compute-pipe extra gaps");
+        cfg_addr = 8'h99;
+        #1;
+        check_value(cfg_rdata, 608, "compute-pipe bank-retire waits");
+        cfg_addr = 8'h9a;
+        #1;
+        check_value(cfg_rdata, 609, "compute-pipe weight waits");
+        cfg_addr = 8'h9b;
+        #1;
+        check_value(cfg_rdata, 610, "compute-pipe IFM waits");
+        cfg_addr = 8'h9c;
+        #1;
+        check_value(cfg_rdata, 611, "compute-pipe PSUM waits");
+        cfg_addr = 8'h9d;
+        #1;
+        check_value(cfg_rdata, 612, "compute-pipe collector/output waits");
+        cfg_addr = 8'h9e;
+        #1;
+        check_value(cfg_rdata, 613, "compute-pipe control waits");
+        cfg_addr = 8'h9f;
+        #1;
+        check_value(cfg_rdata, 614, "compute-pipe protocol errors");
 
         @(negedge clk);
         layer_done = 1'b1;
@@ -782,6 +1000,9 @@ module tb_layer_config_regs;
         @(posedge clk);
         #1;
         layer_done = 1'b0;
+        cfg_addr = 7'h79;
+        #1;
+        check_value(cfg_rdata, 1, "unclassified busy cycle");
         cfg_addr = 6'h00;
         #1;
         if (cfg_rdata[1:0] !== 2'b11) begin
@@ -809,6 +1030,9 @@ module tb_layer_config_regs;
         write_reg(6'h1c, 32'd99);
         write_reg(6'h38, 32'd99);
         write_reg(7'h6e, 32'd7);
+        write_reg(7'h7a, {1'b0, 22'd0, 9'd99});
+        write_reg(7'h7b, 32'd99);
+        write_reg(7'h7c, 32'd100);
         check_value(fm_h, 7, "busy freeze fm_h");
         check_value(fm_w, 5, "busy freeze fm_w");
         check_value(k_total, 9216, "busy freeze k_total");
@@ -825,7 +1049,8 @@ module tb_layer_config_regs;
         check_value(pass_prefetch_enable, 1, "busy freeze pass prefetch mode");
         check_value(psum_stream_overlap_enable, 1, "busy freeze psum overlap mode");
         check_value(continuous_psum_enable, 1, "busy freeze continuous psum mode");
-        check_value(column_psum_enable, 1, "busy freeze column psum mode");
+        check_value(column_psum_enable, TEST_ENABLE_COLUMN_PSUM,
+                    "busy freeze column psum mode");
         check_value(during_compute_prefetch_enable, 1, "busy freeze during compute prefetch");
         check_value(stream_bias_packets, 7, "busy freeze bias packets");
         check_value(stream_weight_packets, 11, "busy freeze weight packets");
@@ -836,6 +1061,22 @@ module tb_layer_config_regs;
         check_value(pass_trace_cout_block, 3, "busy freeze pass trace cout");
         check_value(pass_trace_k_pass, 11, "busy freeze pass trace k");
         check_value(col_trace_selected_col, 5, "busy freeze column trace");
+        check_value(configured_layer_last, 1, "busy freeze layer_last");
+        check_value(configured_tile_h_max, 9'h123,
+                    "busy freeze tile_h_max output");
+        check_value(configured_ifm_total_bytes, 32'h0022_5500,
+                    "busy freeze IFM total output");
+        check_value(configured_ofm_total_bytes, 32'h001a_77d8,
+                    "busy freeze OFM total output");
+        cfg_addr = 7'h7a;
+        #1;
+        check_value(cfg_rdata, 32'h8000_0123, "busy freeze layer descriptor");
+        cfg_addr = 7'h7b;
+        #1;
+        check_value(cfg_rdata, 32'h0022_5500, "busy freeze IFM total bytes");
+        cfg_addr = 7'h7c;
+        #1;
+        check_value(cfg_rdata, 32'h001a_77d8, "busy freeze OFM total bytes");
 
         write_reg(6'h00, 32'd1);
         repeat (2) @(negedge clk);
@@ -889,6 +1130,18 @@ module tb_layer_config_regs;
         check_value(kernel_1x1, 1, "native 1x1 mode");
         check_value(config_error, 0, "native 1x1 valid config no error");
 
+        @(negedge clk);
+        external_config_error = 1'b1;
+        @(negedge clk);
+        external_config_error = 1'b0;
+        cfg_addr = 7'h00;
+        #1;
+        check_value(cfg_rdata[2], 1,
+                    "external sequencer config error reaches CTRL");
+        check_value(cfg_rdata[1], 1,
+                    "rejected sequencer start terminates with done");
+        write_reg(7'h00, 32'd2);
+
         cfg_addr = 6'h24;
         #1;
         check_value(cfg_rdata, 17, "vector packet counter");
@@ -913,6 +1166,50 @@ module tb_layer_config_regs;
         cfg_addr = 6'h3f;
         #1;
         check_value(cfg_rdata, 43, "raw replay wait-ready counter");
+
+        // Software datapath reset is recoverable and does not destroy the
+        // programmed layer descriptor.  Request start and reset together to
+        // prove reset priority explicitly.
+        layer_busy = 1'b0;
+        cfg_addr = 8'h90;
+        #1;
+        check_value(cfg_rdata, 0, "initial datapath reset count");
+        write_reg(8'h00, 32'h0000_0005);
+        #1;
+        check_value(datapath_reset_active, 1,
+                    "datapath reset becomes active");
+        cfg_addr = 8'h00;
+        #1;
+        check_value(cfg_rdata[3], 1, "CTRL reports reset active");
+        check_value(start_pulse_count, 3,
+                    "datapath reset wins over simultaneous start");
+        // Writes to configuration registers are locked while reset is live.
+        write_reg(8'h01, {7'd0, 9'd55, 7'd0, 9'd44});
+        check_value(fm_h, 8, "soft reset preserves fm_h");
+        check_value(fm_w, 9, "soft reset preserves fm_w");
+        wait (!datapath_reset_active);
+        @(negedge clk);
+        check_value(datapath_reset_active_cycles, 4,
+                    "datapath reset active for four PL cycles");
+        cfg_addr = 8'h90;
+        #1;
+        check_value(cfg_rdata, 1, "datapath reset count increments");
+        cfg_addr = 8'h00;
+        #1;
+        check_value(cfg_rdata[3:1], 3'b000,
+                    "soft reset clears done and config error");
+        cfg_addr = 8'h12;
+        #1;
+        check_value(cfg_rdata, 0, "soft reset clears busy counter");
+        cfg_addr = 8'h2a;
+        #1;
+        check_value(cfg_rdata, 0, "soft reset clears feeder counter");
+
+        // The preserved valid descriptor can start normally after recovery.
+        write_reg(8'h00, 32'h0000_0001);
+        repeat (2) @(negedge clk);
+        check_value(start_pulse_count, 4,
+                    "start accepted after datapath reset");
 
         $display("=== tb_layer_config_regs: %0d pass, %0d fail ===", pass, fail);
         if (fail != 0) $fatal(1);

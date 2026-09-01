@@ -34,11 +34,11 @@
 `define TB_CONV_ACCEL_CORE_QUANT_SHIFT 4'd7
 `define TB_CONV_ACCEL_CORE_QUANT_ZP 8'd75
 `define TB_CONV_ACCEL_CORE_ACT_MODE 2
-`define TB_CONV_ACCEL_CORE_IFM_MEM "D:/MPSoC/python_prj/rtl_golden/facemask_layer06_rtl/xsim_mem/ifm_u8_hwc.mem"
-`define TB_CONV_ACCEL_CORE_WEIGHT_MEM "D:/MPSoC/python_prj/rtl_golden/facemask_layer06_rtl/xsim_mem/weight_kco_s8.mem"
-`define TB_CONV_ACCEL_CORE_BIAS_MEM "D:/MPSoC/python_prj/rtl_golden/facemask_layer06_rtl/xsim_mem/bias_i32.mem"
-`define TB_CONV_ACCEL_CORE_ACT_LUT_MEM "D:/MPSoC/python_prj/rtl_golden/facemask_layer06_rtl/xsim_mem/activation_lut_u8.mem"
-`define TB_CONV_ACCEL_CORE_GOLDEN_MEM "D:/MPSoC/python_prj/rtl_golden/facemask_layer06_rtl/xsim_mem/golden_ofm_u8_hwc.mem"
+`define TB_CONV_ACCEL_CORE_IFM_MEM "../../../fixtures/03_conv3_pool/ifm_u8_hwc.mem"
+`define TB_CONV_ACCEL_CORE_WEIGHT_MEM "../../../fixtures/03_conv3_pool/weight_kco_s8.mem"
+`define TB_CONV_ACCEL_CORE_BIAS_MEM "../../../fixtures/03_conv3_pool/bias_i32.mem"
+`define TB_CONV_ACCEL_CORE_ACT_LUT_MEM "../../../fixtures/03_conv3_pool/activation_lut_u8.mem"
+`define TB_CONV_ACCEL_CORE_GOLDEN_MEM "../../../fixtures/03_conv3_pool/golden_ofm_u8_hwc.mem"
 `define TB_CONV_ACCEL_CORE_TIMEOUT 12000000
 
 `include "tb_conv_accel_core_realistic_small.v"

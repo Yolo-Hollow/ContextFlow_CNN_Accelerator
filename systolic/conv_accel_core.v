@@ -17,6 +17,7 @@
 `endif
 
 module conv_accel_core #(
+    parameter integer CLOCK_HZ = 100000000,
     parameter ROWS = 32,
     parameter COLS = 32,
     parameter IFM_W = 8,
@@ -43,13 +44,27 @@ module conv_accel_core #(
     parameter OFM_FIFO_DEPTH = 32,
     parameter OFM_FIFO_AW = 5,
     parameter TAIL_CYCLES_CONFIG = `SYSTOLIC_TAIL_CYCLES_CONFIG,
-    parameter [15:0] RAW_HWC_COMPUTE_START_LEVEL = 16'd0
+    parameter [15:0] RAW_HWC_COMPUTE_START_LEVEL = 16'd0,
+    parameter ENABLE_COLUMN_PSUM = 0,
+    parameter ENABLE_PACKED_HWC_OFM = 0,
+    parameter ENABLE_LAYER_TILE_SEQUENCER = 0,
+    parameter ENABLE_LAYER_LONG_HWC_IFM = 0,
+    parameter ENABLE_TAGGED_CONTEXT = 0,
+    parameter ENABLE_WEIGHT_PRELOAD = 0,
+    parameter ENABLE_FAST_CONTEXT_HANDOFF = 0,
+    parameter IFM_EPOCH_USE_URAM = 0,
+    parameter ENABLE_DETAILED_TRACE = 1,
+    parameter MATERIALIZED_CACHE_DEPTH = 32768,
+    parameter integer LAYER_LONG_LINE_BANK_DEPTH = 2048,
+    parameter PACKED_OFM_BUFFER_DEPTH = 4096
 ) (
     input  clk,
     input  rst,
+    input  tile_start_ready,
+    input  tile_retire_ready,
 
     input         cfg_wr_en,
-    input  [6:0]  cfg_addr,
+    input  [7:0]  cfg_addr,
     input  [31:0] cfg_wdata,
     input         cfg_rd_en,
     output [31:0] cfg_rdata,
@@ -59,12 +74,14 @@ module conv_accel_core #(
     output [10:0] current_cout_base,
     output [13:0] current_pass_base_k,
     output [13:0] current_feeder_pass_base_k,
+    output [15:0] current_feeder_k_pass,
     output [10:0] configured_cout_total,
     output [13:0] configured_k_total,
     output [15:0] configured_num_pixels,
     output [7:0]  configured_input_zero_point,
     output [8:0]  configured_fm_h,
     output [8:0]  configured_fm_w,
+    output [8:0]  configured_ofm_h,
     output [8:0]  configured_ofm_w,
     output [8:0]  configured_tile_oy_base,
     output [8:0]  configured_tile_ofm_h,
@@ -80,11 +97,37 @@ module conv_accel_core #(
     output [31:0] configured_stream_weight_packets,
     output [31:0] configured_stream_ifm_packets,
     output        configured_stream_reset,
+    output        configured_datapath_reset,
+    output        configured_layer_last,
+    output [8:0]  configured_tile_h_max,
+    output [31:0] configured_ifm_total_bytes,
+    output [31:0] configured_ofm_total_bytes,
+    output [13:0] validated_long_cin,
+    output [15:0] validated_long_pass_count,
+    output [15:0] validated_long_final_pass,
+    output [ROWS-1:0] validated_long_final_lane_mask,
+    output [31:0] validated_long_layer_pixels,
+    output [31:0] validated_long_tile_pixels,
+    output [31:0] validated_long_tile_output_pixels,
+    output [15:0] validated_long_cout_blocks,
+    output        active_tile_start,
+    output        active_tile_last,
+    output [8:0]  active_tile_oy_base,
+    output [8:0]  active_tile_ofm_h,
+    output [15:0] active_tile_num_pixels,
+    output [15:0] active_tile_output_pixels,
+    output [23:0] active_tile_output_pixel_base,
+    output [15:0] active_tile_index,
+    output        active_tile_done,
     input  [31:0] debug_expected_bytes,
     input  [31:0] debug_core_wr_count,
     input  [31:0] debug_axis_wr_count,
     input  [31:0] debug_tlast_count,
     input  [31:0] debug_last_tlast_index,
+    input  [31:0] debug_packed_ofm_axis_byte_count,
+    input  [31:0] debug_packed_ofm_axis_stall_cycles,
+    input         debug_packed_ofm_protocol_error,
+    input  [31:0] external_datapath_error_status,
     input  [31:0] stream_bias_completed,
     input  [31:0] stream_weight_completed,
     input  [31:0] stream_ifm_completed,
@@ -137,11 +180,29 @@ module conv_accel_core #(
     input                       ofm_mem_wr_ready,
     output [OFM_ADDR_W-1:0]     ofm_mem_wr_addr,
     output [7:0]                ofm_mem_wr_data,
-    output                      ofm_packet_full
+    output                      ofm_packet_full,
+
+    output                      packed_ofm_packet_valid,
+    input                       packed_ofm_packet_ready,
+    output [PSUM_BUF_AW-1:0]    packed_ofm_packet_pixel,
+    output [10:0]               packed_ofm_packet_cout_base,
+    output [COLS*2-1:0]         packed_ofm_packet_channel_valid,
+    output [COLS*2*8-1:0]       packed_ofm_packet_data,
+    input                       packed_ofm_busy
 );
     wire start_pulse;
+    wire datapath_reset_active;
+    wire datapath_rst = rst || datapath_reset_active;
     wire layer_busy;
     wire layer_done;
+    wire tile_engine_busy;
+    wire tile_engine_done;
+    reg tile_retire_pending;
+    wire tile_retire_ready_effective =
+        (ENABLE_LAYER_LONG_HWC_IFM != 0) ? tile_retire_ready : 1'b1;
+    wire tile_retire_fire =
+        (tile_engine_done || tile_retire_pending) &&
+        tile_retire_ready_effective;
     wire layer_compute_fire;
     wire perf_stage_bias;
     wire perf_stage_weight;
@@ -209,6 +270,56 @@ module conv_accel_core #(
     wire [31:0] col_trace_missing_mask_first;
     wire [31:0] col_trace_missing_mask_last;
     wire col_trace_valid;
+    wire [31:0] datapath_error_status;
+    wire [31:0] tile_engine_datapath_error_status;
+    wire [31:0] context_alloc_count;
+    wire [31:0] context_input_issued_count;
+    wire [31:0] context_array_retired_count;
+    wire [31:0] context_collector_done_count;
+    wire [31:0] context_gap_cycles;
+    wire [31:0] context_ifm_ownership_stall_cycles;
+    wire [31:0] context_weight_ownership_stall_cycles;
+    wire [31:0] context_psum_credit_stall_cycles;
+    wire [31:0] context_epoch_mismatch_count;
+    wire [31:0] context_mismatch_count;
+    // The aggregate mismatch counter is telemetry only.  Register it at the
+    // configuration boundary so the frontend's event/count cone cannot run
+    // directly into the wide AXI-Lite readback mux.  Software observes the
+    // same monotonic value with a one-clock diagnostic latency.
+    reg [31:0] context_mismatch_count_readback_q;
+    wire [31:0] context_ifm_underflow_count;
+    wire [31:0] context_psum_underflow_count;
+    wire [31:0] context_fifo_drop_count;
+    wire [31:0] context_bank_overwrite_count;
+    wire [31:0] context_full_stall_cycles;
+    wire [31:0] compute_pipe_compute_gap_count;
+    wire [31:0] compute_pipe_preload_commit_count;
+    wire [31:0] compute_pipe_preload_hit_count;
+    wire [31:0] compute_pipe_preload_miss_count;
+    wire [31:0] compute_pipe_eligible_handoff_count;
+    wire [31:0] compute_pipe_next_cycle_hit_count;
+    wire [31:0] compute_pipe_extra_gap_count;
+    wire [31:0] compute_pipe_wait_bank_retire_count;
+    wire [31:0] compute_pipe_wait_weight_count;
+    wire [31:0] compute_pipe_wait_ifm_count;
+    wire [31:0] compute_pipe_wait_psum_count;
+    wire [31:0] compute_pipe_wait_collector_output_count;
+    wire [31:0] compute_pipe_wait_control_count;
+    wire [31:0] compute_pipe_protocol_error_count;
+    // Keep the ABI-v2 telemetry deterministic in legacy builds.  Several
+    // non-AXIS wrappers intentionally omit these packed-only debug pins.
+    wire [31:0] packed_ofm_axis_byte_count_visible =
+        (ENABLE_PACKED_HWC_OFM != 0) ?
+        debug_packed_ofm_axis_byte_count : 32'd0;
+    wire [31:0] packed_ofm_axis_stall_cycles_visible =
+        (ENABLE_PACKED_HWC_OFM != 0) ?
+        debug_packed_ofm_axis_stall_cycles : 32'd0;
+    wire packed_ofm_protocol_error_visible =
+        (ENABLE_PACKED_HWC_OFM != 0) ?
+        debug_packed_ofm_protocol_error : 1'b0;
+    wire [31:0] external_datapath_error_status_visible =
+        (ENABLE_LAYER_LONG_HWC_IFM != 0) ?
+        external_datapath_error_status : 32'd0;
     wire pass_trace_enable;
     wire [7:0] pass_trace_cout_block;
     wire [15:0] pass_trace_k_pass;
@@ -249,31 +360,57 @@ module conv_accel_core #(
     reg [31:0] raw_hwc_replay_active_cycles_q;
     wire raw_hwc_replay_active_event =
         raw_hwc_replay_active_cycles != raw_hwc_replay_active_cycles_q;
-    wire [OFM_ADDR_W-1:0] tile_pixel_base_ext = tile_pixel_base[OFM_ADDR_W-1:0];
     wire [COLS*2*MULT_W-1:0] quant_mult_flat;
     wire [COLS*2*SHIFT_W-1:0] quant_shift_flat;
     wire [COLS*2*ZP_W-1:0] quant_zp_flat;
     reg [5:0] cfg_quant_addr;
     reg [7:0] cfg_lut_addr;
-    reg [31:0] quant_shadow [0:COLS*2-1];
-    reg [7:0] lut_shadow [0:255];
     wire cfg_quant_wr_en = cfg_wr_en && (cfg_addr == 7'h21);
     wire cfg_lut_wr_en = cfg_wr_en && (cfg_addr == 7'h23);
     wire merged_quant_wr_en = cfg_quant_wr_en || quant_wr_en;
     wire [5:0] merged_quant_wr_addr = cfg_quant_wr_en ? cfg_quant_addr : quant_wr_addr;
     wire [31:0] merged_quant_wr_data = cfg_quant_wr_en ? cfg_wdata : quant_wr_data;
     wire [31:0] quant_rd_data_int;
+    wire [MULT_W-1:0] cfg_quant_mult =
+        quant_mult_flat[cfg_quant_addr*MULT_W +: MULT_W];
+    wire [SHIFT_W-1:0] cfg_quant_shift =
+        quant_shift_flat[cfg_quant_addr*SHIFT_W +: SHIFT_W];
+    wire [ZP_W-1:0] cfg_quant_zp =
+        quant_zp_flat[cfg_quant_addr*ZP_W +: ZP_W];
+    wire [31:0] cfg_quant_rd_data = {
+        cfg_quant_zp, 4'd0, cfg_quant_shift, cfg_quant_mult
+    };
     wire merged_act_lut_wr_en = cfg_lut_wr_en || act_lut_wr_en;
     wire [7:0] merged_act_lut_wr_addr = cfg_lut_wr_en ? cfg_lut_addr : act_lut_wr_addr;
     wire [7:0] merged_act_lut_wr_data = cfg_lut_wr_en ? cfg_wdata[7:0] : act_lut_wr_data;
+    wire [7:0] actual_act_lut_rd_data;
 
-    integer lut_i;
+    // The compute engine reports a one-cycle done pulse.  A layer-long cache
+    // release may take arbitrarily many cycles, so retain the retirement
+    // request until its owner-scoreboard handshake completes.  Legacy builds
+    // use a constant-ready path and preserve same-cycle completion.
+    always @(posedge clk) begin
+        if (datapath_rst) begin
+            tile_retire_pending <= 1'b0;
+        end else if (tile_retire_fire) begin
+            tile_retire_pending <= 1'b0;
+        end else if (tile_engine_done) begin
+            tile_retire_pending <= 1'b1;
+        end
+    end
 
     always @(posedge clk) begin
-        if (rst)
+        if (datapath_rst)
             raw_hwc_replay_active_cycles_q <= 32'd0;
         else
             raw_hwc_replay_active_cycles_q <= raw_hwc_replay_active_cycles;
+    end
+
+    always @(posedge clk) begin
+        if (datapath_rst)
+            context_mismatch_count_readback_q <= 32'd0;
+        else
+            context_mismatch_count_readback_q <= context_mismatch_count;
     end
 
     assign configured_cout_total = cout_total;
@@ -282,6 +419,7 @@ module conv_accel_core #(
     assign configured_input_zero_point = input_zero_point;
     assign configured_fm_h = fm_h;
     assign configured_fm_w = fm_w;
+    assign configured_ofm_h = ofm_h;
     assign configured_ofm_w = ofm_w;
     assign configured_tile_oy_base = tile_oy_base;
     assign configured_tile_ofm_h = tile_ofm_h;
@@ -297,42 +435,210 @@ module conv_accel_core #(
     assign configured_stream_weight_packets = stream_weight_packets;
     assign configured_stream_ifm_packets = stream_ifm_packets;
     assign configured_stream_reset = start_pulse;
-    assign configured_config_error = config_error;
+    assign configured_datapath_reset = datapath_reset_active;
+    wire sequenced_layer_busy;
+    wire sequenced_layer_done;
+    wire sequenced_tile_start;
+    wire sequenced_tile_last;
+    wire [8:0] sequenced_tile_oy_base;
+    wire [8:0] sequenced_tile_ofm_h;
+    wire [15:0] sequenced_tile_num_pixels;
+    wire [15:0] sequenced_tile_output_pixels;
+    wire [23:0] sequenced_tile_output_pixel_base;
+    wire [15:0] sequenced_tile_index;
+    wire [OFM_ADDR_W-1:0] sequenced_tile_pixel_base_ext =
+        sequenced_tile_output_pixel_base[OFM_ADDR_W-1:0];
+    wire sequencer_config_error;
+    wire sequencer_protocol_error;
+    wire [8:0] legacy_tile_h =
+        (tile_ofm_h != 9'd0) ? tile_ofm_h : ofm_h;
+    wire [17:0] legacy_pool_pixels_math =
+        legacy_tile_h[8:1] * ofm_w[8:1];
+    wire [15:0] legacy_tile_output_pixels =
+        pool_enable && (pool_stride == 2'd2) ?
+        legacy_pool_pixels_math[15:0] : num_pixels;
+
+    generate
+        if (ENABLE_LAYER_TILE_SEQUENCER != 0) begin : g_layer_tiles
+            wire [31:0] tile_start_count_unused;
+            wire [31:0] tile_done_count_unused;
+
+            layer_tile_sequencer #(
+                .MAX_TILE_PIXELS(PSUM_BUF_DEPTH),
+                .COUT_TILE(COLS*2),
+                .MAX_PACKED_ENTRIES(4096),
+                .CFG_PREVALIDATED(ENABLE_LAYER_LONG_HWC_IFM != 0)
+            ) u_tile_sequencer (
+                .clk(clk), .rst(datapath_rst), .layer_start(start_pulse),
+                .cfg_ofm_h(ofm_h), .cfg_ofm_w(ofm_w),
+                .cfg_tile_h_max(configured_tile_h_max),
+                .cfg_cout_total(cout_total),
+                .cfg_pool_enable(pool_enable),
+                .cfg_pool_stride(pool_stride),
+                .cfg_prevalidated_tile_h(configured_tile_h_max),
+                .cfg_prevalidated_tile_pixels(
+                    validated_long_tile_pixels[15:0]),
+                .cfg_prevalidated_tile_output_pixels(
+                    validated_long_tile_output_pixels[15:0]),
+                .cfg_prevalidated_cout_blocks(
+                    validated_long_cout_blocks),
+                .layer_busy(sequenced_layer_busy),
+                .layer_done(sequenced_layer_done),
+                .tile_start(sequenced_tile_start),
+                .tile_start_ready(tile_start_ready),
+                .tile_done(tile_retire_fire),
+                .tile_oy_base(sequenced_tile_oy_base),
+                .tile_ofm_h(sequenced_tile_ofm_h),
+                .tile_num_pixels(sequenced_tile_num_pixels),
+                .tile_output_pixels(sequenced_tile_output_pixels),
+                .tile_output_pixel_base(
+                    sequenced_tile_output_pixel_base),
+                .tile_last(sequenced_tile_last),
+                .tile_index(sequenced_tile_index),
+                .config_error(sequencer_config_error),
+                .protocol_error(sequencer_protocol_error),
+                .tile_start_count(tile_start_count_unused),
+                .tile_done_count(tile_done_count_unused)
+            );
+        end else begin : g_single_tile_legacy
+            assign sequenced_layer_busy = tile_engine_busy;
+            assign sequenced_layer_done = tile_retire_fire;
+            assign sequenced_tile_start = start_pulse;
+            assign sequenced_tile_last = configured_layer_last;
+            assign sequenced_tile_oy_base = tile_oy_base;
+            assign sequenced_tile_ofm_h = legacy_tile_h;
+            assign sequenced_tile_num_pixels = num_pixels;
+            assign sequenced_tile_output_pixels =
+                legacy_tile_output_pixels;
+            assign sequenced_tile_output_pixel_base = tile_pixel_base;
+            assign sequenced_tile_index = 16'd0;
+            assign sequencer_config_error = 1'b0;
+            assign sequencer_protocol_error = 1'b0;
+        end
+    endgenerate
+
+    assign layer_busy = sequenced_layer_busy;
+    assign layer_done = sequenced_layer_done;
+    assign active_tile_start = sequenced_tile_start;
+    assign active_tile_last = sequenced_tile_last;
+    assign active_tile_oy_base = sequenced_tile_oy_base;
+    assign active_tile_ofm_h = sequenced_tile_ofm_h;
+    assign active_tile_num_pixels = sequenced_tile_num_pixels;
+    assign active_tile_output_pixels = sequenced_tile_output_pixels;
+    assign active_tile_output_pixel_base =
+        sequenced_tile_output_pixel_base;
+    assign active_tile_index = sequenced_tile_index;
+    assign active_tile_done = tile_engine_done;
+    assign configured_config_error = config_error ||
+                                     sequencer_config_error ||
+                                     sequencer_protocol_error;
+    assign datapath_error_status = tile_engine_datapath_error_status |
+        {2'b00, sequencer_protocol_error, sequencer_config_error, 28'd0} |
+        external_datapath_error_status_visible;
     assign quant_rd_data = quant_rd_data_int;
     assign cfg_rdata = (cfg_addr == 7'h20) ? {26'd0, cfg_quant_addr} :
-                       (cfg_addr == 7'h21) ? quant_shadow[cfg_quant_addr] :
+                       (cfg_addr == 7'h21) ? cfg_quant_rd_data :
                        (cfg_addr == 7'h22) ? {24'd0, cfg_lut_addr} :
-                       (cfg_addr == 7'h23) ? {24'd0, lut_shadow[cfg_lut_addr]} :
+                       (cfg_addr == 7'h23) ? {24'd0, actual_act_lut_rd_data} :
                        layer_cfg_rdata;
 
     always @(posedge clk) begin
         if (rst) begin
             cfg_quant_addr <= 6'd0;
             cfg_lut_addr <= 8'd0;
-            for (lut_i = 0; lut_i < COLS*2; lut_i = lut_i + 1)
-                quant_shadow[lut_i] <= {8'd0, 4'd0, {SHIFT_W{1'b0}}, {{(MULT_W-1){1'b0}}, 1'b1}};
-            for (lut_i = 0; lut_i < 256; lut_i = lut_i + 1)
-                lut_shadow[lut_i] <= lut_i[7:0];
         end else begin
             if (cfg_wr_en && cfg_addr == 7'h20)
                 cfg_quant_addr <= cfg_wdata[5:0];
             if (cfg_wr_en && cfg_addr == 7'h22)
                 cfg_lut_addr <= cfg_wdata[7:0];
-            if (merged_quant_wr_en)
-                quant_shadow[merged_quant_wr_addr] <= merged_quant_wr_data;
-            if (merged_act_lut_wr_en)
-                lut_shadow[merged_act_lut_wr_addr] <= merged_act_lut_wr_data;
         end
     end
 
+    // Keep the new telemetry truthful while the optimized datapath event
+    // interface is being integrated.  The compute-stage gap has an existing,
+    // exact cycle-level definition.  The remaining events require explicit
+    // pulses from the weight-preload/context-handoff path; they intentionally
+    // read as zero until those signals cross the conv_layer_top_stream
+    // boundary.  Do not infer them from cumulative context counters or alias
+    // the older experimental prefetch telemetry, because that would make the
+    // ABI counters look valid while measuring a different mechanism.
+    compute_pipe_telemetry u_compute_pipe_telemetry (
+        .clk(clk),
+        .rst(rst),
+        .soft_reset(datapath_reset_active),
+        .compute_gap_pulse(perf_stage_compute && !layer_compute_fire),
+        // TODO: replace the explicit zeros with dedicated event pulses from
+        // the inactive-weight preload and fast-context handoff datapath.
+        .preload_commit_pulse(1'b0),
+        .preload_hit_pulse(1'b0),
+        .preload_miss_pulse(1'b0),
+        .eligible_handoff_pulse(1'b0),
+        .next_cycle_hit_pulse(1'b0),
+        .extra_gap_pulse(1'b0),
+        .wait_reason_pulse(6'b000000),
+        .protocol_error_pulse(1'b0),
+        .compute_gap_count(compute_pipe_compute_gap_count),
+        .preload_commit_count(compute_pipe_preload_commit_count),
+        .preload_hit_count(compute_pipe_preload_hit_count),
+        .preload_miss_count(compute_pipe_preload_miss_count),
+        .eligible_handoff_count(compute_pipe_eligible_handoff_count),
+        .next_cycle_hit_count(compute_pipe_next_cycle_hit_count),
+        .extra_gap_count(compute_pipe_extra_gap_count),
+        .wait_bank_retire_count(compute_pipe_wait_bank_retire_count),
+        .wait_weight_count(compute_pipe_wait_weight_count),
+        .wait_ifm_count(compute_pipe_wait_ifm_count),
+        .wait_psum_count(compute_pipe_wait_psum_count),
+        .wait_collector_output_count(
+            compute_pipe_wait_collector_output_count),
+        .wait_control_count(compute_pipe_wait_control_count),
+        .protocol_error_count(compute_pipe_protocol_error_count)
+    );
+
     layer_config_regs #(
+        .CLOCK_HZ(CLOCK_HZ),
         .IFM_FIFO_DEPTH(IFM_FIFO_DEPTH),
-        .RAW_HWC_COMPUTE_START_LEVEL(RAW_HWC_COMPUTE_START_LEVEL)
+        .RAW_HWC_COMPUTE_START_LEVEL(RAW_HWC_COMPUTE_START_LEVEL),
+        .ENABLE_COLUMN_PSUM(ENABLE_COLUMN_PSUM),
+        .ROWS(ROWS), .COLS(COLS), .COUT_TILE(COLS*2),
+        .FM_W_MAX(FM_W_MAX),
+        .FM_H_MAX(FM_H_MAX),
+        .PSUM_BUF_DEPTH(PSUM_BUF_DEPTH),
+        .MATERIALIZED_CACHE_DEPTH(MATERIALIZED_CACHE_DEPTH),
+        .LAYER_LONG_LINE_BANK_DEPTH(LAYER_LONG_LINE_BANK_DEPTH),
+        .PACKED_OFM_BUFFER_DEPTH(PACKED_OFM_BUFFER_DEPTH),
+        .ENABLE_PACKED_HWC_OFM(ENABLE_PACKED_HWC_OFM),
+        .ENABLE_LAYER_TILE_SEQUENCER(ENABLE_LAYER_TILE_SEQUENCER),
+        .ENABLE_LAYER_LONG_HWC_IFM(ENABLE_LAYER_LONG_HWC_IFM),
+        .ENABLE_TAGGED_CONTEXT(ENABLE_TAGGED_CONTEXT),
+        .ENABLE_DETAILED_TRACE(ENABLE_DETAILED_TRACE),
+        // Base feature flags describe the external HWC/packed/layer-long
+        // interfaces.  layer_config_regs derives the authoritative context
+        // flag directly from ENABLE_TAGGED_CONTEXT so it cannot be advertised
+        // by stale caller-supplied metadata.
+        .ABI_FEATURE_FLAGS(
+            ((ENABLE_PACKED_HWC_OFM != 0) ? 8'h02 : 8'h00) |
+            (((ENABLE_LAYER_LONG_HWC_IFM != 0) &&
+              (ENABLE_LAYER_TILE_SEQUENCER != 0)) ? 8'h05 : 8'h00))
     ) u_cfg (
         .clk(clk), .rst(rst),
         .cfg_wr_en(cfg_wr_en), .cfg_addr(cfg_addr), .cfg_wdata(cfg_wdata),
         .cfg_rd_en(cfg_rd_en), .cfg_rdata(layer_cfg_rdata),
         .layer_busy(layer_busy), .layer_done(layer_done),
+        .external_config_error(sequencer_config_error),
+        .configured_layer_last(configured_layer_last),
+        .configured_tile_h_max(configured_tile_h_max),
+        .configured_ifm_total_bytes(configured_ifm_total_bytes),
+        .configured_ofm_total_bytes(configured_ofm_total_bytes),
+        .validated_long_cin(validated_long_cin),
+        .validated_long_pass_count(validated_long_pass_count),
+        .validated_long_final_pass(validated_long_final_pass),
+        .validated_long_final_lane_mask(
+            validated_long_final_lane_mask),
+        .validated_long_layer_pixels(validated_long_layer_pixels),
+        .validated_long_tile_pixels(validated_long_tile_pixels),
+        .validated_long_tile_output_pixels(
+            validated_long_tile_output_pixels),
+        .validated_long_cout_blocks(validated_long_cout_blocks),
         .dbg_expected_bytes(debug_expected_bytes),
         .dbg_core_wr_count(debug_core_wr_count),
         .dbg_axis_wr_count(debug_axis_wr_count),
@@ -420,7 +726,47 @@ module conv_accel_core #(
         .raw_hwc_load_unpack_cycles(raw_hwc_load_unpack_cycles),
         .raw_hwc_replay_active_cycles(raw_hwc_replay_active_cycles),
         .raw_hwc_replay_wait_ready_cycles(raw_hwc_replay_wait_ready_cycles),
+        .packed_ofm_axis_byte_count(packed_ofm_axis_byte_count_visible),
+        .packed_ofm_axis_stall_cycles(packed_ofm_axis_stall_cycles_visible),
+        .packed_ofm_protocol_error(packed_ofm_protocol_error_visible),
+        .datapath_error_status(datapath_error_status),
+        .context_alloc_count(context_alloc_count),
+        .context_input_issued_count(context_input_issued_count),
+        .context_array_retired_count(context_array_retired_count),
+        .context_collector_done_count(context_collector_done_count),
+        .context_gap_cycles(context_gap_cycles),
+        .context_ifm_ownership_stall_cycles(context_ifm_ownership_stall_cycles),
+        .context_weight_ownership_stall_cycles(context_weight_ownership_stall_cycles),
+        .context_psum_credit_stall_cycles(context_psum_credit_stall_cycles),
+        .context_epoch_mismatch_count(context_epoch_mismatch_count),
+        .context_mismatch_count(context_mismatch_count_readback_q),
+        .context_ifm_underflow_count(context_ifm_underflow_count),
+        .context_psum_underflow_count(context_psum_underflow_count),
+        .context_fifo_drop_count(context_fifo_drop_count),
+        .context_bank_overwrite_count(context_bank_overwrite_count),
+        .context_full_stall_cycles(context_full_stall_cycles),
+        .compute_pipe_compute_gap_count(compute_pipe_compute_gap_count),
+        .compute_pipe_preload_commit_count(
+            compute_pipe_preload_commit_count),
+        .compute_pipe_preload_hit_count(compute_pipe_preload_hit_count),
+        .compute_pipe_preload_miss_count(compute_pipe_preload_miss_count),
+        .compute_pipe_eligible_handoff_count(
+            compute_pipe_eligible_handoff_count),
+        .compute_pipe_next_cycle_hit_count(
+            compute_pipe_next_cycle_hit_count),
+        .compute_pipe_extra_gap_count(compute_pipe_extra_gap_count),
+        .compute_pipe_wait_bank_retire_count(
+            compute_pipe_wait_bank_retire_count),
+        .compute_pipe_wait_weight_count(compute_pipe_wait_weight_count),
+        .compute_pipe_wait_ifm_count(compute_pipe_wait_ifm_count),
+        .compute_pipe_wait_psum_count(compute_pipe_wait_psum_count),
+        .compute_pipe_wait_collector_output_count(
+            compute_pipe_wait_collector_output_count),
+        .compute_pipe_wait_control_count(compute_pipe_wait_control_count),
+        .compute_pipe_protocol_error_count(
+            compute_pipe_protocol_error_count),
         .start_pulse(start_pulse),
+        .datapath_reset_active(datapath_reset_active),
         .fm_h(fm_h), .fm_w(fm_w), .ofm_h(ofm_h), .ofm_w(ofm_w),
         .conv_stride(conv_stride), .conv_pad(conv_pad), .kernel_1x1(kernel_1x1),
         .activation_mode(activation_mode),
@@ -469,9 +815,18 @@ module conv_accel_core #(
         .WGT_TILE_AW(WGT_TILE_AW), .PSUM_BUF_AW(PSUM_BUF_AW), .PSUM_BUF_DEPTH(PSUM_BUF_DEPTH),
         .MULT_W(MULT_W), .SHIFT_W(SHIFT_W), .ZP_W(ZP_W),
         .OFM_ADDR_W(OFM_ADDR_W), .OFM_FIFO_DEPTH(OFM_FIFO_DEPTH), .OFM_FIFO_AW(OFM_FIFO_AW),
-        .TAIL_CYCLES_CONFIG(TAIL_CYCLES_CONFIG)
+        .TAIL_CYCLES_CONFIG(TAIL_CYCLES_CONFIG),
+        .ENABLE_COLUMN_PSUM(ENABLE_COLUMN_PSUM),
+        .ENABLE_PACKED_HWC_OFM(ENABLE_PACKED_HWC_OFM),
+        .ENABLE_VECTOR_ONLY_IFM(ENABLE_LAYER_LONG_HWC_IFM),
+        .ENABLE_TAGGED_CONTEXT(ENABLE_TAGGED_CONTEXT),
+        .ENABLE_WEIGHT_PRELOAD(ENABLE_WEIGHT_PRELOAD),
+        .ENABLE_FAST_CONTEXT_HANDOFF(ENABLE_FAST_CONTEXT_HANDOFF),
+        .IFM_EPOCH_USE_URAM(IFM_EPOCH_USE_URAM),
+        .ENABLE_DETAILED_TRACE(ENABLE_DETAILED_TRACE)
     ) u_layer (
-        .clk(clk), .rst(rst), .start(start_pulse), .busy(layer_busy), .done(layer_done),
+        .clk(clk), .rst(datapath_rst), .start(sequenced_tile_start),
+        .busy(tile_engine_busy), .done(tile_engine_done),
         .perf_compute_fire(layer_compute_fire),
         .perf_stage_bias(perf_stage_bias),
         .perf_stage_weight(perf_stage_weight),
@@ -542,7 +897,8 @@ module conv_accel_core #(
         .fm_h(fm_h), .fm_w(fm_w), .ofm_h(ofm_h), .ofm_w(ofm_w),
         .conv_stride(conv_stride), .conv_pad(conv_pad), .kernel_1x1(kernel_1x1),
         .stream_raw_hwc_mode(stream_raw_hwc_mode),
-        .k_total(k_total), .cout_total(cout_total), .num_pixels(num_pixels),
+        .k_total(k_total), .cout_total(cout_total),
+        .num_pixels(sequenced_tile_num_pixels),
         .tail_cycles_config(tail_cycles_config),
         .raw_hwc_compute_start_level(raw_hwc_compute_start_level),
         .early_drain_enable(early_drain_enable),
@@ -556,12 +912,14 @@ module conv_accel_core #(
         .pass_trace_k_pass(pass_trace_k_pass),
         .col_trace_selected_col(col_trace_selected_col),
         .raw_replay_active(raw_hwc_replay_active_event),
-        .tile_oy_base(tile_oy_base), .tile_ofm_h(tile_ofm_h),
-        .tile_pixel_base(tile_pixel_base_ext),
+        .tile_oy_base(sequenced_tile_oy_base),
+        .tile_ofm_h(sequenced_tile_ofm_h),
+        .tile_pixel_base(sequenced_tile_pixel_base_ext),
         .pool_enable(pool_enable), .pool_stride(pool_stride),
         .bias_load_req(bias_load_req), .bias_load_done(bias_load_done),
         .current_cout_base(current_cout_base), .current_pass_base_k(current_pass_base_k),
         .current_feeder_pass_base_k(current_feeder_pass_base_k),
+        .current_feeder_k_pass(current_feeder_k_pass),
         .bias_wr_addr(bias_wr_addr), .bias_wr_data(bias_wr_data), .bias_wr_en(bias_wr_en),
         .weight_load_req(weight_load_req), .weight_tile_ready(weight_tile_ready),
         .wgt_tile_wr_en(wgt_tile_wr_en), .wgt_tile_wr_addr(wgt_tile_wr_addr),
@@ -577,9 +935,33 @@ module conv_accel_core #(
         .quant_mult_flat(quant_mult_flat), .quant_shift_flat(quant_shift_flat), .quant_zp_flat(quant_zp_flat),
         .activation_mode(activation_mode), .act_lut_wr_en(merged_act_lut_wr_en),
         .act_lut_wr_addr(merged_act_lut_wr_addr), .act_lut_wr_data(merged_act_lut_wr_data),
+        .act_lut_rd_addr(cfg_lut_addr), .act_lut_rd_data(actual_act_lut_rd_data),
         .ofm_valid(), .ofm_addr(), .ofm_cout_base(), .ofm_channel_valid(), .ofm_data(),
         .ofm_mem_wr_en(ofm_mem_wr_en), .ofm_mem_wr_ready(ofm_mem_wr_ready),
         .ofm_mem_wr_addr(ofm_mem_wr_addr),
-        .ofm_mem_wr_data(ofm_mem_wr_data), .ofm_packet_full(ofm_packet_full)
+        .ofm_mem_wr_data(ofm_mem_wr_data), .ofm_packet_full(ofm_packet_full),
+        .packed_ofm_packet_valid(packed_ofm_packet_valid),
+        .packed_ofm_packet_ready(packed_ofm_packet_ready),
+        .packed_ofm_packet_pixel(packed_ofm_packet_pixel),
+        .packed_ofm_packet_cout_base(packed_ofm_packet_cout_base),
+        .packed_ofm_packet_channel_valid(packed_ofm_packet_channel_valid),
+        .packed_ofm_packet_data(packed_ofm_packet_data),
+        .packed_ofm_busy(packed_ofm_busy),
+        .datapath_error_status(tile_engine_datapath_error_status),
+        .context_alloc_count(context_alloc_count),
+        .context_input_issued_count(context_input_issued_count),
+        .context_array_retired_count(context_array_retired_count),
+        .context_collector_done_count(context_collector_done_count),
+        .context_gap_cycles(context_gap_cycles),
+        .ifm_ownership_stall_cycles(context_ifm_ownership_stall_cycles),
+        .weight_ownership_stall_cycles(context_weight_ownership_stall_cycles),
+        .psum_credit_stall_cycles(context_psum_credit_stall_cycles),
+        .context_epoch_mismatch_count(context_epoch_mismatch_count),
+        .context_mismatch_count(context_mismatch_count),
+        .context_ifm_underflow_count(context_ifm_underflow_count),
+        .context_psum_underflow_count(context_psum_underflow_count),
+        .context_fifo_drop_count(context_fifo_drop_count),
+        .context_bank_overwrite_count(context_bank_overwrite_count),
+        .context_full_stall_cycles(context_full_stall_cycles)
     );
 endmodule

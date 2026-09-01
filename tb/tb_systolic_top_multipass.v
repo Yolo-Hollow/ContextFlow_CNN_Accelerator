@@ -41,7 +41,7 @@ module tb_systolic_top_multipass;
     reg [7:0] dma_wr_data [0:4];
     reg dma_line_advance;
     reg [1:0] conv_stride, conv_pad;
-    reg [10:0] pass_base_k;
+    reg [13:0] pass_base_k;
     wire [31:0] ifm_fifo_full_dma;
 
     systolic_top #(
@@ -63,6 +63,8 @@ module tb_systolic_top_multipass;
         .bias_wr_addr(bias_addr), .bias_wr_data(bias_data), .bias_wr_en(bias_en),
         .is_first_pass(is_first), .psum_top_ext(psum_top_ext), .use_ext_psum(use_ext),
         .psum_stream_data({COLS*2*PSUM_W{1'b0}}), .psum_stream_valid(1'b0), .psum_stream_compute_ready(1'b1), .use_psum_stream(1'b0),
+        .psum_column_stream_data({COLS*2*PSUM_W{1'b0}}),
+        .psum_column_stream_valid({COLS{1'b0}}), .use_column_psum_stream(1'b0),
         .wgt_fifo_wr_en(wgt_wr_en), .wgt_fifo_wr_data(wgt_wr_data), .wgt_fifo_full(wgt_full),
         .psum_fifo_rd_en(psum_rd_en), .psum_fifo_rd_data(psum_rd_data), .psum_fifo_empty(psum_empty)
     );

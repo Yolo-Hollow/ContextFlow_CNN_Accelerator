@@ -9,7 +9,8 @@
 `define TB_CONV_ACCEL_CORE_ROWS 18
 `define TB_CONV_ACCEL_CORE_COLS 8
 `define TB_CONV_ACCEL_CORE_IFM_BANKS 2
-`define TB_CONV_ACCEL_CORE_CIN 20
+// Three exact K_TILE passes: this guards the alternating partial-PSUM banks.
+`define TB_CONV_ACCEL_CORE_CIN 54
 `define TB_CONV_ACCEL_CORE_FM_W 3
 `define TB_CONV_ACCEL_CORE_FM_H 2
 `define TB_CONV_ACCEL_CORE_OFM_W 3

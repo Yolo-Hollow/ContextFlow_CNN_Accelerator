@@ -1,0 +1,29 @@
+{
+  "format": "lasa-journal-table-metadata",
+  "version": 1,
+  "related_work": [
+    ["固定数据流 ASIC（Eyeriss/TPU）", "部分", "否/内部格式", "否", "否", "否"],
+    ["可重构数据流（MAERI/Simba）", "是", "部分", "部分", "否", "否"],
+    ["FPGA 生成框架（FINN/fpgaConvNet）", "是", "部分", "部分", "部分", "部分"],
+    ["YOLO FPGA 加速器", "部分", "部分", "部分", "是/不一", "少见"],
+    ["FEATHER", "是", "是", "非本文语义", "非重点", "否"],
+    ["本文 LASA", "是", "是", "是", "是", "是"]
+  ],
+  "ablation_variants": [
+    "稀疏3x3模拟1x1", "原生1x1", "逐pass IFM", "HWC物化/重放",
+    "无预载/无handoff", "仅预载", "预载+handoff", "完整跨pass重叠",
+    "固定保守tile", "层自适应tile（本文）"
+  ],
+  "external_comparison": [
+    ["YOLOv2 FPGA", "yolov2fpga2018", "见原文", "见原文", "YOLOv2", "--", "见原文", "见原文", "见原文", "非同网络"],
+    ["YOLOv3 FPGA", "yolov3fpga2019", "见原文", "见原文", "YOLOv3", "见原文", "见原文", "见原文", "见原文", "核对完整性"],
+    ["Tiny-YOLOv3 accelerator", "tinyyoloaccel2022", "见原文", "见原文", "tiny/见原文", "见原文", "见原文", "见原文", "见原文", "原文口径"],
+    ["Multicore YOLOv3-tiny", "multicoreyolo2023", "见原文", "见原文", "tiny/见原文", "见原文", "见原文", "见原文", "见原文", "直接对照"]
+  ],
+  "artifacts": [
+    ["上游 YOLOv3-tiny 权重", "74fb61c9...946280", "COCO80 FP32 资产"],
+    ["epoch-1 参数包", "974970bb...3f11b", "当前功能部署 INT8"],
+    ["正式性能 summary", "40bdccc5...d7aa", "3x1000 统计"],
+    ["600 s soak summary", "fa22bb62...987d", "稳定性证据"]
+  ]
+}

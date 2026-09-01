@@ -20,10 +20,52 @@ param(
     [int]$PassTraceKPass = 0,
     [int]$RawHwcComputeStartLevel = 0,
     [int]$TailCyclesOverride = 0,
-    [string]$ReproRoot = ""
+    [ValidateSet(1, 2)]
+    [int]$RuntimeAbiVersion = 1,
+    [ValidateSet("0x2B", "0x3B", "0x3F", "0xBF")]
+    [string]$V2StreamCfg = "0xBF",
+    [switch]$EnableV2LongStreamRuntime,
+    [switch]$V2Performance,
+    [ValidateSet(0, 30, 100)]
+    [int]$V2BenchmarkRuns = 0,
+    [ValidateScript({ $_ -eq 0 -or $_ -ge 600 })]
+    [int]$V2SoakSeconds = 0,
+    [ValidateSet(100000000, 125000000, 200000000)]
+    [long]$V2ClockHz = 100000000,
+    [string]$ReproRoot = "",
+    [string]$WorkspacePath = "",
+    [string]$ApplicationName = "",
+    [string]$PlatformName = "",
+    [string]$OutputElfName = "",
+    [string]$ParameterPackageDir = "",
+    [string]$CandidateArtifactManifest = ""
 )
 
 $ErrorActionPreference = "Stop"
+
+$AbiV2Modes = @("conv0_conv9_chain", "conv0_conv9_batch_chain", "conv0_conv9_ddr_demo")
+if ($RuntimeAbiVersion -eq 2 -and $Mode -notin $AbiV2Modes) {
+    throw "ABI v2 is only defined for the complete ten-layer runtime; mode '$Mode' is a legacy ABI v1 smoke"
+}
+$V2StreamCfgExplicit = $PSBoundParameters.ContainsKey("V2StreamCfg")
+if ($RuntimeAbiVersion -ne 2 -and
+    ($EnableV2LongStreamRuntime -or $V2Performance -or
+     $V2BenchmarkRuns -ne 0 -or $V2SoakSeconds -ne 0 -or
+     $V2StreamCfgExplicit -or $V2ClockHz -ne 100000000)) {
+    throw "ABI v2 runtime switches cannot be used for an ABI v1 build"
+}
+if ($V2Performance -and
+    (!$EnableV2LongStreamRuntime -or $V2StreamCfg -ne "0xBF")) {
+    throw "ABI v2 performance mode requires the explicit runtime opt-in and STREAM_CFG=0xBF"
+}
+if ($V2BenchmarkRuns -ne 0 -and !$V2Performance) {
+    throw "ABI v2 benchmark samples require -V2Performance"
+}
+if ($V2SoakSeconds -ne 0 -and
+    (!$V2Performance -or !$EnableV2LongStreamRuntime -or
+     $V2StreamCfg -ne "0xBF" -or $V2BenchmarkRuns -ne 0)) {
+    throw "ABI v2 soak requires performance mode, runtime opt-in, STREAM_CFG=0xBF, and zero benchmark runs"
+}
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $SwDir = Split-Path -Parent $ScriptDir
@@ -31,13 +73,84 @@ $Root = Split-Path -Parent (Split-Path -Parent $SwDir)
 if ([string]::IsNullOrWhiteSpace($ReproRoot)) {
     $ReproRoot = Join-Path $Root "repro"
 }
+$ReproRoot = [System.IO.Path]::GetFullPath($ReproRoot)
 $ModelRoot = Join-Path $ReproRoot "model"
 
-$Workspace = Join-Path $Root "build_vitis_2022_2"
-$AppDir = Join-Path $Workspace "conv_accel_r18_c16_smoke"
+if ([string]::IsNullOrWhiteSpace($WorkspacePath)) {
+    $WorkspacePath = if ($RuntimeAbiVersion -eq 2) {
+        Join-Path $Root "build_vitis_2022_2_abi_v2_candidate"
+    } else {
+        Join-Path $Root "build_vitis_2022_2"
+    }
+}
+if ([string]::IsNullOrWhiteSpace($ApplicationName)) {
+    $ApplicationName = if ($RuntimeAbiVersion -eq 2) {
+        "conv_accel_abi_v2_candidate"
+    } else {
+        "conv_accel_r18_c16_smoke"
+    }
+}
+if ([string]::IsNullOrWhiteSpace($PlatformName)) {
+    $PlatformName = if ($RuntimeAbiVersion -eq 2) {
+        "conv_accel_abi_v2_candidate_platform"
+    } else {
+        "conv_accel_kv260_platform"
+    }
+}
+if ([string]::IsNullOrWhiteSpace($OutputElfName)) {
+    $OutputElfName = if ($RuntimeAbiVersion -eq 2) {
+        "conv_accel_abi_v2_candidate.elf"
+    } else {
+        "conv_accel_${Mode}_smoke.elf"
+    }
+}
+$Workspace = [System.IO.Path]::GetFullPath($WorkspacePath)
+if ($RuntimeAbiVersion -eq 2) {
+    $RepositoryReproRoot = [System.IO.Path]::GetFullPath((Join-Path $Root "repro"))
+    if ($ReproRoot -ne $RepositoryReproRoot) {
+        throw "ABI v2 candidate model input must be the repository repro directory: $RepositoryReproRoot"
+    }
+    if ((Split-Path -Leaf $Workspace).ToLowerInvariant() -notlike "*abi_v2_candidate*") {
+        throw "ABI v2 requires an isolated workspace whose basename contains abi_v2_candidate: $Workspace"
+    }
+    $WorkspaceLeaf = (Split-Path -Leaf $Workspace).ToLowerInvariant()
+    if ($V2SoakSeconds -ne 0 -and $WorkspaceLeaf -notlike "*soak*") {
+        throw "ABI v2 soak requires an isolated workspace whose basename contains soak: $Workspace"
+    }
+    if ($V2SoakSeconds -eq 0 -and $WorkspaceLeaf -like "*soak*") {
+        throw "Non-soak ABI v2 builds cannot reuse a soak workspace: $Workspace"
+    }
+    if ($ApplicationName -ne "conv_accel_abi_v2_candidate" -or
+        $PlatformName -ne "conv_accel_abi_v2_candidate_platform" -or
+        $OutputElfName -ne "conv_accel_abi_v2_candidate.elf") {
+        throw "ABI v2 candidate app/platform/ELF names are fixed to prevent ABI v1/v2 mixing"
+    }
+    if ([string]::IsNullOrWhiteSpace($ParameterPackageDir)) {
+        throw "ABI v2 candidate build requires -ParameterPackageDir"
+    }
+    if ([string]::IsNullOrWhiteSpace($CandidateArtifactManifest)) {
+        throw "ABI v2 candidate build requires -CandidateArtifactManifest"
+    }
+    $CandidateArtifactManifest = [System.IO.Path]::GetFullPath($CandidateArtifactManifest)
+    $ParameterPackageDir = [System.IO.Path]::GetFullPath($ParameterPackageDir)
+    $ParameterManifest = Join-Path $ParameterPackageDir "abi_v2_parameter_manifest.json"
+    $CandidateVerifier = Join-Path $ScriptDir "abi_v2_candidate_artifacts.py"
+    & python $CandidateVerifier verify --manifest $CandidateArtifactManifest `
+        --phase build --expect-workspace $Workspace `
+        --expect-parameter-manifest $ParameterManifest `
+        --expect-clock-hz $V2ClockHz
+    if ($LASTEXITCODE -ne 0) {
+        throw "ABI v2 candidate artifact pre-build verification failed"
+    }
+} elseif ($ApplicationName -like "*abi_v2*" -or
+          $PlatformName -like "*abi_v2*" -or
+          $OutputElfName -like "*abi_v2*") {
+    throw "ABI v1 build cannot use ABI v2 candidate app/platform/ELF names"
+}
+$AppDir = Join-Path $Workspace $ApplicationName
 $AppSrcDir = Join-Path $AppDir "src"
 $ManualBuildDir = Join-Path $AppDir "manual_build"
-$BspRoot = Join-Path $Workspace "conv_accel_kv260_platform\export\conv_accel_kv260_platform\sw\conv_accel_kv260_platform\standalone_domain"
+$BspRoot = Join-Path $Workspace "$PlatformName\export\$PlatformName\sw\$PlatformName\standalone_domain"
 $BspInclude = Join-Path $BspRoot "bspinclude\include"
 $BspLib = Join-Path $BspRoot "bsplib\lib"
 $Gcc = "C:\Xilinx\Vitis\2022.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe"
@@ -58,6 +171,8 @@ Copy-Item -Path `
     (Join-Path $SwDir "src\main.c"), `
     (Join-Path $SwDir "src\main_conv3_conv4_chain.c"), `
     (Join-Path $SwDir "src\accel_smoke.h"), `
+    (Join-Path $SwDir "src\accel_abi_v2.h"), `
+    (Join-Path $SwDir "src\accel_runtime_v2.h"), `
     (Join-Path $SwDir "src\accel_layer_desc.h"), `
     (Join-Path $SwDir "src\accel_single_scale_plan.h"), `
     (Join-Path $SwDir "src\accel_single_scale_scheduler.h"), `
@@ -66,11 +181,41 @@ Copy-Item -Path `
     (Join-Path $SwDir "src\conv0_crop_pool_data.h") `
     -Destination $AppSrcDir -Force
 
+$ParameterCompilerArgs = @()
+if ($RuntimeAbiVersion -eq 2) {
+    $ParameterPackageDir = [System.IO.Path]::GetFullPath($ParameterPackageDir)
+    $ParameterHeader = Join-Path $ParameterPackageDir "accel_v2_parameter_package.h"
+    $ParameterManifest = Join-Path $ParameterPackageDir "abi_v2_parameter_manifest.json"
+    if (!(Test-Path -PathType Leaf $ParameterHeader) -or
+        !(Test-Path -PathType Leaf $ParameterManifest)) {
+        throw "ABI v2 generated parameter header/manifest not found in $ParameterPackageDir"
+    }
+    Copy-Item -Path $ParameterHeader -Destination $AppSrcDir -Force
+    $ParameterCompilerArgs = @("-include", "accel_v2_parameter_package.h")
+}
+
 $Obj = Join-Path $ManualBuildDir "main_$Mode.o"
 $DecodeObj = Join-Path $ManualBuildDir "yolo_decode_$Mode.o"
-$Elf = Join-Path $ManualBuildDir "conv_accel_${Mode}_smoke.elf"
+$Elf = Join-Path $ManualBuildDir $OutputElfName
 $LinkerScript = Join-Path $AppSrcDir "lscript.ld"
 $Defines = @()
+$Defines += "-DACCEL_RUNTIME_ABI_VERSION=$RuntimeAbiVersion"
+if ($RuntimeAbiVersion -eq 2) {
+    $Defines += "-DACCEL_V2_STREAM_CFG=$V2StreamCfg"
+    $Defines += "-DACCEL_V2_EXPECTED_CLOCK_HZ=$V2ClockHz"
+    if ($EnableV2LongStreamRuntime) {
+        $Defines += "-DACCEL_V2_LONG_STREAM_RUNTIME_READY=1"
+    }
+    if ($V2Performance) {
+        $Defines += "-DACCEL_PERF_ONLY=1"
+    }
+    if ($V2BenchmarkRuns -ne 0) {
+        $Defines += "-DACCEL_V2_BENCHMARK_RUNS=$V2BenchmarkRuns"
+    }
+    if ($V2SoakSeconds -ne 0) {
+        $Defines += "-DACCEL_V2_SOAK_SECONDS=$V2SoakSeconds"
+    }
+}
 if ($TailCyclesOverride -ne 0) {
     $Defines += "-DACCEL_TAIL_CYCLES_OVERRIDE=$TailCyclesOverride"
 }
@@ -370,13 +515,17 @@ if ($Mode -eq "conv0_conv9_batch_chain" -or $Mode -eq "conv0_conv9_ddr_demo") {
         }
         if ($Mode -eq "conv0_conv9_batch_chain" -or $Mode -eq "conv0_conv9_ddr_demo") {
             $Args += "--prepack-weight-stream"
+            $Args += "--rows"
+            $Args += "18"
+            $Args += "--cout-tile"
+            $Args += $(if ($RuntimeAbiVersion -eq 2) { "32" } else { "16" })
         }
         & $Python @Args
     }
 }
 
 $Optimization = if ($Mode -eq "conv0_conv9_ddr_demo" -or $Mode -eq "conv0_conv9_batch_chain") { "-O2" } else { "-O0" }
-& $Gcc -Wall $Optimization -g3 -c -DARMA53_64 @Defines -I $BspInclude -I $AppSrcDir $Source -o $Obj
+& $Gcc -Wall $Optimization -g3 -c -DARMA53_64 @Defines @ParameterCompilerArgs -I $BspInclude -I $AppSrcDir $Source -o $Obj
 if ($LASTEXITCODE -ne 0) {
     throw "Failed to compile $Source"
 }

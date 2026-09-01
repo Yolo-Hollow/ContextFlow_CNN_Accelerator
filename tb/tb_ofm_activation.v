@@ -14,9 +14,12 @@ module tb_ofm_activation;
     reg [COUT_TILE*8-1:0] in_data;
     reg lut_wr_en;
     reg [7:0] lut_wr_addr, lut_wr_data;
+    reg [7:0] lut_rd_addr;
+    wire [7:0] lut_rd_data;
     wire out_valid;
     reg out_ready;
     wire [ADDR_W-1:0] out_addr;
+    wire out_addr_zero;
     wire [10:0] out_cout_base;
     wire [COUT_TILE-1:0] out_channel_valid;
     wire [COUT_TILE*8-1:0] out_data;
@@ -27,8 +30,10 @@ module tb_ofm_activation;
         .in_addr(in_addr), .in_cout_base(in_cout_base),
         .in_channel_valid(in_channel_valid), .in_data(in_data),
         .lut_wr_en(lut_wr_en), .lut_wr_addr(lut_wr_addr), .lut_wr_data(lut_wr_data),
+        .lut_rd_addr(lut_rd_addr), .lut_rd_data(lut_rd_data),
         .out_valid(out_valid), .out_ready(out_ready),
-        .out_addr(out_addr), .out_cout_base(out_cout_base),
+        .out_addr(out_addr), .out_addr_zero(out_addr_zero),
+        .out_cout_base(out_cout_base),
         .out_channel_valid(out_channel_valid), .out_data(out_data)
     );
 
@@ -76,6 +81,10 @@ module tb_ofm_activation;
             end else pass = pass + 1;
             if (out_addr !== 4'd3 || out_cout_base !== 11'd8 || out_channel_valid !== 8'b1010_1011) begin
                 $display("[FAIL] metadata addr=%0d cout=%0d mask=%b", out_addr, out_cout_base, out_channel_valid);
+                fail = fail + 1;
+            end else pass = pass + 1;
+            if (out_addr_zero !== 1'b0) begin
+                $display("[FAIL] metadata addr_zero asserted for nonzero address");
                 fail = fail + 1;
             end else pass = pass + 1;
         end
@@ -148,6 +157,10 @@ module tb_ofm_activation;
                          out_channel_valid, exp_mask);
                 fail = fail + 1;
             end else pass = pass + 1;
+            if (out_addr_zero !== (exp_addr == {ADDR_W{1'b0}})) begin
+                $display("[FAIL] burst pkt%0d addr_zero=%b addr=%0d", pkt, out_addr_zero, exp_addr);
+                fail = fail + 1;
+            end else pass = pass + 1;
             for (lane = 0; lane < COUT_TILE; lane = lane + 1) begin
                 if (mode_i == 2'd0)
                     exp_lane = exp_data[lane*8 +: 8];
@@ -161,6 +174,50 @@ module tb_ofm_activation;
                     fail = fail + 1;
                 end else pass = pass + 1;
             end
+        end
+    endtask
+
+    task check_addr_zero_backpressure;
+        begin
+            @(negedge clk);
+            mode = 2'd0;
+            out_ready = 1'b1;
+            in_valid = 1'b1;
+            in_addr = {ADDR_W{1'b0}};
+            in_cout_base = 11'd31;
+            in_channel_valid = {COUT_TILE{1'b1}};
+            in_data = {COUT_TILE{8'h5a}};
+
+            @(negedge clk);
+            #1;
+            if (out_valid !== 1'b1 || out_addr !== {ADDR_W{1'b0}} || out_addr_zero !== 1'b1) begin
+                $display("[FAIL] addr_zero capture valid=%b addr=%0d zero=%b", out_valid, out_addr, out_addr_zero);
+                fail = fail + 1;
+            end else pass = pass + 1;
+
+            out_ready = 1'b0;
+            in_addr = {{(ADDR_W-1){1'b0}}, 1'b1};
+            repeat (2) begin
+                @(negedge clk);
+                #1;
+                if (out_valid !== 1'b1 || out_addr !== {ADDR_W{1'b0}} ||
+                    out_addr_zero !== 1'b1 || in_ready !== 1'b0) begin
+                    $display("[FAIL] addr_zero stall valid=%b addr=%0d zero=%b ready=%b",
+                             out_valid, out_addr, out_addr_zero, in_ready);
+                    fail = fail + 1;
+                end else pass = pass + 1;
+            end
+
+            out_ready = 1'b1;
+            @(negedge clk);
+            #1;
+            if (out_valid !== 1'b1 || out_addr !== {{(ADDR_W-1){1'b0}}, 1'b1} ||
+                out_addr_zero !== 1'b0) begin
+                $display("[FAIL] addr_zero release valid=%b addr=%0d zero=%b", out_valid, out_addr, out_addr_zero);
+                fail = fail + 1;
+            end else pass = pass + 1;
+            in_valid = 1'b0;
+            @(negedge clk);
         end
     endtask
 
@@ -260,6 +317,7 @@ module tb_ofm_activation;
         lut_wr_en = 0;
         lut_wr_addr = 0;
         lut_wr_data = 0;
+        lut_rd_addr = 0;
         out_ready = 1'b1;
         pass = 0;
         fail = 0;
@@ -267,6 +325,12 @@ module tb_ofm_activation;
         repeat (3) @(negedge clk);
         rst = 0;
         load_lut_identity_plus_one();
+        lut_rd_addr = 8'h5a;
+        #1;
+        if (lut_rd_data !== 8'h5b) begin
+            $display("[FAIL] lane0 LUT readback got=%h exp=5b", lut_rd_data);
+            fail = fail + 1;
+        end else pass = pass + 1;
         check_mode(2'd0);
         check_mode(2'd1);
         check_mode(2'd2);
@@ -275,6 +339,7 @@ module tb_ofm_activation;
         check_back_to_back(2'd2);
         check_backpressure(2'd0);
         check_backpressure(2'd2);
+        check_addr_zero_backpressure();
 
         $display("=== tb_ofm_activation: %0d pass, %0d fail ===", pass, fail);
         if (fail != 0) $fatal(1);

@@ -10,7 +10,8 @@ module tb_layer_scheduler_cout64_fulltile;
 
     reg clk, rst, start;
     wire busy, done;
-    wire [10:0] pass_base_k, cout_base, cout_valid;
+    wire [13:0] pass_base_k;
+    wire [10:0] cout_base, cout_valid;
     wire [15:0] num_pixels_out;
     wire is_first_pass, is_final_pass, use_ext_psum, use_psum_stream;
     wire psum_wr_bank, psum_rd_bank;
@@ -19,7 +20,7 @@ module tb_layer_scheduler_cout64_fulltile;
 
     layer_scheduler_stream #(.K_TILE(K_TILE), .COUT_TILE(COUT_TILE)) dut (
         .clk(clk), .rst(rst), .start(start), .busy(busy), .done(done),
-        .k_total(K_TOTAL[10:0]), .cout_total(COUT_TOTAL[10:0]), .num_pixels(NUM_PIXELS[15:0]),
+        .k_total(K_TOTAL[13:0]), .cout_total(COUT_TOTAL[10:0]), .num_pixels(NUM_PIXELS[15:0]),
         .pass_base_k(pass_base_k), .cout_base(cout_base), .cout_valid(cout_valid),
         .num_pixels_out(num_pixels_out),
         .is_first_pass(is_first_pass), .is_final_pass(is_final_pass),
@@ -27,7 +28,8 @@ module tb_layer_scheduler_cout64_fulltile;
         .psum_wr_bank(psum_wr_bank), .psum_rd_bank(psum_rd_bank),
         .bias_load_start(bias_load_start), .bias_load_done(bias_load_done),
         .weight_load_start(weight_load_start), .weight_load_done(weight_load_done),
-        .feeder_start(feeder_start), .feeder_done(feeder_done),
+        .feeder_start(feeder_start), .feeder_start_ready(1'b1),
+        .feeder_done(feeder_done),
         .feeder_compute_ready(1'b0), .feeder_overlap_mode(1'b0),
         .raw_hwc_mode(1'b0),
         .early_drain_enable(1'b0), .psum_drain_data_ready(1'b0),

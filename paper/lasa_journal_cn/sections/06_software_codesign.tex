@@ -1,0 +1,90 @@
+\section{完整网络的软件协同}
+\label{sec:software}
+
+\subsection{13 卷积 DAG 调度}
+
+A53 以静态 DAG 描述 13 个卷积和 8 个 tensor op。每个卷积描述符包含
+H/W/Cin/Cout、kernel/stride/pad、tile 高度、$K$-pass、Cout block、输入输出
+地址、参数 section 和量化域。调度器依赖 manifest 生成的 header，不在 C
+代码中手抄层常量。每个 tile 按 S2MM、bias/weight/IFM MM2S、配置、启动、
+等待和计数器检查的顺序执行；任何 DMA error、PL sticky error、timeout、
+字节数或 packet 计数不符都会终止当前会话。
+
+早期 m0、m2、m4、m6 的普通 2$\times$2/stride-2 maxpool 与相邻卷积的数据
+生命周期紧密，当前多核软件可将部分池化与下一阶段 DMA 准备重叠，因此
+计时记录中这些算子不单独占据串行 resident 槽。m8 的 pool9 必须同时保留
+pool 前 route，单独执行约 0.178 ms。m10 后 pool12 使用非对称右/下 padding：
+填充值是 m10 张量的量化零点而不是边缘复制或整数 0，随后以 stride 1 得到
+同尺寸 13$\times$13$\times$512。忽略这一步会改变大量字节，不能以形状相同
+为由旁路。
+
+\subsection{分支重量化与拼接}
+
+m16 输出 13$\times$13$\times$128，经 nearest-neighbor 放大为
+26$\times$26$\times$128。m8 route 为 26$\times$26$\times$256，但两者量化
+scale/zero-point 不同，而 m19 只有一个输入量化域。A53 对 route 每个字节
+执行 affine requant：
+\begin{equation}
+q'=\mathrm{clip}_{u8}\left(\mathrm{round}_{away}
+((q-z_r)m/2^s)+z_c\right),
+\end{equation}
+其中 half 采用远离零的对称舍入，与 PL requant 的正 half+算术右移明确区分。
+输出按 HWC 通道顺序 $[\mathrm{upsample}_{128},\mathrm{route}_{256}]$ 拼为
+384 通道。直接复制 route 字节会把两种物理量送给同一卷积，虽不会触发 DMA
+错误，却会系统性破坏 m19 输入。
+
+\subsection{四核任务分配}
+
+裸机软件在 EL1 启动四个 A53 核，共享只读参数和 tensor arena。主核负责
+网络协议、DAG 依赖、DMA/PL 控制与最终提交；工作核处理可按空间或通道独立
+的 pool、upsample、requant-concat 和 candidate 扫描。任务描述符位于 cache
+line 对齐的共享队列，发布前由生产者清理 cache，消费者完成后用 release/
+acquire 序号确认。PL DMA 使用的 buffer 在 CPU 写后 flush、DMA 写后
+invalidate，CPU 核之间不依赖“偶然 cache 一致”。
+
+当前正式性能中，A53（含 decode）平均为 \AFTMeanMs{} ms，仅占 resident 的
+约 3.7\%。pool9、pool12、requant-concat、P5 copy 和 decode 的均值分别约
+0.178、0.407、0.523、0.019 和 0.175 ms。m13/m19 的 PL 时间远大于任何单个
+A53 算子，因此继续优化 CPU 不会线性改善总延迟；四核协同的首要价值是
+避免软件成为新瓶颈，并为未来把普通 pool 移入 PL 后保留可扩展余量。
+
+\subsection{双尺度 decode/NMS}
+
+P4/P5 raw head 分别为 26$\times$26$\times$255 和
+13$\times$13$\times$255。每个空间位置按 3 个 anchor、每个 85 值解析，
+anchor 顺序与 PyTorch 导出一致。accuracy profile 固定
+confidence=0.001、IoU=0.65、multi-label、class-aware、max\_nms=30000、
+max\_det=300；demo profile 使用 0.25/0.45 和单标签，二者结果不能混入同一
+mAP 表。
+
+软件为每个 head 构建 256 项 sigmoid 查表，先检查 objectness，再生成满足
+阈值的多类别 candidate。排序以 score 降序、source index 升序、class id
+升序作为确定性 tie-break，随后按类执行 NMS。bbox 由 head stride 和 anchor
+解码，并根据统一 letterbox metadata 恢复原图坐标；类别通过 COCO80 到
+官方稀疏 91 category id 映射写入 predictions JSON。计时在 UART/JSON 输出前
+停止，避免 115200 baud 串口把文本发送时间误计为 decode。
+
+\subsection{持久以太网 runner 与 SD 冷启动}
+
+JTAG 或 SD 只在启动时加载 BIT/ELF。以太网 runner 使用 PS GEM 和 lwIP，
+PC/KV260 静态地址分别为 192.168.10.1/192.168.10.2，TCP 端口 5001。
+协议消息包括 HELLO、PARAMS、INPUT\_CHUNK、RUN、RESULT\_CHUNK、
+TIMING\_CHUNK、STATUS、ERROR 和 END；每个固定头包含版本、session、chunk
+sequence、record 范围、payload 长度和 CRC32。128 张输入 chunk 为
+66,469,888 B，参数只在会话开始传一次。断线、重复/跳跃 sequence、错误 CRC、
+参数 hash 或地址越界都会 fail-close，不能从“下一块”继续推理。
+
+SD 冷启动使用同一 r5 BIT 和软件核心，BOOT.bin/boot.scr 完成 EL2 到 EL1
+切换、参数校验、网口初始化和服务启动。冷启动 100 次性能用于证明启动路径
+不会改变内核性能，但论文主结果仍使用 3$\times$1000 正式测量。网络/SD
+只作为部署与验证基础设施，不被包装为 \LASA 微架构贡献。
+
+\subsection{Artifact 绑定}
+
+硬件、软件、模型和数据分别记录 SHA256。本文 r5 BIT/XSA 的完整哈希由
+证据 manifest 绑定；参数 manifest 绑定
+量化 checkpoint、校准列表、13 层 section、bias/weight 和生成脚本；输入
+index 绑定 5000 个 image id、预处理张量、原图尺寸及 letterbox 元数据；
+结果 summary 绑定原始 timing/predictions/CRC。硬件与软件 Git SHA 可以不同，
+但每一侧都必须 clean 且由 manifest 明确记录。论文表格只从这些 JSON/报告
+生成，禁止从终端截图或人工笔记抄数。

@@ -1,0 +1,25 @@
+\begin{figure*}[t]
+\centering
+\begin{tikzpicture}[>=Latex,node distance=7mm,
+  byte/.style={draw,minimum width=9mm,minimum height=7mm,font=\scriptsize},
+  bank/.style={draw,rounded corners,minimum width=28mm,minimum height=10mm,align=center,fill=LasaCyan!12}]
+\foreach \i/\lab in {0/{p0,c0},1/{p0,c1},2/{p0,c2},3/{p0,c3},4/{p1,c0},5/{p1,c1},6/{p1,c2},7/{p1,c3}}{
+  \node[byte,fill=LasaGreen!10] (x\i) at (1.0*\i,0) {\lab};
+}
+\node[anchor=east] at (-0.3,0) {DDR HWC字节流};
+\node[bank] (b0) at (1.1,-1.7) {Bank 0\\$(pixel,channel)\bmod B=0$};
+\node[bank] (b1) at (4.3,-1.7) {Bank 1\\$(pixel,channel)\bmod B=1$};
+\node[bank] (meta) at (7.5,-1.7) {row/tag metadata\\valid/epoch/地址};
+\foreach \i in {0,...,7}{
+  \pgfmathtruncatemacro{\target}{mod(\i,2)}
+  \ifnum\target=0 \draw[->,LasaBlue] (x\i.south)--(b0.north);\else \draw[->,LasaBlue] (x\i.south)--(b1.north);\fi
+}
+\node[draw,rounded corners,fill=LasaOrange!12,minimum width=84mm,minimum height=11mm,align=center] (win) at (4.3,-3.5) {窗口地址生成：$(o_y,o_x,k_{base},lane)\rightarrow(row,bank,byte)$\\越界直接注入内部 signed zero};
+\draw[->,thick] (b0)--(win); \draw[->,thick] (b1)--(win); \draw[->,thick] (meta)--(win);
+\node[draw,rounded corners,fill=LasaBlue!15,minimum width=55mm,minimum height=10mm,align=center] (vec) at (4.3,-5.0) {每个输出像素的 18-lane $K$ 向量\\写入 replay cache，跨 pass 重放};
+\draw[->,thick] (win)--(vec);
+\end{tikzpicture}
+\caption{HWC 输入的银行化、窗口物化和重放。硬件在片上保持 HWC 语义，
+不要求 PS 生成完整 im2col；地址和 epoch 元数据用于防止跨上下文覆盖。}
+\label{fig:hwc-banks}
+\end{figure*}

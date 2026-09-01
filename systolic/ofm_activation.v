@@ -22,16 +22,22 @@ module ofm_activation #(
     input        lut_wr_en,
     input  [7:0] lut_wr_addr,
     input  [7:0] lut_wr_data,
+    input  [7:0] lut_rd_addr,
+    output [7:0] lut_rd_data,
 
     output reg                  out_valid,
     input                       out_ready,
     output reg [ADDR_W-1:0]     out_addr,
+    output reg                  out_addr_zero,
     output reg [10:0]           out_cout_base,
     output reg [COUT_TILE-1:0]  out_channel_valid,
     output reg [COUT_TILE*8-1:0] out_data
 );
     wire can_advance = !out_valid || out_ready;
     assign in_ready = can_advance;
+
+    wire [COUT_TILE*8-1:0] lut_rd_flat;
+    assign lut_rd_data = lut_rd_flat[7:0];
 
     genvar lane;
     generate
@@ -44,7 +50,9 @@ module ofm_activation #(
                 .wr_addr(lut_wr_addr),
                 .wr_data(lut_wr_data),
                 .data_in(in_data[lane*8 +: 8]),
-                .data_out(lut_out)
+                .data_out(lut_out),
+                .rd_addr(lut_rd_addr),
+                .rd_data(lut_rd_flat[lane*8 +: 8])
             );
 
             always @(posedge clk) begin
@@ -66,12 +74,14 @@ module ofm_activation #(
         if (rst) begin
             out_valid <= 1'b0;
             out_addr <= {ADDR_W{1'b0}};
+            out_addr_zero <= 1'b1;
             out_cout_base <= 11'd0;
             out_channel_valid <= {COUT_TILE{1'b0}};
         end else if (can_advance) begin
             out_valid <= in_valid;
             if (in_valid) begin
                 out_addr <= in_addr;
+                out_addr_zero <= (in_addr == {ADDR_W{1'b0}});
                 out_cout_base <= in_cout_base;
                 out_channel_valid <= in_channel_valid;
             end

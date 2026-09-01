@@ -1,0 +1,77 @@
+{
+  "format": "lasa-journal-generated-evidence",
+  "version": 1,
+  "source_kind": "snapshot",
+  "sources": {
+    "snapshot": {
+      "path": "paper/lasa_journal_cn/data/evidence_snapshot.json",
+      "sha256": "edab9989710a1863a6b821af81801e444a36894d641e97f7628f79a433257fdf"
+    },
+    "paper_tables": {
+      "path": "paper/lasa_journal_cn/data/paper_tables.json",
+      "sha256": "b7f80999a7f3838d537b05cceca07daed171b670cd1cc489d4fef948031c3474"
+    },
+    "model_spec": {
+      "path": "tools/coco80/model_spec.json",
+      "sha256": "b2ee04c477439b79a3e6c896d1d6c167cb01ae78b1cf58cb5dea2471432b248f"
+    }
+  },
+  "generated_files": {
+    "ablation_table.tex": {
+      "bytes": 1343,
+      "sha256": "75a7d31e0fb81c92abaac776411868f98909a947bfd89ce4eadaa9ba64c0021d"
+    },
+    "accuracy_table.tex": {
+      "bytes": 530,
+      "sha256": "d7fde62d3779290837ffe0a23a3844ab204e67d7ed73b6cd523b45de7d5c2055"
+    },
+    "artifact_table.tex": {
+      "bytes": 637,
+      "sha256": "fa6253ee64c0fd7d2ec5ae4b283d56ad04a0bbbfcec6eda00da485ea93ea9e91"
+    },
+    "correctness_table.tex": {
+      "bytes": 753,
+      "sha256": "4d51e49965b4c063f63dfa7414b3a062d3555f85bf6ef3f3bd09177d0f673655"
+    },
+    "evidence_macros.tex": {
+      "bytes": 1528,
+      "sha256": "744298db3ac8d40a1be40b38fbda0e57b0191a58c589ff391efe057c0b3cfbd0"
+    },
+    "external_table.tex": {
+      "bytes": 1103,
+      "sha256": "c409f3af72e753424683a798fb44ef56a27f7b08775e3ebc98352b567de8ba1c"
+    },
+    "freeze_gates_table.tex": {
+      "bytes": 665,
+      "sha256": "13b0cf34bed60912e6835d42bd6be5d7c4b277ca782e41cacd2c81ad9fa7b055"
+    },
+    "layer_latency_table.tex": {
+      "bytes": 541,
+      "sha256": "695a8e2123596a66b4b43417970438115c36c53828470e49c64daacf2d59e18b"
+    },
+    "layer_table.tex": {
+      "bytes": 1341,
+      "sha256": "cd41149498117e529f8b9b909cfe94f1279dcee04eade9f0c75de7eb2be998d2"
+    },
+    "performance_table.tex": {
+      "bytes": 515,
+      "sha256": "1cd5adf3c7bfee664c2b3d5fa74f61e01103f392eedcd834ff2cf2e6109bdc51"
+    },
+    "related_table.tex": {
+      "bytes": 895,
+      "sha256": "d117f691113e1861d30154b5749c0199ed21a7307d67451094185b50736ad370"
+    },
+    "resource_table.tex": {
+      "bytes": 732,
+      "sha256": "d479d06e9bef31fbbcf9a495fc76d7afd99180a76ed53a765387c9241dd97d73"
+    }
+  },
+  "publication_gates": {
+    "product_accuracy_5000": "PASS",
+    "controlled_ablation": "PENDING",
+    "cpu_scalar_baseline": "PENDING",
+    "cpu_neon_4core_baseline": "PENDING",
+    "post_route_power_estimate": "PASS",
+    "public_artifact_self_check": "PENDING"
+  }
+}

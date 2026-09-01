@@ -10,10 +10,20 @@ xvlog.*
 dfx_runtime.txt
 build_iverilog/
 build_xsim/
+build_coco80_host/
+tb/.sim/
 build_synth_xck26/
+build_materializer_xck26/
+build_materialized_cache_xck26/
 build_bd_*/
 build_system_*/
+/build_ooc_*/
+/build_*abi_v2_release*/
+/build_*abi_v2_ablation*/
 build_vitis_2022_2*/
+/b125_abi_v2_candidate/
+/b125_perf_abi_v2_candidate/
+/build_abi_v2_parameters/
 /build_vitis_*.tcl
 clockInfo.txt
 .Xil/
@@ -42,6 +52,7 @@ golden/tmp/
 golden/external/
 tools/golden/output/
 demo_output/
+/results/
 
 # Personal editor/agent settings
 .vscode/
@@ -71,3 +82,21 @@ demo_output/
 # The local LaTeX project is not part of the handoff repository. Only the
 # curated root-level Thesis.pdf is tracked.
 2022_Peking_University_Master_Thesis_Template_iofu728_pkuthss_/
+
+# Local reference thesis/template inspected while preparing the LASA journal
+# manuscript.  The publication source lives under paper/lasa_journal_cn/;
+# MiKTeX caches and legacy 100 MHz drafts in this directory are not artifacts.
+/Master_Thesis_Template/
+/tmp/pdfs/
+
+# Local release-staging and publication renders.
+/tmp/
+/git_history.txt
+/output/figures/
+/output/pdf/*.pdf
+
+# Journal-paper transient build products (the curated PDF is copied to
+# output/pdf/ and is intentionally not ignored).
+/paper/lasa_journal_cn/build/
+/paper/lasa_journal_cn/tmp/
+/paper/lasa_journal_cn_cjc_preview/build/

@@ -1,0 +1,39 @@
+\section{复现材料与数据生成}
+\label{app:repro}
+
+论文源码位于 \path{paper/lasa_journal_cn/}。执行
+\code{build.ps1} 会先运行证据生成器，再编译 PDF。生成器直接读取：
+\begin{itemize}[leftmargin=1.8em]
+  \item \path{build_abi_v2_release_r5/reports/system_impl_gate.txt}；
+  \item \path{tools/coco80/model_spec.json}；
+  \item 正式性能 \path{performance_final_summary/summary.json}；
+  \item 部署验证 \path{verification_snapshot.json}；
+  \item 外部 COCO 评测目录不可用时，显式使用
+  \path{data/evidence_snapshot.json}。
+\end{itemize}
+每个输入和生成的 tex 表均记录 SHA256 于
+\path{generated/evidence_manifest.json}。表中 PENDING 是数据状态而不是
+LaTeX 占位符；冻结脚本必须拒绝仍含 PENDING 的投稿 PDF。
+
+公开 artifact 计划包含 RTL、Vitis 软件、测试/构建脚本、论文表生成器、
+r5 BIT/XSA/ELF、参数 manifest、固定小型 golden 和结果摘要。COCO 原图和
+annotations 不重新分发，只提供官方获取说明、image-id 列表与 SHA256。
+大型 raw node/head 文件可以放在外部对象存储，仓库保留 index、大小、hash
+和下载验证工具。
+
+复现流程分为“数据重算”和“投稿冻结”两个层级。数据重算允许外部大文件暂时
+不可用，此时必须显式读取带来源说明的 snapshot，并在页首显示证据类型；它
+只用于继续编辑内部稿。投稿冻结则要求所有原始报告可访问、生成表格的哈希
+与 manifest 一致、九张核心图和参考文献数量满足合同，并且六项 publication
+gate 全部为 PASS。严格检查发现任一 PENDING、来源漂移、手工正文表格或摘要
+禁用表述都会返回非零状态，不生成“可投稿”标志。这样，即使 PDF 可以正常
+编译，也不会被误认为实验已经完整。
+
+最终 release tag 还应保存生成环境版本、Git 状态和构建命令，并在一台没有
+本地缓存的新环境执行自检。COCO 原图不进入仓库，但 image-id 顺序、下载来源、
+annotation 哈希和预处理合同必须足以重建相同输入；受版权或容量限制放在外部
+的 raw tensor 也必须先校验大小与 SHA256 再参与比较。论文中的每个数值由
+JSON/CSV 和生成脚本产生，人工只撰写解释文字，因此模型参数替换或新消融
+完成后，可以重建表格并自动暴露哪些结论需要同步修改。
+
+\input{generated/artifact_table.tex}

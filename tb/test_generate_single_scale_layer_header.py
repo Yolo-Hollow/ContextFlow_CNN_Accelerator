@@ -47,13 +47,18 @@ def main():
         for co in range(cout):
             assert packed_native[ch * cout + co] == native[co * cin + ch]
 
-    stream = MODULE.pack_weight_stream(packed_native, cin, cout)
-    assert len(stream) == 18 * 16
+    stream = MODULE.pack_weight_stream(
+        packed_native, cin, cout, rows=18, cout_tile=32
+    )
+    assert len(stream) == 18 * 32
     for ch in range(cin):
         for co in range(cout):
-            assert stream[ch * 16 + co] == packed_native[ch * cout + co]
-    assert all(value == 0 for value in stream[cout:16])
-    assert all(value == 0 for value in stream[cin * 16:])
+            assert stream[ch * 32 + co] == packed_native[ch * cout + co]
+    assert all(value == 0 for value in stream[cout:32])
+    assert all(value == 0 for value in stream[cin * 32:])
+
+    legacy_stream = MODULE.pack_weight_stream(packed_native, cin, cout)
+    assert len(legacy_stream) == 18 * 16
 
     print("PASS: native, sparse 3x3, and prepacked weight layouts")
 

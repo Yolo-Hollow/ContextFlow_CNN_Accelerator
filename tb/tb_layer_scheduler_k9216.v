@@ -64,6 +64,7 @@ module tb_layer_scheduler_k9216;
         .weight_load_start(weight_load_start),
         .weight_load_done(weight_load_done),
         .feeder_start(feeder_start),
+        .feeder_start_ready(1'b1),
         .feeder_done(feeder_done),
         .feeder_compute_ready(1'b0),
         .feeder_overlap_mode(1'b0),

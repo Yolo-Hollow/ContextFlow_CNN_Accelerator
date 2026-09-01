@@ -1,0 +1,25 @@
+\begin{figure*}[t]
+\centering
+\begin{tikzpicture}[>=Latex,node distance=7mm and 10mm,
+  box/.style={draw,rounded corners,minimum height=10mm,minimum width=28mm,align=center,fill=LasaLight},
+  cpu/.style={box,fill=LasaOrange!18}, accel/.style={box,fill=LasaBlue!15},
+  mem/.style={box,fill=LasaGreen!15}, io/.style={box,fill=gray!12},
+  flow/.style={->,thick,LasaGray}]
+\node[io] (eth) {千兆以太网/SD\\输入与结果归档};
+\node[cpu,right=of eth,minimum width=37mm] (a53) {四核 Cortex-A53\\DAG调度/张量算子\\双头 decode/NMS};
+\node[mem,right=of a53,minimum width=34mm] (ddr) {DDR tensor arena\\参数常驻/双尺度分支};
+\node[accel,below=15mm of ddr,minimum width=40mm] (lasa) {LASA PL IP\\13 个 INT8 卷积};
+\node[accel,left=of lasa,minimum width=35mm] (dma) {4 路 AXI DMA\\bias/weight/IFM/OFM};
+\node[io,left=of dma] (ctrl) {AXI-Lite\\配置/计数器};
+\draw[flow] (eth)--(a53);
+\draw[flow,<->] (a53)--(ddr);
+\draw[flow,<->] (ddr)--node[right,font=\scriptsize]{HP0--HP3}(lasa);
+\draw[flow,<->] (dma)--(lasa);
+\draw[flow] (ctrl)--(lasa);
+\draw[flow] (a53) |- (ctrl);
+\node[draw,dashed,fit=(ddr)(lasa)(dma)(ctrl),inner sep=5mm,label={[font=\small]below:XCK26 PL/PS 共享系统}] {};
+\end{tikzpicture}
+\caption{端到端 MPSoC 系统边界。网络/SD 只负责数据供给与证据封存；
+resident 计时从量化输入已驻 DDR 开始，到双头检测结果完成结束。}
+\label{fig:system}
+\end{figure*}

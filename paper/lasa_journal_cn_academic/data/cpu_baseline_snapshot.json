@@ -1,0 +1,51 @@
+{
+  "format": "lasa-same-board-cpu-baseline",
+  "version": 1,
+  "status": "PASS_SINGLE_IMAGE_REFERENCE",
+  "platform": {
+    "board": "KV260",
+    "processor": "4x Cortex-A53",
+    "cpu_clock_hz": 1333333008,
+    "implementation": "four-core NEON, output-channel partitioning"
+  },
+  "workload": {
+    "model": "YOLOv3-tiny COCO80 INT8",
+    "input": "1x416x416 RGB HWC",
+    "convolutions": 13,
+    "gops_per_image": 5.565,
+    "parameters_resident": true,
+    "excluded_from_timing": [
+      "JTAG",
+      "SD",
+      "TCP",
+      "UART"
+    ]
+  },
+  "sample": {
+    "image_id": 139,
+    "warmup_runs": 0,
+    "timed_runs": 1,
+    "resident_ms": 1625.8628923702947,
+    "conv_ms": 1615.7493613361198,
+    "tensor_ms": 9.991819818279984,
+    "decode_nms_ms": 0.11429114176850627,
+    "effective_gops": 3.422797842373388,
+    "detections": 4
+  },
+  "correctness": {
+    "raw_head_bytes": 215475,
+    "mismatch_bytes": 0,
+    "expected_heads_crc32": 1147440605,
+    "actual_heads_crc32": 1147440605
+  },
+  "source_record": {
+    "bytes": 4864,
+    "sha256": "4dfdc787e936677eaba00b17d7cfc9a69b6dd8d91c9ea00563afc07fac43784c"
+  },
+  "publication_values": {
+    "resident_ms": 1625.9,
+    "fps": 0.615,
+    "effective_gops": 3.423,
+    "lasa_resident_speedup": 46.5
+  }
+}

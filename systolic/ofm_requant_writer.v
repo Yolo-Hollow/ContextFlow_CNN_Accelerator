@@ -35,11 +35,17 @@ module ofm_requant_writer #(
     reg [ADDR_W-1:0] addr_r1;
     reg [10:0] cout_r1;
     reg [COLS*2-1:0] mask_r1;
+    reg [ADDR_W-1:0] addr_r2;
+    reg [10:0] cout_r2;
+    reg [COLS*2-1:0] mask_r2;
     always @(posedge clk) begin
         if (rst) begin
             addr_r1 <= {ADDR_W{1'b0}};
             cout_r1 <= 11'd0;
             mask_r1 <= {COLS*2{1'b0}};
+            addr_r2 <= {ADDR_W{1'b0}};
+            cout_r2 <= 11'd0;
+            mask_r2 <= {COLS*2{1'b0}};
             ofm_addr <= {ADDR_W{1'b0}};
             ofm_cout_base <= 11'd0;
             ofm_channel_valid <= {COLS*2{1'b0}};
@@ -49,9 +55,12 @@ module ofm_requant_writer #(
                 cout_r1 <= packet_cout_base;
                 mask_r1 <= packet_channel_valid;
             end
-            ofm_addr <= addr_r1;
-            ofm_cout_base <= cout_r1;
-            ofm_channel_valid <= mask_r1;
+            addr_r2 <= addr_r1;
+            cout_r2 <= cout_r1;
+            mask_r2 <= mask_r1;
+            ofm_addr <= addr_r2;
+            ofm_cout_base <= cout_r2;
+            ofm_channel_valid <= mask_r2;
         end
     end
 

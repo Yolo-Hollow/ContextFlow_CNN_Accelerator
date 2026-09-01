@@ -5,3 +5,9 @@
 *.png binary
 *.jpg binary
 *.jpeg binary
+
+# Machine-readable publication evidence must hash identically on every host.
+paper/lasa_journal_cn/data/*.json text eol=lf
+paper/lasa_journal_cn/generated/*.json text eol=lf
+paper/lasa_journal_cn/generated/*.tex text eol=lf
+tools/coco80/model_spec.json text eol=lf

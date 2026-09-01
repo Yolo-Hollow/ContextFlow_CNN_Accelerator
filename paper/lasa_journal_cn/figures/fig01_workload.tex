@@ -1,0 +1,27 @@
+\begin{figure*}[t]
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+  width=0.96\textwidth,height=6.1cm,
+  ybar,bar width=7pt,
+  ylabel={$K$-pass 数},
+  symbolic x coords={m0,m2,m4,m6,m8,m10,m13,m14,m15,m16,m19,P4,P5},
+  xtick=data,x tick label style={rotate=35,anchor=east,font=\small},
+  ymin=0,ymax=280,grid=major,
+  legend style={at={(0.5,1.02)},anchor=south,legend columns=2,draw=none},
+  nodes near coords,nodes near coords style={font=\scriptsize,rotate=90,anchor=west},
+]
+\addplot[fill=LasaBlue!75,draw=LasaBlue] coordinates {
+ (m0,2) (m2,8) (m4,16) (m6,32) (m8,64) (m10,128) (m13,256)
+ (m14,57) (m15,128) (m16,15) (m19,192) (P4,15) (P5,29)};
+\addlegendentry{$K$-pass}
+\end{axis}
+\node[anchor=north west,align=left,font=\small] at (-0.1,-0.35) {
+空间范围：$416^2\rightarrow 13^2$；$C_{out}$：16--1024；\\
+检测头 255 通道产生 8 个 Cout 块，最后一块仅 31 lane 有效。};
+\end{tikzpicture}
+\caption{完整 YOLOv3-tiny 卷积工作负载的异构性。m13 的 256 个 $K$-pass
+与 m19 的 192 个 $K$-pass 强调了长层反馈和重放的重要性；早期层则由大空间
+tile 与输入搬运主导。}
+\label{fig:workload}
+\end{figure*}

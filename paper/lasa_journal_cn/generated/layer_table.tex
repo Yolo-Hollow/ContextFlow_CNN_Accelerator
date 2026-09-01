@@ -1,0 +1,26 @@
+\begin{table*}[t]
+\centering
+\caption{完整 YOLOv3-tiny 的 13 个 PL 卷积层及安全分块。$K_{\mathrm{pass}}=\lceil K/18\rceil$，输出块宽为 32。}
+\label{tab:layer-config}
+\small
+\setlength{\tabcolsep}{4.2pt}
+\begin{tabular}{lrrrrrrrr}
+\toprule
+层 & $H\times W$ & $C_{in}$ & $C_{out}$ & 核 & $K$ & $K$-pass & Cout块 & tile\_h/块数 \\
+\midrule
+m0 & 416$\times$416 & 3 & 16 & 3$\times$3 & 27 & 2 & 1 & 2 / 208 \\
+m2 & 208$\times$208 & 16 & 32 & 3$\times$3 & 144 & 8 & 1 & 4 / 52 \\
+m4 & 104$\times$104 & 32 & 64 & 3$\times$3 & 288 & 16 & 2 & 8 / 13 \\
+m6 & 52$\times$52 & 64 & 128 & 3$\times$3 & 576 & 32 & 4 & 8 / 7 \\
+m8 & 26$\times$26 & 128 & 256 & 3$\times$3 & 1152 & 64 & 8 & 13 / 2 \\
+m10 & 13$\times$13 & 256 & 512 & 3$\times$3 & 2304 & 128 & 16 & 13 / 1 \\
+m13 & 13$\times$13 & 512 & 1024 & 3$\times$3 & 4608 & 256 & 32 & 8 / 2 \\
+m14 & 13$\times$13 & 1024 & 256 & 1$\times$1 & 1024 & 57 & 8 & 13 / 1 \\
+m15 & 13$\times$13 & 256 & 512 & 3$\times$3 & 2304 & 128 & 16 & 13 / 1 \\
+m16 & 13$\times$13 & 256 & 128 & 1$\times$1 & 256 & 15 & 4 & 13 / 1 \\
+m19 & 26$\times$26 & 384 & 256 & 3$\times$3 & 3456 & 192 & 8 & 6 / 5 \\
+p4\_detect & 26$\times$26 & 256 & 255 & 1$\times$1 & 256 & 15 & 8 & 13 / 2 \\
+p5\_detect & 13$\times$13 & 512 & 255 & 1$\times$1 & 512 & 29 & 8 & 13 / 1 \\
+\bottomrule
+\end{tabular}
+\end{table*}

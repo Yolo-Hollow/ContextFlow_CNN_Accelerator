@@ -1,0 +1,131 @@
+{
+  "format": "lasa-academic-a3-ablation-snapshot",
+  "runtime": [
+    {
+      "fps": 24.98422792395427,
+      "pl_mean_ms": 38.655386260642075,
+      "resident_mean_ms": 40.025251252260006,
+      "resident_p95_ms": 40.04732157274251,
+      "speedup_over_previous": 1.0,
+      "stream_config": "0x2B"
+    },
+    {
+      "fps": 24.984328531635988,
+      "pl_mean_ms": 38.65493455279618,
+      "resident_mean_ms": 40.025090077316534,
+      "resident_p95_ms": 40.046695066483714,
+      "speedup_over_previous": 1.0000040268477388,
+      "stream_config": "0x3B"
+    },
+    {
+      "fps": 24.985243301377526,
+      "pl_mean_ms": 38.65358560265351,
+      "resident_mean_ms": 40.023624662677044,
+      "resident_p95_ms": 40.04581055764747,
+      "speedup_over_previous": 1.000036613741305,
+      "stream_config": "0x3F"
+    },
+    {
+      "fps": 28.589280048703404,
+      "pl_mean_ms": 33.60822317281617,
+      "resident_mean_ms": 34.978145595007824,
+      "resident_p95_ms": 34.99946114461684,
+      "speedup_over_previous": 1.1442466140454663,
+      "stream_config": "0xBF"
+    }
+  ],
+  "runtime_full_speedup": 1.144293117070578,
+  "runtime_latency_reduction_percent": 12.609803809706754,
+  "secondary": [
+    {
+      "baseline": "sparse3x3",
+      "baseline_contexts": 16384,
+      "baseline_mean_us": 8065.868911363757,
+      "baseline_p95_us": 8066.4515838513225,
+      "baseline_weight_bytes": 9437184,
+      "layer": "m14",
+      "preferred": "release",
+      "preferred_contexts": 456,
+      "preferred_mean_us": 1108.1388036399817,
+      "preferred_p95_us": 1108.5520744352236,
+      "preferred_weight_bytes": 262656,
+      "speedup": 7.27875324360922
+    },
+    {
+      "baseline": "sparse3x3",
+      "baseline_contexts": 512,
+      "baseline_mean_us": 833.4625262906376,
+      "baseline_p95_us": 834.1783334415511,
+      "baseline_weight_bytes": 294912,
+      "layer": "m16",
+      "preferred": "release",
+      "preferred_contexts": 60,
+      "preferred_mean_us": 319.94226288987295,
+      "preferred_p95_us": 320.40320082797626,
+      "preferred_weight_bytes": 34560,
+      "speedup": 2.6050404181129485
+    },
+    {
+      "baseline": "sparse3x3",
+      "baseline_contexts": 4096,
+      "baseline_mean_us": 4768.745406433277,
+      "baseline_p95_us": 4769.347645782981,
+      "baseline_weight_bytes": 2359296,
+      "layer": "p4_detect",
+      "preferred": "release",
+      "preferred_contexts": 240,
+      "preferred_mean_us": 927.2453298475118,
+      "preferred_p95_us": 927.7492682151894,
+      "preferred_weight_bytes": 138240,
+      "speedup": 5.142916607859876
+    },
+    {
+      "baseline": "sparse3x3",
+      "baseline_contexts": 4096,
+      "baseline_mean_us": 2993.9419761470085,
+      "baseline_p95_us": 2994.5799158533596,
+      "baseline_weight_bytes": 2359296,
+      "layer": "p5_detect",
+      "preferred": "release",
+      "preferred_contexts": 232,
+      "preferred_mean_us": 639.7354576238884,
+      "preferred_p95_us": 640.1873954720808,
+      "preferred_weight_bytes": 133632,
+      "speedup": 4.679968790954837
+    },
+    {
+      "baseline": "tile_h4",
+      "baseline_contexts": 32768,
+      "baseline_mean_us": 15788.118289968384,
+      "baseline_p95_us": 15788.699729110294,
+      "baseline_weight_bytes": 18874368,
+      "layer": "m13",
+      "preferred": "tile_h8",
+      "preferred_contexts": 16384,
+      "preferred_mean_us": 11147.56979755561,
+      "preferred_p95_us": 11148.241370931295,
+      "preferred_weight_bytes": 9437184,
+      "speedup": 1.4162834211121362
+    },
+    {
+      "baseline": "tile_h3",
+      "baseline_contexts": 13824,
+      "baseline_mean_us": 8745.016896052124,
+      "baseline_p95_us": 8745.447867024192,
+      "baseline_weight_bytes": 7962624,
+      "layer": "m19",
+      "preferred": "tile_h6",
+      "preferred_contexts": 7680,
+      "preferred_mean_us": 7385.321612696244,
+      "preferred_p95_us": 7385.854284684304,
+      "preferred_weight_bytes": 4423680,
+      "speedup": 1.184107795795704
+    }
+  ],
+  "source": {
+    "runtime_summary_sha256": "fabc6068e4b99e8c633d3ab235fbe3bcf65fa0a968aa59557ed6d96676242d55",
+    "secondary_summary_sha256": "b6e75571b56a8389e7650b6f1bee50cb3efc350eb6012a406c43e366f45df8a1"
+  },
+  "status": "PASS",
+  "version": 1
+}

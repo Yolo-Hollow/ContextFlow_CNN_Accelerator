@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>KV260 COCO80 推理工具</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">KV260 · r5 · 200 MHz</p>
+        <h1>COCO80 板端推理工具</h1>
+        <p class="subtitle">上传图片，经千兆以太网发送至开发板，返回真实A53后处理结果与逐层延时。</p>
+      </div>
+      <button id="statusButton" class="status-button" type="button">
+        <span id="statusDot" class="status-dot"></span>
+        <span id="statusText">检查环境</span>
+      </button>
+    </header>
+
+    <section class="workspace">
+      <article class="card upload-card">
+        <div class="card-heading">
+          <span class="step">01</span>
+          <div><h2>选择输入图像</h2><p>JPEG / PNG / WebP / BMP，最大20 MiB</p></div>
+        </div>
+        <input id="fileInput" type="file" accept="image/jpeg,image/png,image/webp,image/bmp" hidden>
+        <button id="dropZone" class="drop-zone" type="button">
+          <img id="preview" alt="上传图片预览" hidden>
+          <span id="dropPrompt"><b>拖入图片</b><small>或点击从电脑选择</small></span>
+        </button>
+        <div id="fileMeta" class="file-meta">尚未选择图片</div>
+
+        <div class="controls">
+          <label class="control-label">板端后处理模式</label>
+          <div class="segment">
+            <label><input type="radio" name="profile" value="demo" checked><span>演示模式 <small>0.25 / 0.45</small></span></label>
+            <label><input type="radio" name="profile" value="accuracy"><span>精度模式 <small>0.001 / 0.65</small></span></label>
+          </div>
+          <label class="range-row" for="confidence">
+            <span>可视化最低置信度</span><output id="confidenceValue">0.25</output>
+          </label>
+          <input id="confidence" type="range" min="0" max="1" step="0.01" value="0.25">
+          <button id="inferButton" class="primary" type="button" disabled>
+            <span class="button-label">发送到开发板并推理</span>
+            <span class="spinner" hidden></span>
+          </button>
+          <p id="errorBox" class="error" hidden></p>
+        </div>
+      </article>
+
+      <article class="card result-card">
+        <div class="card-heading">
+          <span class="step">02</span>
+          <div><h2>可视化输出</h2><p id="resultSubtitle">等待一次真实板端推理</p></div>
+        </div>
+        <div id="resultPlaceholder" class="result-placeholder">
+          <div class="chip-icon">PL</div>
+          <p>结果图将在这里显示</p>
+        </div>
+        <img id="resultImage" class="result-image" alt="板端推理可视化结果" hidden>
+        <div id="detectionSummary" class="detection-summary" hidden></div>
+      </article>
+    </section>
+
+    <section id="metricsSection" class="metrics-section" hidden>
+      <div class="section-title"><span class="step">03</span><div><h2>延时与运行证据</h2><p>板端计时使用全局定时器；主机墙钟包含TCP和参数传输。</p></div></div>
+      <div id="metricCards" class="metric-cards"></div>
+      <div class="detail-grid">
+        <article class="card detail-card"><h3>13个PL卷积</h3><div id="plBars" class="bars"></div></article>
+        <article class="card detail-card"><h3>A53张量算子与后处理</h3><div id="a53Bars" class="bars"></div></article>
+      </div>
+      <article class="card evidence-card">
+        <h3>结果记录</h3>
+        <div id="evidence" class="evidence"></div>
+      </article>
+    </section>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>

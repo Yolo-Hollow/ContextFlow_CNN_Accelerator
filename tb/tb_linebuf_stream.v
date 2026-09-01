@@ -29,7 +29,7 @@ module tb_linebuf_stream;
     reg [1:0] stride, pad;
     reg [AW-1:0] fm_h, fm_w;
     reg [AW-1:0] oy, ox;
-    reg [10:0] base;
+    reg [13:0] base;
     wire [255:0] ifm_data;
     wire ifm_valid, window_ready;
 

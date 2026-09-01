@@ -21,6 +21,7 @@ module ofm_pooling #(
     input                       in_valid,
     output                      in_ready,
     input  [ADDR_W-1:0]         in_addr,
+    input                       in_addr_zero,
     input  [10:0]               in_cout_base,
     input  [COUT_TILE-1:0]      in_channel_valid,
     input  [COUT_TILE*8-1:0]    in_data,
@@ -34,7 +35,12 @@ module ofm_pooling #(
 );
     localparam [1:0] POOL_STRIDE2 = 2'd2;
 
+    // A single asynchronous row-buffer read is sufficient: while consuming
+    // an even bottom-row pixel, retain its top-row partner for the following
+    // odd pixel.  Avoiding simultaneous reads of x and x-1 prevents synthesis
+    // from duplicating this wide distributed RAM.
     reg [COUT_TILE*8-1:0] top_row_data [0:OFM_W_MAX-1];
+    reg [COUT_TILE*8-1:0] top_left_data;
     reg [COUT_TILE*8-1:0] bottom_left_data;
     reg [8:0] x_cnt;
     reg [8:0] y_cnt;
@@ -44,9 +50,8 @@ module ofm_pooling #(
     assign in_ready = can_advance;
 
     wire fire = in_valid && in_ready;
-    wire addr_zero = (in_addr == {ADDR_W{1'b0}});
-    wire [8:0] x_cur = addr_zero ? 9'd0 : x_cnt;
-    wire [8:0] y_cur = addr_zero ? 9'd0 : y_cnt;
+    wire [8:0] x_cur = in_addr_zero ? 9'd0 : x_cnt;
+    wire [8:0] y_cur = in_addr_zero ? 9'd0 : y_cnt;
     wire [8:0] pool_out_w = {1'b0, conv_ofm_w[8:1]};
     wire is_bottom_right = pool_active && y_cur[0] && x_cur[0];
     wire [ADDR_W-1:0] pooled_addr =
@@ -60,7 +65,7 @@ module ofm_pooling #(
     always @(*) begin
         pooled_data = {COUT_TILE*8{1'b0}};
         for (lane = 0; lane < COUT_TILE; lane = lane + 1) begin
-            v0 = (x_cur == 9'd0) ? 8'd0 : top_row_data[x_cur - 9'd1][lane*8 +: 8];
+            v0 = top_left_data[lane*8 +: 8];
             v1 = top_row_data[x_cur][lane*8 +: 8];
             v2 = bottom_left_data[lane*8 +: 8];
             v3 = in_data[lane*8 +: 8];
@@ -92,8 +97,10 @@ module ofm_pooling #(
                 end else begin
                     if (!y_cur[0])
                         top_row_data[x_cur] <= in_data;
-                    else if (!x_cur[0])
+                    else if (!x_cur[0]) begin
+                        top_left_data <= top_row_data[x_cur];
                         bottom_left_data <= in_data;
+                    end
 
                     if (is_bottom_right) begin
                         out_valid <= 1'b1;

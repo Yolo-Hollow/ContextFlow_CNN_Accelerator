@@ -8,7 +8,7 @@ module tb_window_feeder_pad1;
     reg clk, rst, start;
     reg [AW-1:0] fm_h, fm_w, ofm_h, ofm_w;
     reg [1:0] stride, pad;
-    reg [10:0] pass_base_k;
+    reg [13:0] pass_base_k;
     wire fill_req;
     wire [AW-1:0] fill_fy;
     reg [4:0] dma_bank_wr_en;

@@ -35,12 +35,15 @@ module conv_accel_core_axi_lite_stream #(
     parameter OFM_ADDR_W = 24,
     parameter OFM_FIFO_DEPTH = 32,
     parameter OFM_FIFO_AW = 5,
-    parameter TAIL_CYCLES_CONFIG = `SYSTOLIC_TAIL_CYCLES_CONFIG
+    parameter TAIL_CYCLES_CONFIG = `SYSTOLIC_TAIL_CYCLES_CONFIG,
+    parameter ENABLE_COLUMN_PSUM = 0,
+    parameter ENABLE_TAGGED_CONTEXT = 0,
+    parameter ENABLE_DETAILED_TRACE = 1
 ) (
     input  clk,
     input  rst,
 
-    input  [8:0]  s_axi_awaddr,
+    input  [9:0]  s_axi_awaddr,
     input         s_axi_awvalid,
     output        s_axi_awready,
     input  [31:0] s_axi_wdata,
@@ -50,7 +53,7 @@ module conv_accel_core_axi_lite_stream #(
     output [1:0]  s_axi_bresp,
     output        s_axi_bvalid,
     input         s_axi_bready,
-    input  [8:0]  s_axi_araddr,
+    input  [9:0]  s_axi_araddr,
     input         s_axi_arvalid,
     output        s_axi_arready,
     output [31:0] s_axi_rdata,
@@ -64,6 +67,7 @@ module conv_accel_core_axi_lite_stream #(
     output [13:0] current_pass_base_k,
     output [13:0] current_feeder_pass_base_k,
     output [7:0]  configured_input_zero_point,
+    output        configured_datapath_reset,
 
     output              bias_s_ready,
     input               bias_s_valid,
@@ -110,12 +114,13 @@ module conv_accel_core_axi_lite_stream #(
     wire unused_configured_pool_enable;
     wire [1:0] unused_configured_pool_stride;
     wire [31:0] unused_configured_expected_bytes;
+    wire datapath_rst = rst || configured_datapath_reset;
 
     bias_weight_stream_loader #(
         .ROWS(ROWS), .COLS(COLS), .PSUM_W(PSUM_W), .WEIGHT_W(WEIGHT_W),
         .BIAS_ADDR_W(6), .WGT_ADDR_W(WGT_TILE_AW)
     ) u_bw_loader (
-        .clk(clk), .rst(rst),
+        .clk(clk), .rst(datapath_rst),
         .bias_load_req(bias_load_req), .bias_s_ready(bias_s_ready),
         .bias_s_valid(bias_s_valid), .bias_s_data(bias_s_data),
         .bias_load_done(bias_load_done),
@@ -138,7 +143,10 @@ module conv_accel_core_axi_lite_stream #(
         .WGT_TILE_AW(WGT_TILE_AW), .PSUM_BUF_AW(PSUM_BUF_AW), .PSUM_BUF_DEPTH(PSUM_BUF_DEPTH),
         .MULT_W(MULT_W), .SHIFT_W(SHIFT_W), .ZP_W(ZP_W),
         .OFM_ADDR_W(OFM_ADDR_W), .OFM_FIFO_DEPTH(OFM_FIFO_DEPTH), .OFM_FIFO_AW(OFM_FIFO_AW),
-        .TAIL_CYCLES_CONFIG(TAIL_CYCLES_CONFIG)
+        .TAIL_CYCLES_CONFIG(TAIL_CYCLES_CONFIG),
+        .ENABLE_COLUMN_PSUM(ENABLE_COLUMN_PSUM),
+        .ENABLE_TAGGED_CONTEXT(ENABLE_TAGGED_CONTEXT),
+        .ENABLE_DETAILED_TRACE(ENABLE_DETAILED_TRACE)
     ) u_core (
         .clk(clk), .rst(rst),
         .s_axi_awaddr(s_axi_awaddr), .s_axi_awvalid(s_axi_awvalid), .s_axi_awready(s_axi_awready),
@@ -153,6 +161,7 @@ module conv_accel_core_axi_lite_stream #(
         .configured_cout_total(unused_configured_cout_total),
         .configured_num_pixels(unused_configured_num_pixels),
         .configured_input_zero_point(configured_input_zero_point),
+        .configured_datapath_reset(configured_datapath_reset),
         .configured_ofm_w(unused_configured_ofm_w),
         .configured_pool_enable(unused_configured_pool_enable),
         .configured_pool_stride(unused_configured_pool_stride),
@@ -160,6 +169,9 @@ module conv_accel_core_axi_lite_stream #(
         .debug_expected_bytes(32'd0), .debug_core_wr_count(32'd0),
         .debug_axis_wr_count(32'd0), .debug_tlast_count(32'd0),
         .debug_last_tlast_index(32'd0),
+        .debug_packed_ofm_axis_byte_count(32'd0),
+        .debug_packed_ofm_axis_stall_cycles(32'd0),
+        .debug_packed_ofm_protocol_error(1'b0),
         .raw_hwc_load_active_cycles(32'd0),
         .raw_hwc_load_unpack_cycles(32'd0),
         .raw_hwc_replay_active_cycles(32'd0),

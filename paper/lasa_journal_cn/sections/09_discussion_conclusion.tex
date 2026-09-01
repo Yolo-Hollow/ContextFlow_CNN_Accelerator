@@ -1,0 +1,80 @@
+\section{讨论与结论}
+\label{sec:discussion}
+
+\subsection{性能瓶颈与可扩展性}
+
+当前结果表明，完整系统的主要瓶颈仍在 PL 长卷积而非 A53 后处理。m13 与
+m19 合计约占 PL 时间 44.1\%，两者分别由 256/192 个 $K$-pass 主导。\LASA
+已经通过物化重放和跨 pass 调度隐藏一部分输入、权重和反馈开销，但固定
+18 行意味着长 $K$ 仍需大量上下文。扩大 ROWS 可以降低 pass 数，却会线性
+增加 DSP 和 cascade 长度，并加剧 placement；扩大 COLS 能减少 Cout block，
+但当前 CLB 已占 76.13\%、WNS 仅 4 ps。因而下一代设计更现实的方向是：
+提高长层权重/PSUM overlap 的有效覆盖，减少 context 控制扇出，或对 m13/m19
+采用物理分区与更精细的双层调度，而不是简单复制阵列。
+
+URAM 使用 48/64（75\%）同样限制了“大缓存解决一切”。当前 materialized
+depth=32768 恰好允许 m19 tile\_h=6；更大 tile 会减少 dispatch，但扩大缓存
+可能推高 URAM 和跨区路由。层自适应选择的价值正在于把 m0 的空间压力、
+m13 的 $K$ 压力和 m19 的联合压力映射到不同 tile，而不追求一个全层统一的
+最大 tile。
+
+\subsection{功能边界}
+
+本文原生覆盖标准 dense 1$\times$1 和 3$\times$3 卷积、per-tensor INT8、
+int32 PSUM、LUT 激活和 HWC 输出。depthwise、group convolution、residual
+element-wise、dilated convolution 与动态 shape 尚非原生支持。它们可以通过
+多次 dispatch 或 A53 软件实现，但性能和参数格式会不同，不能据本文结果
+外推。检测 head 的 255 通道尾块已经验证，却不意味着任意 per-channel
+requant：当前量化参数在 32-lane 寄存器上跨 Cout block 复用，适合 per-tensor
+scale；任意 255 个独立 multiplier 需要拆分 dispatch 或扩展 RTL。
+
+当前普通 pool、特殊 pool、upsample 和 concat 位于 A53。A53 平均仅约 1.3 ms，
+所以把它们全部移到 PL 的理论上限收益有限；不过 pool 和 concat 的独立流式
+sidecar 可以减少 DDR 往返并简化四核 cache 合同。若进行下一版硬件迭代，
+最自然的模块是支持 stride1/2、非对称 padding 的 2$\times$2 maxpool，以及
+融合 nearest-upsample、route requant 和 HWC concat 的双输入 sidecar。
+完整 NMS 具有数据相关排序和 $O(N^2)$ 控制，且当前 LUT+早筛后的 decode
+只有约 0.175 ms，优先级低于长卷积。
+
+\subsection{精度、功耗与比较限制}
+
+量化精度不是本文贡献。当前 epoch-1 INT8 相对 FP32-416 的 AP50:95/AP50
+下降 3.190/3.281 个百分点，未满足模型 release 门限。板端与 host 的完全
+一致只证明“正确执行了当前参数”，不证明参数足够好。后续服务器 QAT 可以
+替换权重、bias、LUT 和量化 manifest；论文冻结时应选择最终参数并重跑所有
+正确性与性能证据，但 \LASA 的数据流和调度论点不依赖某次训练损失。
+
+目前没有板级电源测量。Vivado post-route power 估算给出整芯片
+\PostRoutePowerTotalW{} W，其中动态 \PostRoutePowerDynamicW{} W、静态
+\PostRoutePowerStaticW{} W；该结果依赖 vectorless activity 和温度假设，
+置信度为 \PostRoutePowerConfidence{}。本文将其明确标为估算，不与其他论文的
+板级实测 GOPS/W 排名。类似地，外部 FPGA/ASIC
+工作在网络版本、输入、batch、精度、后处理和 latency 边界上差异显著；
+本文重点比较完整性、层适应性和验证方法，不跨设备声称绝对领先。
+
+\subsection{证据完整性与投稿状态}
+
+当前已具备：正式 r5 200 MHz bitstream、route 门禁、128 张 22 节点
+byte-exact、5000 张 raw-head 与 A53 product mAP、3$\times$1000 resident 性能、
+600 s soak、SD 冷启动复测和 post-route 功耗估算。尚缺受控消融、完整 CPU
+基线和公开 artifact 自检。\cref{fig:evidence-matrix}
+和 \cref{tab:freeze-gates} 将这些项置于正文中，目的是阻止初稿中的机制描述
+被误读为已测结论。只有所有 PENDING 转为带 hash 的 PASS，才能删除内部稿
+banner 并冻结投稿摘要。
+
+\subsection{结论}
+
+本文提出面向边缘 MPSoC 完整目标检测的 \LASA。第一，18$\times$16 双输出
+通道阵列通过原生 1$\times$1/3$\times$3、尾 pass 与尾通道支持同一网络中
+高度异构的 13 个卷积；第二，片上 HWC 物化/重放使 software-visible HWC
+与阵列 $K$ 向量之间无需逐 pass DDR 重排；第三，tagged context、权重预载、
+fast handoff、continuous PSUM 和 drain ring 在严格所有权与顺序提交下隐藏
+pass/上下文边界；第四，系统以 RTL-semantic host、板端逐节点、完整 COCO
+raw head、性能和稳定性形成可复现证据链。
+
+在 XCK26 200 MHz 上，当前 r5 完整网络 resident 平均 34.943 ms、P95
+34.965 ms、28.618 FPS，PL 有效 165.6 GOPS，对 576-MAC 理论峰值的利用率
+约 71.9\%。结果同时暴露了清晰边界：m13/m19 长层仍主导 PL 时间，WNS 仅
+4 ps，URAM 使用 75\%，模型量化精度尚未达到 release 门限。因而本文的结论
+不是“所有问题已经结束”，而是展示一种在固定资源下把 HWC 数据布局、长
+$K$ 反馈、上下文切换和完整系统验证同时纳入设计的可行方法。

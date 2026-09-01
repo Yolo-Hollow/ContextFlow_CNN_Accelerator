@@ -1,0 +1,29 @@
+\begin{figure*}[t]
+\centering
+\begin{tikzpicture}[>=Latex,scale=0.9,transform shape]
+\foreach \r in {0,...,4}{
+  \foreach \c in {0,...,5}{
+    \node[draw,minimum width=9mm,minimum height=7mm,fill=LasaBlue!10] (p\r\c) at (1.1*\c,-0.85*\r) {PE};
+  }
+}
+\foreach \r in {0,...,4}{
+  \draw[->,LasaGreen!70!black,thick] (-1,-0.85*\r)--(p\r0.west);
+  \foreach \c in {0,...,4}{\draw[->,LasaGreen!70!black] (p\r\c.east)--(p\r\the\numexpr\c+1\relax.west);}
+}
+\foreach \c in {0,...,5}{
+  \draw[->,LasaOrange!90!black,thick] (p0\c.north)+(0,0.6)--(p0\c.north);
+  \foreach \r in {0,...,3}{\draw[->,LasaOrange!90!black] (p\r\c.south)--(p\the\numexpr\r+1\relax\c.north);}
+  \draw[->,LasaRed,thick] (p4\c.south)--+(0,-0.6);
+}
+\node[align=left,anchor=west] at (7.4,-0.4) {实际阵列：18 行$\times$16 列\\每列两套 weight/PSUM lane\\每拍最多 576 次 INT8 MAC};
+\node[draw,rounded corners,fill=LasaLight,align=left,anchor=west] at (7.4,-2.3) {
+PE：$p'_{0}=p_{0}+xw_{0}$\\\phantom{PE：}$p'_{1}=p_{1}+xw_{1}$\\
+权重驻留；IFM 横向；PSUM 纵向};
+\node[LasaGreen!70!black] at (-1.2,0.55) {IFM};
+\node[LasaOrange!90!black] at (2.8,0.8) {bias/feedback PSUM};
+\node[LasaRed] at (2.8,-4.2) {32-lane PSUM packet};
+\end{tikzpicture}
+\caption{18$\times$16 双输出通道脉动阵列与 PE 语义。图中缩略为 5$\times$6，
+实际每个物理列并行计算两个输出通道，因此 16 列形成 32 通道输出块。}
+\label{fig:array-pe}
+\end{figure*}

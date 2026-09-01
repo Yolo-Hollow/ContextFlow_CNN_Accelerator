@@ -130,6 +130,9 @@
 `ifndef TB_COLUMN_PSUM_OVERRIDE
 `define TB_COLUMN_PSUM_OVERRIDE 0
 `endif
+`ifndef TB_ENABLE_COLUMN_PSUM_COMPILED
+`define TB_ENABLE_COLUMN_PSUM_COMPILED `TB_COLUMN_PSUM_OVERRIDE
+`endif
 `ifndef TB_CONV_ACCEL_CORE_TILE_OY_BASE
 `define TB_CONV_ACCEL_CORE_TILE_OY_BASE 0
 `endif
@@ -192,6 +195,8 @@
 `define TB_DUT_BW_LOADER dut
 `define TB_DUT_IFM_LOADER dut
 `endif
+
+`define TB_DUT_SYSTOLIC `TB_DUT_LAYER.u_top.g_legacy_context_core.u_core
 
 module `TB_CONV_ACCEL_CORE_MODULE;
     localparam ROWS = `TB_CONV_ACCEL_CORE_ROWS;
@@ -271,12 +276,12 @@ module `TB_CONV_ACCEL_CORE_MODULE;
 
     reg clk, rst;
     reg cfg_wr_en, cfg_rd_en;
-    reg [6:0] cfg_addr;
+    reg [7:0] cfg_addr;
     reg [31:0] cfg_wdata;
     wire [31:0] cfg_rdata;
     reg [31:0] cfg_read_data;
 `ifdef TB_CONV_ACCEL_CORE_USE_AXI_LITE
-    reg [8:0] axi_awaddr;
+    reg [9:0] axi_awaddr;
     reg axi_awvalid;
     wire axi_awready;
     reg [31:0] axi_wdata;
@@ -286,7 +291,7 @@ module `TB_CONV_ACCEL_CORE_MODULE;
     wire [1:0] axi_bresp;
     wire axi_bvalid;
     reg axi_bready;
-    reg [8:0] axi_araddr;
+    reg [9:0] axi_araddr;
     reg axi_arvalid;
     wire axi_arready;
     wire [31:0] axi_rdata;
@@ -336,6 +341,7 @@ module `TB_CONV_ACCEL_CORE_MODULE;
     wire bias_axis_error;
     wire weight_axis_error;
     wire ifm_axis_error;
+    wire ofm_axis_error;
 `endif
 `ifdef TB_CONV_ACCEL_CORE_USE_FULL_STREAM
     wire ifm_line_s_ready;
@@ -392,12 +398,16 @@ module `TB_CONV_ACCEL_CORE_MODULE;
         .WGT_TILE_AW(WGT_TILE_AW), .PSUM_BUF_AW(PSUM_A), .PSUM_BUF_DEPTH(PSUM_BUF_D),
         .OFM_ADDR_W(OFM_ADDR_W),
         .OFM_FIFO_DEPTH(`TB_CONV_ACCEL_CORE_OFM_FIFO_DEPTH),
-        .OFM_FIFO_AW(`TB_CONV_ACCEL_CORE_OFM_FIFO_AW)
+        .OFM_FIFO_AW(`TB_CONV_ACCEL_CORE_OFM_FIFO_AW),
+        .ENABLE_COLUMN_PSUM(`TB_ENABLE_COLUMN_PSUM_COMPILED)
 `ifdef TB_CONV_ACCEL_CORE_USE_AXIS_STREAM
         , .HWC_CACHE_AW(`TB_CONV_ACCEL_CORE_HWC_CACHE_AW)
         , .HWC_CACHE_DEPTH(`TB_CONV_ACCEL_CORE_HWC_CACHE_DEPTH)
         , .HWC_CACHE_STRIPES(`TB_CONV_ACCEL_CORE_HWC_CACHE_STRIPES)
         , .HWC_CACHE_USE_URAM(`TB_CONV_ACCEL_CORE_HWC_CACHE_USE_URAM)
+`ifdef TB_CONV_ACCEL_CORE_PACKED_HWC_OFM
+        , .ENABLE_PACKED_HWC_OFM(1)
+`endif
 `endif
     ) dut (
         .clk(clk), .rst(rst),
@@ -449,10 +459,12 @@ module `TB_CONV_ACCEL_CORE_MODULE;
         .feeder_fill_req(feeder_fill_req), .feeder_fill_fy(feeder_fill_fy),
         .dma_bank_wr_en(dma_bank_wr_en), .dma_wr_x(dma_wr_x), .dma_wr_fy(dma_wr_fy),
         .dma_wr_data(dma_wr_data), .dma_line_advance(dma_line_advance),
+`ifndef TB_CONV_ACCEL_CORE_USE_BW_STREAM
         .raw_hwc_load_active_cycles(32'd0),
         .raw_hwc_load_unpack_cycles(32'd0),
         .raw_hwc_replay_active_cycles(32'd0),
         .raw_hwc_replay_wait_ready_cycles(32'd0),
+`endif
 `endif
 `ifndef TB_CONV_ACCEL_CORE_USE_AXIS_STREAM
         .quant_wr_en(quant_wr_en), .quant_wr_addr(quant_wr_addr), .quant_wr_data(quant_wr_data),
@@ -467,7 +479,7 @@ module `TB_CONV_ACCEL_CORE_MODULE;
         .ofm_m_axis_tvalid(ofm_m_axis_tvalid), .ofm_m_axis_tready(ofm_m_axis_tready),
         .ofm_m_axis_tlast(ofm_m_axis_tlast),
         .bias_axis_error(bias_axis_error), .weight_axis_error(weight_axis_error),
-        .ifm_axis_error(ifm_axis_error),
+        .ifm_axis_error(ifm_axis_error), .ofm_axis_error(ofm_axis_error),
 `elsif TB_CONV_ACCEL_CORE_USE_FULL_STREAM
         .ofm_m_valid(ofm_m_valid), .ofm_m_ready(ofm_m_ready),
         .ofm_m_addr(ofm_m_addr), .ofm_m_data(ofm_m_data),
@@ -538,6 +550,21 @@ module `TB_CONV_ACCEL_CORE_MODULE;
 `endif
 `ifdef TB_CONV_ACCEL_CORE_USE_AXIS_STREAM
     integer axis_ofm_tlast_count;
+`ifdef TB_CONV_ACCEL_CORE_PACKED_HWC_OFM
+    integer packed_axis_beat_count;
+    integer packed_axis_stall_count;
+    integer packed_axis_fail_count;
+    integer packed_axis_lane;
+    integer packed_axis_keep_count;
+    integer packed_axis_write_index;
+    integer packed_axis_first_invalid_lane;
+    reg [15:0] packed_axis_ready_lfsr;
+    reg packed_axis_stall_seen;
+    reg packed_axis_hold_valid;
+    reg [63:0] packed_axis_hold_data;
+    reg [7:0] packed_axis_hold_keep;
+    reg packed_axis_hold_last;
+`endif
 `endif
     reg signed [7:0] feat [0:CIN-1][0:FM_H-1][0:FM_W-1];
     reg signed [7:0] weight [0:K_TOTAL-1][0:COUT_TOTAL-1];
@@ -725,7 +752,7 @@ module `TB_CONV_ACCEL_CORE_MODULE;
     endfunction
 
     task cfg_write;
-        input [6:0] addr;
+        input [7:0] addr;
         input [31:0] data;
         begin
 `ifdef TB_CONV_ACCEL_CORE_USE_AXI_LITE
@@ -760,7 +787,7 @@ module `TB_CONV_ACCEL_CORE_MODULE;
     endtask
 
     task cfg_read;
-        input [6:0] addr;
+        input [7:0] addr;
         output [31:0] data;
         begin
 `ifdef TB_CONV_ACCEL_CORE_USE_AXI_LITE
@@ -950,8 +977,9 @@ module `TB_CONV_ACCEL_CORE_MODULE;
                                 ifm_axis_tlast =
                                     (raw_byte_idx == raw_total_bytes);
                                 ifm_axis_tvalid = 1'b1;
-                                wait(ifm_axis_tready);
                                 @(posedge clk);
+                                while (ifm_axis_tready !== 1'b1)
+                                    @(posedge clk);
                                 axis_word = 64'd0;
                                 axis_keep = 8'd0;
                             end
@@ -995,8 +1023,9 @@ module `TB_CONV_ACCEL_CORE_MODULE;
                             (x == FM_W - 1) && (vector_beat == 2) &&
                             (ps_line_fill_count == batch_ifm_tile_end_count);
                         ifm_axis_tvalid = 1'b1;
-                        wait(ifm_axis_tready);
                         @(posedge clk);
+                        while (ifm_axis_tready !== 1'b1)
+                            @(posedge clk);
                     end
                 end
             end
@@ -1048,8 +1077,9 @@ module `TB_CONV_ACCEL_CORE_MODULE;
                 ifm_axis_tlast = (x == FM_W - 1);
 `endif
                 ifm_axis_tvalid = 1'b1;
-                wait(ifm_axis_tready);
                 @(posedge clk);
+                while (ifm_axis_tready !== 1'b1)
+                    @(posedge clk);
 `endif
 `ifndef TB_CONV_ACCEL_CORE_USE_FULL_STREAM
 `ifndef TB_CONV_ACCEL_CORE_USE_AXIS_STREAM
@@ -1106,8 +1136,9 @@ module `TB_CONV_ACCEL_CORE_MODULE;
                 bias_axis_tlast = (i + 2 >= COUT_TILE);
 `endif
                 bias_axis_tvalid = 1'b1;
-                wait(bias_axis_tready);
                 @(posedge clk);
+                while (bias_axis_tready !== 1'b1)
+                    @(posedge clk);
             end
             @(negedge clk);
             bias_axis_tvalid = 1'b0;
@@ -1182,8 +1213,9 @@ module `TB_CONV_ACCEL_CORE_MODULE;
                         weight_axis_tlast = (kk == ROWS - 1) && (cc == COUT_TILE - 1);
 `endif
                         weight_axis_tvalid = 1'b1;
-                        wait(weight_axis_tready);
                         @(posedge clk);
+                        while (weight_axis_tready !== 1'b1)
+                            @(posedge clk);
                         axis_word = 64'd0;
                         axis_lane = 0;
                     end else begin
@@ -1441,6 +1473,107 @@ module `TB_CONV_ACCEL_CORE_MODULE;
         end
     end
 
+`ifdef TB_CONV_ACCEL_CORE_PACKED_HWC_OFM
+    // ABI-v2 packed output has no byte address. Reconstruct the contiguous HWC
+    // byte stream strictly from TKEEP; the common golden loop below then checks
+    // every reconstructed byte in pixel/channel order.
+    always @(posedge clk) begin
+        if (rst) begin
+            packed_axis_beat_count <= 0;
+            packed_axis_stall_count <= 0;
+            packed_axis_fail_count <= 0;
+            packed_axis_stall_seen <= 1'b0;
+            packed_axis_hold_valid <= 1'b0;
+            packed_axis_hold_data <= 64'd0;
+            packed_axis_hold_keep <= 8'd0;
+            packed_axis_hold_last <= 1'b0;
+        end else begin
+            if (packed_axis_hold_valid) begin
+                if (!ofm_m_axis_tvalid ||
+                    ofm_m_axis_tdata !== packed_axis_hold_data ||
+                    ofm_m_axis_tkeep !== packed_axis_hold_keep ||
+                    ofm_m_axis_tlast !== packed_axis_hold_last) begin
+                    $display("[FAIL] packed OFM AXIS changed while stalled");
+                    packed_axis_fail_count <= packed_axis_fail_count + 1;
+                end
+            end
+
+            packed_axis_hold_valid <= ofm_m_axis_tvalid &&
+                                      !ofm_m_axis_tready;
+            if (ofm_m_axis_tvalid && !ofm_m_axis_tready) begin
+                packed_axis_hold_data <= ofm_m_axis_tdata;
+                packed_axis_hold_keep <= ofm_m_axis_tkeep;
+                packed_axis_hold_last <= ofm_m_axis_tlast;
+                packed_axis_stall_count <= packed_axis_stall_count + 1;
+                packed_axis_stall_seen <= 1'b1;
+            end
+
+            if (ofm_m_axis_tvalid && ofm_m_axis_tready) begin
+                packed_axis_beat_count <= packed_axis_beat_count + 1;
+                packed_axis_keep_count = 0;
+                packed_axis_first_invalid_lane = 8;
+                for (packed_axis_lane = 0; packed_axis_lane < 8;
+                     packed_axis_lane = packed_axis_lane + 1) begin
+                    if (ofm_m_axis_tkeep[packed_axis_lane]) begin
+                        if (packed_axis_first_invalid_lane != 8) begin
+                            $display("[FAIL] packed OFM TKEEP is not LSB-contiguous: %02x",
+                                     ofm_m_axis_tkeep);
+                            packed_axis_fail_count <= packed_axis_fail_count + 1;
+                        end
+                        packed_axis_write_index = ofm_mem_wr_count +
+                                                  packed_axis_keep_count;
+                        if (packed_axis_write_index < OFM_WORDS) begin
+                            ofm_mem[packed_axis_write_index] <=
+                                ofm_m_axis_tdata[packed_axis_lane*8 +: 8];
+                        end else begin
+                            if (first_extra_ofm_wr_index < 0) begin
+                                first_extra_ofm_wr_index <= packed_axis_write_index;
+                                first_extra_ofm_wr_addr <= packed_axis_write_index;
+                                first_extra_ofm_wr_data <=
+                                    ofm_m_axis_tdata[packed_axis_lane*8 +: 8];
+                            end
+                            packed_axis_fail_count <= packed_axis_fail_count + 1;
+                        end
+                        packed_axis_keep_count = packed_axis_keep_count + 1;
+                    end else if (packed_axis_first_invalid_lane == 8) begin
+                        packed_axis_first_invalid_lane = packed_axis_lane;
+                    end
+                end
+
+                if (packed_axis_keep_count == 0) begin
+                    $display("[FAIL] packed OFM emitted empty TKEEP beat");
+                    packed_axis_fail_count <= packed_axis_fail_count + 1;
+                end
+                if (ofm_m_axis_tlast !==
+                    ((ofm_mem_wr_count + packed_axis_keep_count) ==
+                     EXPECTED_OFM_WRITES)) begin
+                    $display("[FAIL] packed OFM TLAST position bytes_after=%0d expected=%0d",
+                             ofm_mem_wr_count + packed_axis_keep_count,
+                             EXPECTED_OFM_WRITES);
+                    packed_axis_fail_count <= packed_axis_fail_count + 1;
+                end
+                ofm_mem_wr_count <= ofm_mem_wr_count + packed_axis_keep_count;
+            end
+        end
+    end
+
+    // Deterministic pseudo-random ready pattern: roughly 75% ready, with both
+    // isolated and consecutive stalls. It is independent of DUT progress.
+    always @(negedge clk) begin
+        if (rst) begin
+            packed_axis_ready_lfsr <= 16'hd431;
+            ofm_m_axis_tready <= 1'b0;
+        end else begin
+            packed_axis_ready_lfsr <= {
+                packed_axis_ready_lfsr[14:0],
+                packed_axis_ready_lfsr[15] ^ packed_axis_ready_lfsr[13] ^
+                packed_axis_ready_lfsr[12] ^ packed_axis_ready_lfsr[10]
+            };
+            ofm_m_axis_tready <= packed_axis_ready_lfsr[0] |
+                                packed_axis_ready_lfsr[3];
+        end
+    end
+`else
     always @(negedge clk) begin
         if (!rst && ofm_mem_wr_en) begin
             if (ofm_mem_wr_addr < OFM_WORDS)
@@ -1453,6 +1586,7 @@ module `TB_CONV_ACCEL_CORE_MODULE;
             ofm_mem_wr_count <= ofm_mem_wr_count + 1;
         end
     end
+`endif
 
     always @(posedge clk) begin
         if (!rst && `TB_DUT_LAYER.final_fifo_valid && `TB_DUT_LAYER.rq_in_ready) begin
@@ -1577,7 +1711,7 @@ module `TB_CONV_ACCEL_CORE_MODULE;
             $fflush();
         end
 `endif
-        if (!rst && `TB_DUT_LAYER.u_top.u_core.psum_fifo_wr_en[0])
+        if (!rst && `TB_DUT_SYSTOLIC.psum_fifo_wr_en[0])
             psum_wr_count <= psum_wr_count + 1;
         if (!rst && `TB_DUT_LAYER.drain_packet_valid &&
             `TB_DUT_LAYER.drain_packet_ready)
@@ -1713,13 +1847,13 @@ module `TB_CONV_ACCEL_CORE_MODULE;
                 `TB_DUT_LAYER.u_top.vector_ifm_ready,
                 `TB_DUT_LAYER.u_top.vector_packet_done,
 `ifdef TB_CONV_ACCEL_CORE_RAW_HWC_IFM
-                dut.u_axis_hwc_tile_cache.tile_loaded,
-                dut.u_axis_hwc_tile_cache.replay_active,
-                dut.u_axis_hwc_tile_cache.replay_pixel,
-                dut.u_axis_hwc_tile_cache.completed_packets,
-                dut.u_axis_hwc_tile_cache.completed_pixels,
-                dut.u_axis_hwc_tile_cache.accepted_beats,
-                dut.u_axis_hwc_tile_cache.fifo_stall_cycles,
+                dut.g_legacy_raw_hwc_ifm.u_axis_hwc_tile_cache.tile_loaded,
+                dut.g_legacy_raw_hwc_ifm.u_axis_hwc_tile_cache.replay_active,
+                dut.g_legacy_raw_hwc_ifm.u_axis_hwc_tile_cache.replay_pixel,
+                dut.g_legacy_raw_hwc_ifm.u_axis_hwc_tile_cache.completed_packets,
+                dut.g_legacy_raw_hwc_ifm.u_axis_hwc_tile_cache.completed_pixels,
+                dut.g_legacy_raw_hwc_ifm.u_axis_hwc_tile_cache.accepted_beats,
+                dut.g_legacy_raw_hwc_ifm.u_axis_hwc_tile_cache.fifo_stall_cycles,
 `else
                 1'b0, 1'b0, 0, 0, 0, 0, 0,
 `endif
@@ -1728,12 +1862,22 @@ module `TB_CONV_ACCEL_CORE_MODULE;
                 `TB_DUT_LAYER.u_rq_packet_fifo.level,
                 `TB_DUT_LAYER.act_valid, `TB_DUT_LAYER.act_fifo_valid,
                 `TB_DUT_LAYER.act_fifo_full, `TB_DUT_LAYER.u_ofm_packet_fifo.level,
-                `TB_DUT_LAYER.ofm_wb_busy, `TB_DUT_LAYER.u_ofm_writeback.fifo_full,
-                `TB_DUT_LAYER.u_ofm_writeback.wptr - `TB_DUT_LAYER.u_ofm_writeback.rptr,
+                `TB_DUT_LAYER.ofm_wb_busy,
+`ifdef TB_CONV_ACCEL_CORE_PACKED_HWC_OFM
+                1'b0, 0,
+`else
+                `TB_DUT_LAYER.g_legacy_byte_ofm.u_ofm_writeback.fifo_full,
+                `TB_DUT_LAYER.g_legacy_byte_ofm.u_ofm_writeback.wptr -
+                    `TB_DUT_LAYER.g_legacy_byte_ofm.u_ofm_writeback.rptr,
+`endif
                 ofm_packet_full, `TB_DUT_LAYER.ofm_valid,
 `ifdef TB_CONV_ACCEL_CORE_USE_AXIS_STREAM
+`ifdef TB_CONV_ACCEL_CORE_PACKED_HWC_OFM
+                ofm_m_axis_tvalid, ofm_m_axis_tready, 1'b0, 0
+`else
                 dut.ofm_stream_valid, dut.ofm_stream_ready, dut.ofm_stream_full,
-                dut.u_ofm_stream_fifo.level
+                dut.g_legacy_ofm_axis.u_ofm_stream_fifo.level
+`endif
 `elsif TB_CONV_ACCEL_CORE_USE_FULL_STREAM
                 dut.ofm_m_valid, dut.ofm_m_ready, dut.ofm_stream_full,
                 dut.u_ofm_stream_fifo.level
@@ -1744,23 +1888,23 @@ module `TB_CONV_ACCEL_CORE_MODULE;
 `ifdef TB_CONV_ACCEL_CORE_PROGRESS_COREDBG
             $display("[COREDBG] t=%0t ctrl_state=%0d w_col=%0d compute_cnt=%0d drain_cnt=%0d compute_ready=%0d compute_active=%0d ctrl_w_load=%0d ctrl_pre_write=%0d ctrl_done=%0d ifm_empty=%h ifm_full=%h ifm_rd_en=%h ifm_rd_valid=%h psum_wr_en=%h psum_empty=%h valid_v_bot=%h wgt_empty=%h",
                 $time,
-                `TB_DUT_LAYER.u_top.u_core.u_ctrl.state,
-                `TB_DUT_LAYER.u_top.u_core.u_ctrl.w_col,
-                `TB_DUT_LAYER.u_top.u_core.u_ctrl.compute_cnt,
-                `TB_DUT_LAYER.u_top.u_core.u_ctrl.drain_cnt,
-                `TB_DUT_LAYER.u_top.u_core.compute_ready,
-                `TB_DUT_LAYER.u_top.u_core.compute_active,
-                `TB_DUT_LAYER.u_top.u_core.ctrl_w_load,
-                `TB_DUT_LAYER.u_top.u_core.ctrl_pre_write,
-                `TB_DUT_LAYER.u_top.u_core.done,
-                `TB_DUT_LAYER.u_top.u_core.ifm_fifo_empty_active,
-                `TB_DUT_LAYER.u_top.u_core.ifm_full_active,
-                `TB_DUT_LAYER.u_top.u_core.ifm_fifo_rd_en_active,
-                `TB_DUT_LAYER.u_top.u_core.ifm_fifo_rd_valid,
-                `TB_DUT_LAYER.u_top.u_core.psum_fifo_wr_en,
-                `TB_DUT_LAYER.u_top.u_core.psum_fifo_empty,
-                `TB_DUT_LAYER.u_top.u_core.valid_v_bot,
-                `TB_DUT_LAYER.u_top.u_core.wgt_fifo_empty
+                `TB_DUT_SYSTOLIC.u_ctrl.state,
+                `TB_DUT_SYSTOLIC.u_ctrl.w_col,
+                `TB_DUT_SYSTOLIC.u_ctrl.compute_cnt,
+                `TB_DUT_SYSTOLIC.u_ctrl.drain_cnt,
+                `TB_DUT_SYSTOLIC.compute_ready,
+                `TB_DUT_SYSTOLIC.compute_active,
+                `TB_DUT_SYSTOLIC.ctrl_w_load,
+                `TB_DUT_SYSTOLIC.ctrl_pre_write,
+                `TB_DUT_SYSTOLIC.done,
+                {ROWS{`TB_DUT_SYSTOLIC.ifm_vector_empty}},
+                {ROWS{`TB_DUT_SYSTOLIC.ifm_vector_full}},
+                {ROWS{`TB_DUT_SYSTOLIC.ifm_vector_rd_en}},
+                `TB_DUT_SYSTOLIC.ifm_fifo_rd_valid,
+                `TB_DUT_SYSTOLIC.psum_fifo_wr_en,
+                `TB_DUT_SYSTOLIC.psum_fifo_empty,
+                `TB_DUT_SYSTOLIC.valid_v_bot,
+                `TB_DUT_SYSTOLIC.wgt_fifo_empty
             );
 `endif
             progress_last_ofm_wr_count = ofm_mem_wr_count;
@@ -1999,6 +2143,13 @@ module `TB_CONV_ACCEL_CORE_MODULE;
         cfg_write(6'h0f, {24'd0, INPUT_ZERO_POINT});
         cfg_write(6'h10, {28'd0, POOL_STRIDE, 1'b0, (POOL_ENABLE != 0)});
         cfg_write(6'h11, EXPECTED_OFM_WRITES);
+`ifdef TB_CONV_ACCEL_CORE_PACKED_HWC_OFM
+        // ABI v2 layer descriptor: this one-tile wrapper represents the last
+        // tile of the layer, so the packed writer must produce exactly one
+        // TLAST after EXPECTED_OFM_WRITES useful bytes.
+        cfg_write(7'h7a, {1'b1, 22'd0, ACTIVE_OFM_H[8:0]});
+        cfg_write(7'h7c, EXPECTED_OFM_WRITES);
+`endif
         if (tail_cycles_override != 0 || raw_hwc_compute_start_level_override != 0)
             cfg_write(6'h38, {raw_hwc_compute_start_level_override[15:0],
                               tail_cycles_override[15:0]});
@@ -2031,20 +2182,20 @@ module `TB_CONV_ACCEL_CORE_MODULE;
         end
         expected_raw_hwc_beats = (expected_raw_hwc_bytes + 7) / 8;
         expected_raw_hwc_replay_packets = RUN_PIXELS * K_PASSES * COUT_BLOCKS;
-        if (dut.u_axis_hwc_tile_cache.completed_packets != TILE_COUNT) begin
+        if (dut.g_legacy_raw_hwc_ifm.u_axis_hwc_tile_cache.completed_packets != TILE_COUNT) begin
             $display("[FAIL] raw HWC packets got=%0d exp=%0d",
-                dut.u_axis_hwc_tile_cache.completed_packets, TILE_COUNT);
+                dut.g_legacy_raw_hwc_ifm.u_axis_hwc_tile_cache.completed_packets, TILE_COUNT);
             fail = fail + 1;
         end else pass = pass + 1;
-        if (dut.u_axis_hwc_tile_cache.accepted_beats != expected_raw_hwc_beats) begin
+        if (dut.g_legacy_raw_hwc_ifm.u_axis_hwc_tile_cache.accepted_beats != expected_raw_hwc_beats) begin
             $display("[FAIL] raw HWC beats got=%0d exp=%0d bytes=%0d",
-                dut.u_axis_hwc_tile_cache.accepted_beats, expected_raw_hwc_beats,
+                dut.g_legacy_raw_hwc_ifm.u_axis_hwc_tile_cache.accepted_beats, expected_raw_hwc_beats,
                 expected_raw_hwc_bytes);
             fail = fail + 1;
         end else pass = pass + 1;
-        if (dut.u_axis_hwc_tile_cache.completed_pixels != expected_raw_hwc_replay_packets) begin
+        if (dut.g_legacy_raw_hwc_ifm.u_axis_hwc_tile_cache.completed_pixels != expected_raw_hwc_replay_packets) begin
             $display("[FAIL] raw HWC replay packets got=%0d exp=%0d",
-                dut.u_axis_hwc_tile_cache.completed_pixels, expected_raw_hwc_replay_packets);
+                dut.g_legacy_raw_hwc_ifm.u_axis_hwc_tile_cache.completed_pixels, expected_raw_hwc_replay_packets);
             fail = fail + 1;
         end else pass = pass + 1;
 `else
@@ -2130,6 +2281,48 @@ module `TB_CONV_ACCEL_CORE_MODULE;
                 axis_ofm_tlast_count, TILE_COUNT);
             fail = fail + 1;
         end else pass = pass + 1;
+`ifdef TB_CONV_ACCEL_CORE_PACKED_HWC_OFM
+        if (packed_axis_fail_count != 0) begin
+            $display("[FAIL] packed AXIS protocol/order failures=%0d",
+                     packed_axis_fail_count);
+            fail = fail + packed_axis_fail_count;
+        end else pass = pass + 1;
+        if (!packed_axis_stall_seen || packed_axis_stall_count == 0) begin
+            $display("[FAIL] packed AXIS random backpressure was not exercised");
+            fail = fail + 1;
+        end else pass = pass + 1;
+        if (packed_axis_beat_count !=
+            RUN_OUT_PIXELS * ((COUT_TOTAL + 7) / 8)) begin
+            $display("[FAIL] packed AXIS beats got=%0d exp=%0d",
+                     packed_axis_beat_count,
+                     RUN_OUT_PIXELS * ((COUT_TOTAL + 7) / 8));
+            fail = fail + 1;
+        end else pass = pass + 1;
+        cfg_read(7'h0c, cfg_read_data);
+        if (cfg_read_data != packed_axis_beat_count) begin
+            $display("[FAIL] packed AXIS beat telemetry got=%0d exp=%0d",
+                     cfg_read_data, packed_axis_beat_count);
+            fail = fail + 1;
+        end else pass = pass + 1;
+        cfg_read(7'h7d, cfg_read_data);
+        if (cfg_read_data != EXPECTED_OFM_WRITES) begin
+            $display("[FAIL] packed AXIS byte telemetry got=%0d exp=%0d",
+                     cfg_read_data, EXPECTED_OFM_WRITES);
+            fail = fail + 1;
+        end else pass = pass + 1;
+        cfg_read(7'h7e, cfg_read_data);
+        if (cfg_read_data != packed_axis_stall_count) begin
+            $display("[FAIL] packed AXIS stall telemetry got=%0d exp=%0d",
+                     cfg_read_data, packed_axis_stall_count);
+            fail = fail + 1;
+        end else pass = pass + 1;
+        cfg_read(7'h7f, cfg_read_data);
+        if (cfg_read_data[31]) begin
+            $display("[FAIL] packed AXIS protocol telemetry set: 0x%08h",
+                     cfg_read_data);
+            fail = fail + 1;
+        end else pass = pass + 1;
+`else
         cfg_read(6'h0b, cfg_read_data);
         if (cfg_read_data != EXPECTED_OFM_WRITES) begin
             $display("[FAIL] AXIS debug core write count got=%0d exp=%0d",
@@ -2154,9 +2347,12 @@ module `TB_CONV_ACCEL_CORE_MODULE;
                 cfg_read_data, EXPECTED_OFM_WRITES);
             fail = fail + 1;
         end else pass = pass + 1;
-        if (bias_axis_error || weight_axis_error || ifm_axis_error) begin
-            $display("[FAIL] AXIS protocol errors bias=%0d weight=%0d ifm=%0d",
-                bias_axis_error, weight_axis_error, ifm_axis_error);
+`endif
+        if (bias_axis_error || weight_axis_error || ifm_axis_error ||
+            ofm_axis_error) begin
+            $display("[FAIL] AXIS protocol errors bias=%0d weight=%0d ifm=%0d ofm=%0d",
+                bias_axis_error, weight_axis_error, ifm_axis_error,
+                ofm_axis_error);
             fail = fail + 1;
         end else pass = pass + 1;
 `endif
@@ -2234,22 +2430,25 @@ module `TB_CONV_ACCEL_CORE_MODULE;
 `else
             1'b0, 1'b0, 32'd0, 1'b0,
 `endif
-            `TB_DUT_LAYER.u_top.u_feeder.u_line_ctrl.state, `TB_DUT_LAYER.u_top.u_feeder.u_line_ctrl.oy,
-            `TB_DUT_LAYER.u_top.u_feeder.u_line_ctrl.line_valid[0],
-            `TB_DUT_LAYER.u_top.u_feeder.u_line_ctrl.line_valid[1],
-            `TB_DUT_LAYER.u_top.u_feeder.u_line_ctrl.line_valid[2],
-            `TB_DUT_LAYER.u_top.u_feeder.u_line_ctrl.line_fy[0],
-            `TB_DUT_LAYER.u_top.u_feeder.u_line_ctrl.line_fy[1],
-            `TB_DUT_LAYER.u_top.u_feeder.u_line_ctrl.line_fy[2],
-            `TB_DUT_LAYER.u_top.u_feeder.line_valid[0],
-            `TB_DUT_LAYER.u_top.u_feeder.line_valid[1],
-            `TB_DUT_LAYER.u_top.u_feeder.line_valid[2],
-            `TB_DUT_LAYER.u_top.u_feeder.line_fy[0],
-            `TB_DUT_LAYER.u_top.u_feeder.line_fy[1],
-            `TB_DUT_LAYER.u_top.u_feeder.line_fy[2],
-            `TB_DUT_LAYER.u_top.u_feeder.u_window_ctrl.active, `TB_DUT_LAYER.u_top.u_feeder.cur_oy,
-            `TB_DUT_LAYER.u_top.u_feeder.cur_ox, `TB_DUT_LAYER.u_top.u_feeder.window_ready,
-            `TB_DUT_LAYER.u_top.u_feeder.row_done,
+            `TB_DUT_LAYER.u_top.g_legacy_window_feeder.u_feeder.u_line_ctrl.state,
+            `TB_DUT_LAYER.u_top.g_legacy_window_feeder.u_feeder.u_line_ctrl.oy,
+            `TB_DUT_LAYER.u_top.g_legacy_window_feeder.u_feeder.u_line_ctrl.line_valid[0],
+            `TB_DUT_LAYER.u_top.g_legacy_window_feeder.u_feeder.u_line_ctrl.line_valid[1],
+            `TB_DUT_LAYER.u_top.g_legacy_window_feeder.u_feeder.u_line_ctrl.line_valid[2],
+            `TB_DUT_LAYER.u_top.g_legacy_window_feeder.u_feeder.u_line_ctrl.line_fy[0],
+            `TB_DUT_LAYER.u_top.g_legacy_window_feeder.u_feeder.u_line_ctrl.line_fy[1],
+            `TB_DUT_LAYER.u_top.g_legacy_window_feeder.u_feeder.u_line_ctrl.line_fy[2],
+            `TB_DUT_LAYER.u_top.g_legacy_window_feeder.u_feeder.line_valid[0],
+            `TB_DUT_LAYER.u_top.g_legacy_window_feeder.u_feeder.line_valid[1],
+            `TB_DUT_LAYER.u_top.g_legacy_window_feeder.u_feeder.line_valid[2],
+            `TB_DUT_LAYER.u_top.g_legacy_window_feeder.u_feeder.line_fy[0],
+            `TB_DUT_LAYER.u_top.g_legacy_window_feeder.u_feeder.line_fy[1],
+            `TB_DUT_LAYER.u_top.g_legacy_window_feeder.u_feeder.line_fy[2],
+            `TB_DUT_LAYER.u_top.g_legacy_window_feeder.u_feeder.u_window_ctrl.active,
+            `TB_DUT_LAYER.u_top.g_legacy_window_feeder.u_feeder.cur_oy,
+            `TB_DUT_LAYER.u_top.g_legacy_window_feeder.u_feeder.cur_ox,
+            `TB_DUT_LAYER.u_top.g_legacy_window_feeder.u_feeder.window_ready,
+            `TB_DUT_LAYER.u_top.g_legacy_window_feeder.u_feeder.row_done,
             ofm_mem_wr_count, current_cout_base, current_pass_base_k, feeder_fill_req,
             `TB_DUT_LAYER.u_sched.state, `TB_DUT_LAYER.feeder_done, `TB_DUT_LAYER.compute_done,
             `TB_DUT_LAYER.drain_done, `TB_DUT_LAYER.done_pending, `TB_DUT_LAYER.done_drain_cnt,

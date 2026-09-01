@@ -29,6 +29,15 @@ module tb_layer_scheduler_continuous_psum;
     wire perf_prefetch_hit;
     wire perf_psumovl_start;
     wire perf_psumovl_hit;
+    wire perf_stage_bias;
+    wire perf_stage_weight;
+    wire perf_stage_feeder;
+    wire perf_stage_compute;
+    wire perf_stage_drain;
+    wire [4:0] perf_stage_vector = {
+        perf_stage_bias, perf_stage_weight, perf_stage_feeder,
+        perf_stage_compute, perf_stage_drain
+    };
 
     reg bias_load_done = 1'b0;
     reg weight_load_done = 1'b0;
@@ -51,6 +60,10 @@ module tb_layer_scheduler_continuous_psum;
     integer feeder_delay = 0;
     integer compute_delay = 0;
     integer final_done_delay = 0;
+    integer prefetch_commit_stage_count = 0;
+    integer done_stage_count = 0;
+    integer final_collect_wait_stage_count = 0;
+    integer next_context_started_before_credit = 0;
 
     layer_scheduler_stream #(
         .K_TILE(K_TILE),
@@ -65,7 +78,8 @@ module tb_layer_scheduler_continuous_psum;
         .psum_wr_bank(psum_wr_bank), .psum_rd_bank(psum_rd_bank),
         .bias_load_start(bias_load_start), .bias_load_done(bias_load_done),
         .weight_load_start(weight_load_start), .weight_load_done(weight_load_done),
-        .feeder_start(feeder_start), .feeder_done(feeder_done),
+        .feeder_start(feeder_start), .feeder_start_ready(1'b1),
+        .feeder_done(feeder_done),
         .feeder_compute_ready(feeder_compute_ready),
         .feeder_overlap_mode(1'b1),
         .raw_hwc_mode(1'b1),
@@ -93,8 +107,11 @@ module tb_layer_scheduler_continuous_psum;
         .perf_psumovl_start(perf_psumovl_start),
         .perf_psumovl_hit(perf_psumovl_hit),
         .perf_psumovl_wait_psum(),
-        .perf_stage_bias(), .perf_stage_weight(), .perf_stage_feeder(),
-        .perf_stage_compute(), .perf_stage_drain()
+        .perf_stage_bias(perf_stage_bias),
+        .perf_stage_weight(perf_stage_weight),
+        .perf_stage_feeder(perf_stage_feeder),
+        .perf_stage_compute(perf_stage_compute),
+        .perf_stage_drain(perf_stage_drain)
     );
 
     always #5 clk = ~clk;
@@ -106,9 +123,51 @@ module tb_layer_scheduler_continuous_psum;
             prefetch_start_count <= 0;
             prefetch_hit_count <= 0;
             psumovl_hit_count <= 0;
+            prefetch_commit_stage_count <= 0;
+            done_stage_count <= 0;
+            final_collect_wait_stage_count <= 0;
+            next_context_started_before_credit <= 0;
         end else begin
-            if (compute_start)
+            if (busy) begin
+                case (perf_stage_vector)
+                    5'b10000, 5'b01000, 5'b00100,
+                    5'b00010, 5'b00001: begin end
+                    default: begin
+                        $display("[FAIL] scheduler state=%0d stage vector=%05b",
+                                 dut.state, perf_stage_vector);
+                        fail = fail + 1;
+                    end
+                endcase
+            end
+            if (dut.state == dut.ST_PREFETCH_COMMIT) begin
+                prefetch_commit_stage_count <=
+                    prefetch_commit_stage_count + 1;
+                if (!perf_stage_compute) begin
+                    $display("[FAIL] prefetch commit is not compute stage");
+                    fail = fail + 1;
+                end
+            end
+            if (dut.state == dut.ST_DONE) begin
+                done_stage_count <= done_stage_count + 1;
+                if (!perf_stage_drain) begin
+                    $display("[FAIL] scheduler done is not drain stage");
+                    fail = fail + 1;
+                end
+            end
+            if (dut.continuous_final_collect_wait) begin
+                final_collect_wait_stage_count <=
+                    final_collect_wait_stage_count + 1;
+                if (!perf_stage_drain || perf_stage_compute) begin
+                    $display("[FAIL] final collector wait stage mapping");
+                    fail = fail + 1;
+                end
+            end
+            if (compute_start) begin
+                if (compute_start_count == 1 &&
+                    !collector_partial_credit)
+                    next_context_started_before_credit <= 1;
                 compute_start_count <= compute_start_count + 1;
+            end
             if (psum_drain_start)
                 drain_start_count <= drain_start_count + 1;
             if (perf_prefetch_start)
@@ -148,8 +207,6 @@ module tb_layer_scheduler_continuous_psum;
         if (compute_delay != 0) begin
             compute_delay <= compute_delay - 1;
             compute_done <= (compute_delay == 1);
-            if (compute_delay == 1 && !is_final_pass)
-                collector_partial_credit <= 1'b1;
             if (compute_delay == 1 && is_final_pass)
                 final_done_delay <= 2;
         end else begin
@@ -193,6 +250,15 @@ module tb_layer_scheduler_continuous_psum;
         expect_equal(prefetch_start_count, 1, "prefetch starts");
         expect_equal(prefetch_hit_count, 1, "prefetch hits");
         expect_equal(psumovl_hit_count, 1, "psum overlap hits");
+        expect_equal(next_context_started_before_credit, 1,
+                     "next context starts before first PSUM credit");
+        expect_equal(prefetch_commit_stage_count, 1,
+                     "classified prefetch commits");
+        expect_equal(done_stage_count, 1, "classified scheduler done");
+        if (final_collect_wait_stage_count == 0) begin
+            $display("[FAIL] final collector wait stage was not exercised");
+            fail = fail + 1;
+        end
         if (pass_base_k !== 14'd4) begin
             $display("[FAIL] final pass_base_k got=%0d", pass_base_k);
             fail = fail + 1;

@@ -13,7 +13,8 @@ module systolic_top #(
     parameter WGT_FIFO_DEPTH = 64,  parameter WGT_FIFO_AW = 6,
     parameter PSUM_FIFO_DEPTH = 1024, parameter PSUM_FIFO_AW = 10,
     parameter TAIL_CYCLES_CONFIG = `SYSTOLIC_TAIL_CYCLES_CONFIG,
-    parameter USE_DMA_IFM = 1   // 1: DMA line buffer, 0: manual IFM FIFO fill
+    parameter USE_DMA_IFM = 1,  // 1: DMA line buffer, 0: manual IFM FIFO fill
+    parameter ENABLE_COLUMN_PSUM = 0
 ) (
     input  clk, rst,
     input  start,
@@ -79,8 +80,9 @@ module systolic_top #(
     wire perf_comp_ifm_stall_ctrl;
     wire perf_comp_ifm_underflow;
     wire [ROWS*IFM_W-1:0] ifm_fifo_rd_data;
-    wire [31:0] ifm_fifo_empty;
-    wire compute_ready = !ifm_fifo_empty[0] &&
+    wire ifm_vector_empty;
+    wire ifm_vector_full;
+    wire compute_ready = !ifm_vector_empty &&
                          (!use_psum_stream || psum_stream_compute_ready);
     assign compute_fire_out = compute_fire;
 
@@ -168,39 +170,50 @@ module systolic_top #(
     );
 
     // ---- IFM FIFOs (32 × 8-bit) + stagger chain ----
-    wire [ROWS-1:0] ifm_rd_stagger;
-    assign ifm_rd_stagger[0] = compute_fire;
-    generate
-        for (r = 1; r < ROWS; r = r + 1) begin : stagger_gen
-            com_shift_reg #(.DEPTH(r*5), .WIDTH(1)) u_stag (
-                .clk(clk), .rst(rst), .si(compute_fire), .so(ifm_rd_stagger[r]));
-        end
-    endgenerate
+    // Every K vector is stored and retired atomically.  Row staggering is
+    // applied only after the complete vector has been captured.
+    wire [ROWS*IFM_W-1:0] ifm_vector_in = USE_DMA_IFM ?
+        we_ifm_data[ROWS*IFM_W-1:0] : ifm_fifo_wr_data;
+    wire ifm_vector_wr_en = USE_DMA_IFM ? we_ifm_valid : (&ifm_fifo_wr_en);
+    wire ifm_vector_rd_en = compute_fire && !ifm_vector_empty;
+    wire [ROWS*IFM_W-1:0] ifm_vector_rd_data;
 
-    wire [ROWS-1:0] ifm_full_active;
-    wire [ROWS-1:0] ifm_fifo_empty_active;
-    wire [ROWS-1:0] ifm_fifo_rd_en_active;
-    generate
-        for (r = 0; r < ROWS; r = r + 1) begin : ifm_fifo_gen
-            assign ifm_fifo_rd_en_active[r] = ifm_rd_stagger[r] && !ifm_fifo_empty_active[r];
+    systolic_fifo #(
+        .WIDTH(ROWS*IFM_W), .DEPTH(IFM_FIFO_DEPTH), .AW(IFM_FIFO_AW)
+    ) u_ifm_vector_fifo (
+        .clk(clk), .rst(rst),
+        .wr_en(ifm_vector_wr_en), .rd_en(ifm_vector_rd_en),
+        .data_in(ifm_vector_in), .data_out(ifm_vector_rd_data),
+        .empty(ifm_vector_empty), .full(ifm_vector_full)
+    );
 
-            systolic_fifo #(.WIDTH(IFM_W), .DEPTH(IFM_FIFO_DEPTH), .AW(IFM_FIFO_AW))
-            u_ifm_fifo (.clk(clk), .rst(rst),
-                .wr_en(USE_DMA_IFM ? we_ifm_valid : ifm_fifo_wr_en[r]),
-                .rd_en(ifm_fifo_rd_en_active[r]),
-                .data_in(USE_DMA_IFM ? we_ifm_data[(r+1)*IFM_W-1 : r*IFM_W]
-                                     : ifm_fifo_wr_data[(r+1)*IFM_W-1 : r*IFM_W]),
-                .data_out(ifm_fifo_rd_data[(r+1)*IFM_W-1 : r*IFM_W]),
-                .empty(ifm_fifo_empty_active[r]), .full(ifm_full_active[r]));
-        end
-    endgenerate
-    assign perf_comp_ifm_underflow = |(ifm_rd_stagger & ifm_fifo_empty_active);
-
-    reg [ROWS-1:0] ifm_fifo_rd_valid;
+    reg ifm_vector_rd_valid;
     always @(posedge clk) begin
-        if (rst) ifm_fifo_rd_valid <= {ROWS{1'b0}};
-        else     ifm_fifo_rd_valid <= ifm_fifo_rd_en_active;
+        if (rst) ifm_vector_rd_valid <= 1'b0;
+        else     ifm_vector_rd_valid <= ifm_vector_rd_en;
     end
+
+    wire [ROWS-1:0] ifm_fifo_rd_valid;
+    generate
+        for (r = 0; r < ROWS; r = r + 1) begin : ifm_stagger_gen
+            if (r == 0) begin : no_delay
+                assign ifm_fifo_rd_data[IFM_W-1:0] =
+                    ifm_vector_rd_data[IFM_W-1:0];
+                assign ifm_fifo_rd_valid[0] = ifm_vector_rd_valid;
+            end else begin : delay_lane
+                com_shift_reg #(.DEPTH(r*5), .WIDTH(IFM_W)) u_data_stag (
+                    .clk(clk), .rst(rst),
+                    .si(ifm_vector_rd_data[(r+1)*IFM_W-1:r*IFM_W]),
+                    .so(ifm_fifo_rd_data[(r+1)*IFM_W-1:r*IFM_W])
+                );
+                com_shift_reg #(.DEPTH(r*5), .WIDTH(1)) u_valid_stag (
+                    .clk(clk), .rst(rst),
+                    .si(ifm_vector_rd_valid), .so(ifm_fifo_rd_valid[r])
+                );
+            end
+        end
+    endgenerate
+    assign perf_comp_ifm_underflow = compute_fire && ifm_vector_empty;
 
     // ---- Bias buffer (64 × 24-bit, 1 entry per OFM channel) ----
     reg [PSUM_W-1:0] bias_buf [0:63];
@@ -235,14 +248,17 @@ module systolic_top #(
             assign psum_stream_valid_skewed[2*pc+1] = col_valid_out;
         end
     endgenerate
+    wire column_psum_active = (ENABLE_COLUMN_PSUM != 0) &&
+                              use_column_psum_stream;
     wire [COLS*2*PSUM_W-1:0] psum_top_init =
-        use_column_psum_stream ? psum_column_stream_data :
+        column_psum_active ? psum_column_stream_data :
         (use_psum_stream ? psum_stream_skewed : psum_top_static);
 
     // Route IFM full to correct port
-    assign ifm_fifo_empty = {{(32-ROWS){1'b0}}, ifm_fifo_empty_active};
-    assign ifm_fifo_full = USE_DMA_IFM ? {{(32-ROWS){1'b0}}, ifm_full_active} : 32'd0;
-    assign ifm_fifo_full_legacy = USE_DMA_IFM ? {ROWS{1'b0}} : ifm_full_active;
+    assign ifm_fifo_full = USE_DMA_IFM ?
+        {{(32-ROWS){1'b0}}, {ROWS{ifm_vector_full}}} : 32'd0;
+    assign ifm_fifo_full_legacy = USE_DMA_IFM ?
+        {ROWS{1'b0}} : {ROWS{ifm_vector_full}};
 
     // ---- Systolic array ----
     wire [COLS*2*PSUM_W-1:0] psum_bot;
@@ -257,7 +273,7 @@ module systolic_top #(
         end
     endgenerate
     wire [COLS*2-1:0] valid_v_top =
-        use_column_psum_stream ? column_stream_valid_expanded :
+        column_psum_active ? column_stream_valid_expanded :
         (use_psum_stream ? psum_stream_valid_skewed : {COLS*2{1'b1}});
     // Left-edge horizontal valid: IFM FIFO rd_en (data being read is valid)
     wire [ROWS-1:0]   valid_h_left = ifm_fifo_rd_valid;

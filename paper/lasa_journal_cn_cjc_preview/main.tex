@@ -1,0 +1,177 @@
+\documentclass[10.5pt,compsoc,UTF8]{CjC}
+
+% Only the page and typography rules of the supplied class are reused.  All
+% journal identity fields from the example entry are deliberately omitted.
+\usepackage[UTF8,fontset=windows]{ctex}
+\usepackage{fontspec}
+\setmainfont{Times New Roman}
+\usepackage{amsmath,amssymb,bm}
+\usepackage{booktabs,multirow,array,tabularx,longtable}
+\usepackage{graphicx}
+\usepackage[table]{xcolor}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,calc,fit,backgrounds,shapes.geometric,patterns,decorations.pathreplacing}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\usepackage{siunitx}
+\sisetup{detect-all,group-separator={,},group-minimum-digits=4}
+\usepackage{enumitem}
+\usepackage{float}
+\usepackage{url}
+\usepackage{gbt7714}
+\usepackage[colorlinks=true,allcolors=black]{hyperref}
+\usepackage[nameinlink,noabbrev]{cleveref}
+\usepackage{microtype}
+
+\definecolor{LasaBlue}{HTML}{2F5597}
+\definecolor{LasaCyan}{HTML}{2E86AB}
+\definecolor{LasaGreen}{HTML}{3A8D5D}
+\definecolor{LasaOrange}{HTML}{E88E2E}
+\definecolor{LasaRed}{HTML}{C94C4C}
+\definecolor{LasaGray}{HTML}{58616A}
+\definecolor{LasaLight}{HTML}{EDF3F8}
+\definecolor{LasaPending}{HTML}{F6E7C1}
+
+\newcommand{\LASA}{\textsc{LASA}}
+\newcommand{\Kpass}{$K$-pass}
+\newcommand{\HWC}{\texttt{HWC}}
+\newcommand{\todo}[1]{\par\noindent\colorbox{LasaPending}{\parbox{0.96\linewidth}{\textbf{投稿冻结前待补：}#1}}\par}
+\newcommand{\verified}[1]{\textcolor{LasaGreen!80!black}{\textbf{#1}}}
+\newcommand{\pending}[1]{\textcolor{LasaOrange!90!black}{\textbf{#1}}}
+\newcommand{\code}[1]{\texttt{#1}}
+\crefname{figure}{图}{图}
+\crefname{table}{表}{表}
+\crefname{section}{节}{节}
+\crefname{equation}{式}{式}
+\setlength{\emergencystretch}{2em}
+\setlength\parindent{2em}
+
+% Resolve the canonical manuscript without duplicating it in this preview.
+\makeatletter
+\def\input@path{{../lasa_journal_cn/}{../lasa_journal_cn/sections/}{../lasa_journal_cn/figures/}{../lasa_journal_cn/generated/}}
+\makeatother
+\input{generated/evidence_macros.tex}
+
+% Neutral running heads: retain the template's geometry and rules, remove all
+% periodical names, issue numbers and publication metadata.
+\headevenname{\mbox{}\hfill\mbox{LASA 版式预览稿}}
+\headoddname{LASA：层自适应 HWC 流式脉动阵列与跨 Pass 调度}
+\pagestyle{CjCheadings}
+
+\renewcommand{\figurename}{图}
+\renewcommand{\tablename}{表}
+\renewcommand{\refname}{参~考~文~献}
+
+\begin{document}
+\hyphenpenalty=50000
+\thispagestyle{empty}
+\twocolumn[
+\begin{minipage}{\textwidth}
+
+% Neutral title block based on the supplied typography, without publication
+% identity, submission metadata, author biography or contact placeholders.
+\begin{center}
+\vspace*{2mm}
+{\zihao{2}\heiti
+LASA：面向边缘 MPSoC 的完整 YOLOv3-tiny 推理\\[1.5mm]
+层自适应 HWC 流式脉动阵列与跨 Pass 调度\par}
+\vskip 4mm
+{\zihao{3}\fangsong 匿名作者\par}
+\vskip 1mm
+{\zihao{6}\songti 匿名单位（版式预览）\par}
+\end{center}
+
+\vskip 4mm
+\zihao{5-}\setlength{\baselineskip}{16pt}\selectfont
+\noindent{\heiti 摘\quad 要\quad}
+边缘 MPSoC 上的目标检测加速不仅受限于乘加峰值，还受到输入布局转换、长
+$K$ 维分段累加以及层间上下文切换的共同制约。针对完整 YOLOv3-tiny 中
+空间尺寸、输入通道、输出通道与卷积核形态高度异构的 13 个卷积层，本文
+提出层自适应 HWC 流式脉动阵列加速器 \LASA。该设计采用 18 路 $K$ 维输入、
+16 列双输出通道结构，在每周期提供 32 个输出通道方向的并行乘加；通过片上
+HWC 物化与重放，使输入 tile 在多个 \Kpass{} 之间复用；通过 tagged context、
+权重预载、快速上下文交接、连续 partial-PSUM 与解耦 drain，缩短 pass 边界
+和层边界的空泡。系统在 XCK26/KV260 上以 200 MHz 实现，13 个卷积由 PL
+执行，池化、特殊 padding、上采样、分支重量化拼接和双尺度解码/NMS 由
+四核 A53 协同完成。正式实现占用 \LUTCount{} LUT、\BRAMCount{} BRAM、
+\URAMCount{} URAM 和 \DSPCount{} DSP，路由后 WNS 为 \WNSValue{} ns。
+在 batch=1、416$\times$416 的完整 COCO80 图上，3 次各 1000 样本计时得到
+resident 平均延迟 \ResidentMeanMs{} ms、P95 \ResidentPNinetyFiveMs{} ms 和
+\ResidentFPS{} FPS；PL 有效吞吐为 \PLEffectiveGOPS{} GOPS，对 576-MAC
+阵列峰值的利用率为 \ArrayUtilization{}\%。128 张图的 22 个整数节点共
+\NodeRecords{} 条记录与 RTL-semantic host golden 逐字节一致，5000 张
+raw-head 的 COCO 指标与 host INT8 完全一致。当前部署 INT8 的 AP50:95/AP50
+为 14.304\%/30.212\%，相对同预处理 FP32-416 下降 3.190/3.281 个百分点；
+本文将这一差距作为模型参数限制如实披露，而不将量化作为架构贡献。\par
+
+\vspace{2mm}
+\noindent{\heiti 关键词\quad}边缘计算；MPSoC；脉动阵列；HWC 数据流；
+YOLOv3-tiny；跨 Pass 调度；整数卷积；端到端验证\par
+
+\vskip 3mm
+\begin{center}
+{\zihao{3}\bfseries
+LASA: A Layer-Adaptive HWC-Streaming Systolic Accelerator with\\[1mm]
+Cross-Pass Scheduling for End-to-End YOLOv3-Tiny Inference on Edge MPSoCs\par}
+\vspace{3mm}
+{\zihao{5}Anonymous Author\par}
+{\zihao{6}Anonymous Affiliation (layout preview)\par}
+\end{center}
+
+\vspace{1mm}
+\zihao{5}
+\noindent\textbf{Abstract}\quad
+This paper presents \LASA, a layer-adaptive HWC-streaming systolic accelerator
+for all thirteen convolution layers of YOLOv3-tiny. Its 18-way reduction input
+and 16-column dual-output structure provides up to 576 INT8 MACs per cycle.
+On-chip HWC materialization and replay reuse each input tile across reduction
+passes, while tagged contexts, weight preloading, fast handoff, continuous
+partial sums, and a decoupled drain suppress pass- and layer-boundary bubbles.
+Implemented at 200 MHz on XCK26/KV260, the system achieves
+\PLEffectiveGOPS{} GOPS and \ResidentFPS{} FPS at batch one and
+416$\times$416 input. Convolutions execute in programmable logic; tensor
+transforms and dual-scale decode/NMS execute on the A53 processors. Integer
+conformance is byte-exact for \NodeRecords{} node records, and 5000-image
+raw-head metrics match the host INT8 reference.\par
+
+\vspace{2mm}
+\noindent\textbf{Keywords}\quad edge computing; MPSoC; systolic array;
+HWC streaming; YOLOv3-tiny; cross-pass scheduling; integer inference\par
+\vspace{2mm}
+\end{minipage}
+]
+% CjC activates flushend before this document switches into two-column mode;
+% reactivate it here so the final bibliography page is actually balanced.
+\flushend
+
+\noindent\colorbox{LasaPending}{\parbox{0.96\linewidth}{\centering\zihao{5-}
+\textbf{内部证据稿。}当前硬件、逐节点正确性、5000 张 raw-head 精度、
+3$\times$1000 性能和 600 s 稳定性已有封存证据；5000 张 A53 product
+后处理、受控消融、同板 CPU 基线、post-route 功耗估算及公开 artifact
+自检尚未完成。未完成项不得进入投稿版摘要或结论。}}
+
+\zihao{5}
+\input{sections/01_introduction.tex}
+\input{sections/02_background_motivation.tex}
+\input{sections/03_system_architecture.tex}
+\input{sections/04_microarchitecture.tex}
+\input{sections/05_adaptive_scheduling.tex}
+\input{sections/06_software_codesign.tex}
+\input{sections/07_methodology.tex}
+\input{sections/08_results.tex}
+\input{sections/09_discussion_conclusion.tex}
+
+\appendix
+\input{sections/a_reproducibility.tex}
+
+% Keep the curated 45--60 item library visible in the layout preview.  The
+% submission version can remove uncited entries after related work is frozen.
+\nocite{*}
+\vspace{3mm}
+\zihao{5-}
+\bibliographystyle{gbt7714-numerical}
+% build.ps1 copies the canonical bibliography into the ignored build folder.
+\bibliography{references}
+\flushcolsend
+
+\end{document}

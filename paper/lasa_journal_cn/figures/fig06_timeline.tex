@@ -1,0 +1,29 @@
+\begin{figure*}[t]
+\centering
+\begin{tikzpicture}[x=0.8cm,y=0.8cm,font=\small]
+\node[anchor=east] at (0,2.8) {逐 pass 基线};
+\foreach \x/\w/\c/\t in {0/2/LasaGreen/IFM,2/1/LasaOrange/W,3/3/LasaBlue/C,6/1/LasaRed/D,7/2/LasaGreen/IFM,9/1/LasaOrange/W,10/3/LasaBlue/C,13/1/LasaRed/D}{
+  \fill[\c!65] (\x,2.35) rectangle +(\w,0.7); \node at (\x+\w/2,2.7) {\t};
+}
+\draw[->] (0,2.2)--(14.5,2.2) node[right]{time};
+\node[anchor=east] at (0,1.0) {\LASA};
+\fill[LasaGreen!65] (0,0.55) rectangle +(2,0.7); \node at (1,0.9){物化};
+\fill[LasaOrange!65] (1.2,0.55) rectangle +(1.2,0.7); \node at (1.8,0.9){W0};
+\fill[LasaBlue!65] (2.4,0.55) rectangle +(3,0.7); \node at (3.9,0.9){C0};
+\fill[LasaOrange!65] (4.2,1.28) rectangle +(1.2,0.45); \node at (4.8,1.5){W1};
+\fill[LasaRed!65] (5.4,0.55) rectangle +(0.7,0.7); \node at (5.75,0.9){D};
+\fill[LasaBlue!65] (6.1,0.55) rectangle +(3,0.7); \node at (7.6,0.9){C1/replay};
+\fill[LasaOrange!65] (7.8,1.28) rectangle +(1.2,0.45); \node at (8.4,1.5){W2};
+\fill[LasaRed!65] (9.1,0.55) rectangle +(0.7,0.7); \node at (9.45,0.9){D};
+\fill[LasaBlue!65] (9.8,0.55) rectangle +(3,0.7); \node at (11.3,0.9){C2/replay};
+\fill[LasaOrange!65] (11.3,1.28) rectangle +(1.5,0.45); \node at (12.05,1.5){next ctx};
+\draw[->] (0,0.4)--(14.5,0.4) node[right]{time};
+\draw[decorate,decoration={brace,amplitude=4pt},thick] (2,3.2)--(3,3.2) node[midway,above=4pt]{空泡};
+\draw[decorate,decoration={brace,amplitude=4pt},thick] (7,3.2)--(10,3.2) node[midway,above=4pt]{重复搬运};
+\node[anchor=west,align=left] at (0,-0.5) {W：权重加载；C：阵列计算；D：PSUM drain。上行小条表示预载与当前计算重叠。};
+\end{tikzpicture}
+\caption{逐 pass 搬运与 \LASA 跨 pass 调度的概念时间线。\LASA 只物化一次
+IFM tile，后续 pass 由片上重放；权重预载、连续 PSUM 和下一上下文准备与当前
+计算重叠。该图表达机制，不以未完成的消融数值替代测量。}
+\label{fig:timeline}
+\end{figure*}

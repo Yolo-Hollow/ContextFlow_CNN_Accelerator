@@ -22,19 +22,25 @@ def parse_define_int(text, name):
 
 def parse_c_plan(path):
     text = path.read_text(encoding="utf-8")
-    rows = parse_define_int(text, "ACCEL_SINGLE_SCALE_ROWS")
-    cols = parse_define_int(text, "ACCEL_SINGLE_SCALE_COLS")
+    abi_text = (path.parent / "accel_abi_v2.h").read_text(encoding="utf-8")
+    rows = parse_define_int(abi_text, "ACCEL_RELEASE_ROWS")
+    cols = parse_define_int(abi_text, "ACCEL_RELEASE_COLS")
+    cout_tile = parse_define_int(abi_text, "ACCEL_RELEASE_COUT_TILE")
     ifm_banks = parse_define_int(text, "ACCEL_SINGLE_SCALE_IFM_BANKS")
     layer_count = parse_define_int(text, "ACCEL_SINGLE_SCALE_LAYER_COUNT")
     max_tile_ofm_h = parse_define_int(text, "ACCEL_SINGLE_SCALE_MAX_TILE_OFM_H")
-    cout_tile = cols * 2
+    psum_depth = parse_define_int(text, "ACCEL_SINGLE_SCALE_PSUM_BUF_DEPTH")
+    reorder_depth = parse_define_int(text, "ACCEL_SINGLE_SCALE_PACKED_REORDER_DEPTH")
+    total_ifm_bytes = parse_define_int(text, "ACCEL_SINGLE_SCALE_TOTAL_IFM_BYTES")
+    total_ofm_bytes = parse_define_int(text, "ACCEL_SINGLE_SCALE_TOTAL_OFM_BYTES")
+    total_ofm_beats = parse_define_int(text, "ACCEL_SINGLE_SCALE_TOTAL_OFM_BEATS")
 
     entry_re = re.compile(r'\{\s*"([^"]+)"\s*,([^{}]+)\}')
     layers = []
     for m in entry_re.finditer(text):
         name = m.group(1)
         nums = [int(x) for x in re.findall(r"\b[0-9]+\b", m.group(2))]
-        if len(nums) != 17:
+        if len(nums) != 23:
             raise RuntimeError(f"Unexpected field count for {name}: {len(nums)}")
         layers.append(
             {
@@ -56,6 +62,12 @@ def parse_c_plan(path):
                 "k_total": nums[14],
                 "k_passes": nums[15],
                 "cout_blocks": nums[16],
+                "act_mode": nums[17],
+                "input_zero_point": nums[18],
+                "tile_h_max": nums[19],
+                "ifm_total_bytes": nums[20],
+                "ofm_total_bytes": nums[21],
+                "layer_last": nums[22],
             }
         )
 
@@ -68,11 +80,16 @@ def parse_c_plan(path):
         "ifm_banks": ifm_banks,
         "cout_tile": cout_tile,
         "max_tile_ofm_h": max_tile_ofm_h,
+        "psum_depth": psum_depth,
+        "reorder_depth": reorder_depth,
+        "total_ifm_bytes": total_ifm_bytes,
+        "total_ofm_bytes": total_ofm_bytes,
+        "total_ofm_beats": total_ofm_beats,
         "layers": layers,
     }
 
 
-def expected_from_spec_layer(layer, rows, cout_tile, max_tile_ofm_h):
+def expected_from_spec_layer(layer, rows, cout_tile, psum_depth, reorder_depth, layer_last):
     in_h, in_w, cin = [int(v) for v in layer["input_shape_hwc"]]
     conv_h, conv_w, cout = [int(v) for v in layer["conv_shape_hwc"]]
     out_h, out_w, out_c = [int(v) for v in layer["output_shape_hwc"]]
@@ -101,19 +118,31 @@ def expected_from_spec_layer(layer, rows, cout_tile, max_tile_ofm_h):
     if final_w != out_w or final_h != out_h or out_c != cout:
         raise RuntimeError(f"{layer['name']}: output shape does not match conv/pool shape")
 
-    tile_h = min(max_tile_ofm_h, conv_h)
-    if pool_enable and (tile_h % pool_stride) != 0:
-        tile_h -= tile_h % pool_stride
-    if tile_h <= 0:
+    tile_h = int(layer["tile_h_max"])
+    if tile_h <= 0 or tile_h > conv_h:
         raise RuntimeError(f"{layer['name']}: invalid tile_h {tile_h}")
+    if pool_enable and (tile_h % pool_stride) != 0:
+        raise RuntimeError(f"{layer['name']}: pooled tile_h is not stride aligned")
     tile_count = ceil_div(conv_h, tile_h)
     last_tile_h = conv_h - ((tile_count - 1) * tile_h)
     if pool_enable and (last_tile_h % pool_stride) != 0:
         raise RuntimeError(f"{layer['name']}: last pooled tile height is not aligned")
 
-    max_tile_output_pixels = conv_w * tile_h
+    max_tile_pixels = conv_w * tile_h
+    if max_tile_pixels > psum_depth:
+        raise RuntimeError(
+            f"{layer['name']}: pre-pool tile {max_tile_pixels} exceeds PSUM depth {psum_depth}"
+        )
+
+    max_tile_output_pixels = max_tile_pixels
     if pool_enable:
         max_tile_output_pixels = (conv_w // pool_stride) * (tile_h // pool_stride)
+    cout_blocks = ceil_div(cout, cout_tile)
+    max_tile_reorder_entries = max_tile_output_pixels * cout_blocks
+    if max_tile_reorder_entries > reorder_depth:
+        raise RuntimeError(
+            f"{layer['name']}: packed span {max_tile_reorder_entries} exceeds reorder depth {reorder_depth}"
+        )
 
     return {
         "name": layer["name"],
@@ -133,14 +162,21 @@ def expected_from_spec_layer(layer, rows, cout_tile, max_tile_ofm_h):
         "expected_ofm_bytes": out_w * out_h * cout,
         "k_total": cin * hardware_kernel * hardware_kernel,
         "k_passes": ceil_div(cin * hardware_kernel * hardware_kernel, rows),
-        "cout_blocks": ceil_div(cout, cout_tile),
+        "cout_blocks": cout_blocks,
+        "tile_h_max": tile_h,
+        "ifm_total_bytes": in_w * in_h * cin,
+        "ofm_total_bytes": out_w * out_h * cout,
+        "layer_last": layer_last,
         "conv_w": conv_w,
         "conv_h": conv_h,
         "final_w": out_w,
         "final_h": out_h,
         "tile_h": tile_h,
         "tile_count": tile_count,
-        "max_tile_axis_bytes": max_tile_output_pixels * cout * OFM_AXIS_BEAT_BYTES,
+        "max_tile_pixels": max_tile_pixels,
+        "max_tile_reorder_entries": max_tile_reorder_entries,
+        "max_tile_axis_bytes": ceil_div(max_tile_output_pixels * cout, OFM_AXIS_BEAT_BYTES)
+                               * OFM_AXIS_BEAT_BYTES,
     }
 
 
@@ -164,6 +200,10 @@ def compare_layer(c_layer, e_layer):
         "k_total",
         "k_passes",
         "cout_blocks",
+        "tile_h_max",
+        "ifm_total_bytes",
+        "ofm_total_bytes",
+        "layer_last",
     ]
     return [f"{c_layer['name']}: {k} got {c_layer[k]} exp {e_layer[k]}" for k in keys if c_layer[k] != e_layer[k]]
 
@@ -191,6 +231,7 @@ def main():
     total_blocks = 0
     max_axis = 0
     max_tile_axis = 0
+    max_tile_reorder_entries = 0
     fb = [0, 0]
     external_input_bytes = 0
     prev_final = None
@@ -200,7 +241,9 @@ def main():
             spec_layer,
             c_plan["rows"],
             c_plan["cout_tile"],
-            c_plan["max_tile_ofm_h"],
+            c_plan["psum_depth"],
+            c_plan["reorder_depth"],
+            1 if idx + 1 == len(spec_layers) else 0,
         )
         errors.extend(compare_layer(c_layer, e_layer))
 
@@ -211,8 +254,15 @@ def main():
 
         out_id = idx & 1
         fb[out_id] = max(fb[out_id], e_layer["expected_ofm_bytes"])
-        max_axis = max(max_axis, e_layer["expected_ofm_bytes"] * OFM_AXIS_BEAT_BYTES)
+        max_axis = max(
+            max_axis,
+            ceil_div(e_layer["expected_ofm_bytes"], OFM_AXIS_BEAT_BYTES)
+            * OFM_AXIS_BEAT_BYTES,
+        )
         max_tile_axis = max(max_tile_axis, e_layer["max_tile_axis_bytes"])
+        max_tile_reorder_entries = max(
+            max_tile_reorder_entries, e_layer["max_tile_reorder_entries"]
+        )
         total_tiles += e_layer["tile_count"]
         total_blocks += e_layer["tile_count"] * e_layer["cout_blocks"]
         prev_final = (e_layer["final_w"], e_layer["final_h"], e_layer["cout_total"])
@@ -222,7 +272,9 @@ def main():
             f"{e_layer['fm_w']}x{e_layer['fm_h']}x{e_layer['cin']} -> "
             f"{e_layer['final_w']}x{e_layer['final_h']}x{e_layer['cout_total']} "
             f"bytes={e_layer['expected_ofm_bytes']} tile_h={e_layer['tile_h']} "
-            f"tiles={e_layer['tile_count']} tile_axis={e_layer['max_tile_axis_bytes']} "
+            f"tile_px={e_layer['max_tile_pixels']} tiles={e_layer['tile_count']} "
+            f"reorder={e_layer['max_tile_reorder_entries']} "
+            f"tile_axis={e_layer['max_tile_axis_bytes']} "
             f"kpass={e_layer['k_passes']} cblk={e_layer['cout_blocks']}"
         )
 
@@ -230,8 +282,24 @@ def main():
         "summary "
         f"layers={len(c_plan['layers'])} ext_in={external_input_bytes} "
         f"fb0={fb[0]} fb1={fb[1]} max_axis={max_axis} "
-        f"max_tile_axis={max_tile_axis} tiles={total_tiles} blocks={total_blocks}"
+        f"max_tile_axis={max_tile_axis} max_reorder={max_tile_reorder_entries} "
+        f"tiles={total_tiles} blocks={total_blocks}"
     )
+
+    total_ifm_bytes = sum(layer["ifm_total_bytes"] for layer in c_plan["layers"])
+    total_ofm_bytes = sum(layer["ofm_total_bytes"] for layer in c_plan["layers"])
+    total_ofm_beats = sum(
+        ceil_div(layer["ofm_total_bytes"], OFM_AXIS_BEAT_BYTES)
+        for layer in c_plan["layers"]
+    )
+    if max(int(layer["tile_h_max"]) for layer in spec_layers) != c_plan["max_tile_ofm_h"]:
+        errors.append("ACCEL_SINGLE_SCALE_MAX_TILE_OFM_H does not match the plan maximum")
+    if total_ifm_bytes != c_plan["total_ifm_bytes"]:
+        errors.append(f"total IFM bytes got {total_ifm_bytes} exp {c_plan['total_ifm_bytes']}")
+    if total_ofm_bytes != c_plan["total_ofm_bytes"]:
+        errors.append(f"total OFM bytes got {total_ofm_bytes} exp {c_plan['total_ofm_bytes']}")
+    if total_ofm_beats != c_plan["total_ofm_beats"]:
+        errors.append(f"total OFM beats got {total_ofm_beats} exp {c_plan['total_ofm_beats']}")
 
     if errors:
         print("FAIL: single-scale schedule verification failed")

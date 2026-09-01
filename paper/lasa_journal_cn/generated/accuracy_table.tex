@@ -1,0 +1,15 @@
+\begin{table*}[t]
+\centering
+\caption{COCO val2017 精度（百分数）。640 结果仅用于上游资产复现；416 结果才用于部署公平比较。}
+\label{tab:accuracy}
+\small
+\begin{tabular}{lrrrrrr}
+\toprule
+配置 & AP & AP50 & AP75 & AP$_S$ & AP$_M$ & AP$_L$ \\
+\midrule
+官方 FP32-640 & 17.636 & 34.862 & -- & -- & -- & -- \\
+部署 FP32-416 & 17.494 & 33.493 & 16.415 & 5.324 & 18.436 & 29.263 \\
+当前部署 INT8-416 & 14.304 & 30.212 & 12.145 & 4.325 & 15.245 & 23.686 \\
+\bottomrule
+\end{tabular}
+\end{table*}

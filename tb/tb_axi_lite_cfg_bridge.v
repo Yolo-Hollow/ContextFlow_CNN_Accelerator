@@ -3,7 +3,7 @@
 module tb_axi_lite_cfg_bridge;
     reg clk, rst;
 
-    reg  [8:0]  awaddr;
+    reg  [9:0]  awaddr;
     reg         awvalid;
     wire        awready;
     reg  [31:0] wdata;
@@ -13,7 +13,7 @@ module tb_axi_lite_cfg_bridge;
     wire [1:0]  bresp;
     wire        bvalid;
     reg         bready;
-    reg  [8:0]  araddr;
+    reg  [9:0]  araddr;
     reg         arvalid;
     wire        arready;
     wire [31:0] rdata;
@@ -22,13 +22,14 @@ module tb_axi_lite_cfg_bridge;
     reg         rready;
 
     wire        cfg_wr_en;
-    wire [6:0]  cfg_addr;
+    wire [7:0]  cfg_addr;
     wire [31:0] cfg_wdata;
     wire [31:0] cfg_rdata;
     wire        cfg_rd_en;
 
     reg layer_busy, layer_done;
     wire start_pulse;
+    wire datapath_reset_active;
     wire [8:0] fm_h, fm_w, ofm_h, ofm_w;
     wire [1:0] conv_stride, conv_pad, activation_mode;
     wire kernel_1x1;
@@ -54,6 +55,29 @@ module tb_axi_lite_cfg_bridge;
     wire [31:0] stream_ifm_packets;
     wire [15:0] tail_cycles_config;
     wire [15:0] raw_hwc_compute_start_level;
+    reg compute_gap_pulse;
+    reg preload_commit_pulse;
+    reg preload_hit_pulse;
+    reg preload_miss_pulse;
+    reg eligible_handoff_pulse;
+    reg next_cycle_hit_pulse;
+    reg extra_gap_pulse;
+    reg [5:0] wait_reason_pulse;
+    reg protocol_error_pulse;
+    wire [31:0] compute_pipe_compute_gap_count;
+    wire [31:0] compute_pipe_preload_commit_count;
+    wire [31:0] compute_pipe_preload_hit_count;
+    wire [31:0] compute_pipe_preload_miss_count;
+    wire [31:0] compute_pipe_eligible_handoff_count;
+    wire [31:0] compute_pipe_next_cycle_hit_count;
+    wire [31:0] compute_pipe_extra_gap_count;
+    wire [31:0] compute_pipe_wait_bank_retire_count;
+    wire [31:0] compute_pipe_wait_weight_count;
+    wire [31:0] compute_pipe_wait_ifm_count;
+    wire [31:0] compute_pipe_wait_psum_count;
+    wire [31:0] compute_pipe_wait_collector_output_count;
+    wire [31:0] compute_pipe_wait_control_count;
+    wire [31:0] compute_pipe_protocol_error_count;
 
     axi_lite_cfg_bridge dut_bridge (
         .clk(clk), .rst(rst),
@@ -66,7 +90,43 @@ module tb_axi_lite_cfg_bridge;
         .cfg_rdata(cfg_rdata), .cfg_rd_en(cfg_rd_en)
     );
 
-    layer_config_regs dut_regs (
+    // Mirror the core-level integration: the datapath-reset window generated
+    // by layer_config_regs is the soft reset for cumulative compute-pipeline
+    // telemetry.  Distinct counts below prove the complete 0x248..0x27c
+    // address ordering instead of only checking the first and last words.
+    compute_pipe_telemetry dut_compute_pipe_telemetry (
+        .clk(clk), .rst(rst), .soft_reset(datapath_reset_active),
+        .compute_gap_pulse(compute_gap_pulse),
+        .preload_commit_pulse(preload_commit_pulse),
+        .preload_hit_pulse(preload_hit_pulse),
+        .preload_miss_pulse(preload_miss_pulse),
+        .eligible_handoff_pulse(eligible_handoff_pulse),
+        .next_cycle_hit_pulse(next_cycle_hit_pulse),
+        .extra_gap_pulse(extra_gap_pulse),
+        .wait_reason_pulse(wait_reason_pulse),
+        .protocol_error_pulse(protocol_error_pulse),
+        .compute_gap_count(compute_pipe_compute_gap_count),
+        .preload_commit_count(compute_pipe_preload_commit_count),
+        .preload_hit_count(compute_pipe_preload_hit_count),
+        .preload_miss_count(compute_pipe_preload_miss_count),
+        .eligible_handoff_count(compute_pipe_eligible_handoff_count),
+        .next_cycle_hit_count(compute_pipe_next_cycle_hit_count),
+        .extra_gap_count(compute_pipe_extra_gap_count),
+        .wait_bank_retire_count(compute_pipe_wait_bank_retire_count),
+        .wait_weight_count(compute_pipe_wait_weight_count),
+        .wait_ifm_count(compute_pipe_wait_ifm_count),
+        .wait_psum_count(compute_pipe_wait_psum_count),
+        .wait_collector_output_count(
+            compute_pipe_wait_collector_output_count),
+        .wait_control_count(compute_pipe_wait_control_count),
+        .protocol_error_count(compute_pipe_protocol_error_count)
+    );
+
+    // Leave CLOCK_HZ at its default here; the descriptor-focused test covers
+    // an explicit 200 MHz override independently.
+    layer_config_regs #(
+        .ENABLE_COLUMN_PSUM(1)
+    ) dut_regs (
         .clk(clk), .rst(rst),
         .cfg_wr_en(cfg_wr_en), .cfg_addr(cfg_addr), .cfg_wdata(cfg_wdata),
         .cfg_rd_en(cfg_rd_en), .cfg_rdata(cfg_rdata),
@@ -115,7 +175,43 @@ module tb_axi_lite_cfg_bridge;
         .raw_hwc_load_unpack_cycles(32'd0),
         .raw_hwc_replay_active_cycles(32'd0),
         .raw_hwc_replay_wait_ready_cycles(32'd0),
+        .context_alloc_count(32'd501),
+        .context_input_issued_count(32'd502),
+        .context_array_retired_count(32'd503),
+        .context_collector_done_count(32'd504),
+        .context_gap_cycles(32'd505),
+        .context_ifm_ownership_stall_cycles(32'd506),
+        .context_weight_ownership_stall_cycles(32'd507),
+        .context_psum_credit_stall_cycles(32'd508),
+        .context_epoch_mismatch_count(32'd509),
+        .context_mismatch_count(32'd510),
+        .context_ifm_underflow_count(32'd511),
+        .context_psum_underflow_count(32'd512),
+        .context_fifo_drop_count(32'd513),
+        .context_bank_overwrite_count(32'd514),
+        .context_full_stall_cycles(32'd515),
+        .compute_pipe_compute_gap_count(compute_pipe_compute_gap_count),
+        .compute_pipe_preload_commit_count(
+            compute_pipe_preload_commit_count),
+        .compute_pipe_preload_hit_count(compute_pipe_preload_hit_count),
+        .compute_pipe_preload_miss_count(compute_pipe_preload_miss_count),
+        .compute_pipe_eligible_handoff_count(
+            compute_pipe_eligible_handoff_count),
+        .compute_pipe_next_cycle_hit_count(
+            compute_pipe_next_cycle_hit_count),
+        .compute_pipe_extra_gap_count(compute_pipe_extra_gap_count),
+        .compute_pipe_wait_bank_retire_count(
+            compute_pipe_wait_bank_retire_count),
+        .compute_pipe_wait_weight_count(compute_pipe_wait_weight_count),
+        .compute_pipe_wait_ifm_count(compute_pipe_wait_ifm_count),
+        .compute_pipe_wait_psum_count(compute_pipe_wait_psum_count),
+        .compute_pipe_wait_collector_output_count(
+            compute_pipe_wait_collector_output_count),
+        .compute_pipe_wait_control_count(compute_pipe_wait_control_count),
+        .compute_pipe_protocol_error_count(
+            compute_pipe_protocol_error_count),
         .start_pulse(start_pulse),
+        .datapath_reset_active(datapath_reset_active),
         .fm_h(fm_h), .fm_w(fm_w), .ofm_h(ofm_h), .ofm_w(ofm_w),
         .conv_stride(conv_stride), .conv_pad(conv_pad),
         .kernel_1x1(kernel_1x1),
@@ -147,6 +243,7 @@ module tb_axi_lite_cfg_bridge;
     integer pass, fail;
     integer start_pulse_count;
     integer count_before;
+    integer telemetry_index;
     reg [31:0] rd;
 
     always @(posedge clk) begin
@@ -157,7 +254,7 @@ module tb_axi_lite_cfg_bridge;
     end
 
     task axi_write;
-        input [8:0] addr;
+        input [9:0] addr;
         input [31:0] data;
         input [3:0] strb;
         begin
@@ -181,7 +278,7 @@ module tb_axi_lite_cfg_bridge;
     endtask
 
     task axi_write_split;
-        input [8:0] addr;
+        input [9:0] addr;
         input [31:0] data;
         begin
             @(negedge clk);
@@ -207,7 +304,7 @@ module tb_axi_lite_cfg_bridge;
     endtask
 
     task axi_write_split_wfirst;
-        input [8:0] addr;
+        input [9:0] addr;
         input [31:0] data;
         begin
             @(negedge clk);
@@ -233,7 +330,7 @@ module tb_axi_lite_cfg_bridge;
     endtask
 
     task axi_read;
-        input [8:0] addr;
+        input [9:0] addr;
         output [31:0] data;
         begin
             @(negedge clk);
@@ -266,6 +363,54 @@ module tb_axi_lite_cfg_bridge;
         end
     endtask
 
+    task populate_compute_pipe_telemetry;
+        integer event_index;
+        integer wait_index;
+        integer wait_repeat;
+        begin
+            // Scalar counters become 7,6,5,4,3,2,1 respectively.
+            for (event_index = 0; event_index < 7;
+                 event_index = event_index + 1) begin
+                @(negedge clk);
+                compute_gap_pulse = 1'b1;
+                preload_commit_pulse = event_index < 6;
+                preload_hit_pulse = event_index < 5;
+                preload_miss_pulse = event_index < 4;
+                eligible_handoff_pulse = event_index < 3;
+                next_cycle_hit_pulse = event_index < 2;
+                extra_gap_pulse = event_index < 1;
+            end
+            @(negedge clk);
+            compute_gap_pulse = 1'b0;
+            preload_commit_pulse = 1'b0;
+            preload_hit_pulse = 1'b0;
+            preload_miss_pulse = 1'b0;
+            eligible_handoff_pulse = 1'b0;
+            next_cycle_hit_pulse = 1'b0;
+            extra_gap_pulse = 1'b0;
+
+            // The six one-hot wait counters become 1..6.
+            for (wait_index = 0; wait_index < 6;
+                 wait_index = wait_index + 1)
+                for (wait_repeat = 0; wait_repeat <= wait_index;
+                     wait_repeat = wait_repeat + 1) begin
+                    @(negedge clk);
+                    wait_reason_pulse = 6'b000001 << wait_index;
+                end
+            @(negedge clk);
+            wait_reason_pulse = 6'b000000;
+
+            // The final counter is seven, giving every adjacent register a
+            // distinct expected value across the whole block.
+            repeat (7) begin
+                @(negedge clk);
+                protocol_error_pulse = 1'b1;
+            end
+            @(negedge clk);
+            protocol_error_pulse = 1'b0;
+        end
+    endtask
+
     initial begin
         clk = 0;
         rst = 1;
@@ -280,12 +425,22 @@ module tb_axi_lite_cfg_bridge;
         rready = 1'b1;
         layer_busy = 1'b0;
         layer_done = 1'b0;
+        compute_gap_pulse = 1'b0;
+        preload_commit_pulse = 1'b0;
+        preload_hit_pulse = 1'b0;
+        preload_miss_pulse = 1'b0;
+        eligible_handoff_pulse = 1'b0;
+        next_cycle_hit_pulse = 1'b0;
+        extra_gap_pulse = 1'b0;
+        wait_reason_pulse = 6'b000000;
+        protocol_error_pulse = 1'b0;
         pass = 0;
         fail = 0;
         start_pulse_count = 0;
 
         repeat (4) @(negedge clk);
         rst = 0;
+        populate_compute_pipe_telemetry();
 
         axi_write(8'h04, {7'd0, 9'd5, 7'd0, 9'd7}, 4'hf);
         axi_read(8'h04, rd);
@@ -349,6 +504,28 @@ module tb_axi_lite_cfg_bridge;
         axi_read(8'h3c, rd);
         check_eq(rd, 32'd36, "input_zero_point read");
         check_eq({24'd0, input_zero_point}, 32'd36, "input_zero_point output");
+
+        axi_read(10'h200, rd);
+        check_eq(rd, 32'd2, "context telemetry version high-address decode");
+        axi_read(10'h204, rd);
+        check_eq(rd, 32'd501, "context alloc high-address decode");
+        axi_read(10'h23c, rd);
+        check_eq(rd, 32'd515, "context-full stall high-address decode");
+        axi_read(10'h244, rd);
+        check_eq(rd, 32'd1, "compute-pipe version high-address decode");
+        for (telemetry_index = 0; telemetry_index < 14;
+             telemetry_index = telemetry_index + 1) begin
+            axi_read(10'h248 + telemetry_index*4, rd);
+            if (telemetry_index < 7)
+                check_eq(rd, 32'd7 - telemetry_index,
+                         "compute-pipe counter high-address decode");
+            else if (telemetry_index < 13)
+                check_eq(rd, telemetry_index - 6,
+                         "compute-pipe counter high-address decode");
+            else
+                check_eq(rd, 32'd7,
+                     "compute-pipe counter high-address decode");
+        end
 
         axi_read(8'h40, rd);
         check_eq(rd, {28'd0, 2'd2, 1'b0, 1'b1}, "pool cfg read");
@@ -433,6 +610,34 @@ module tb_axi_lite_cfg_bridge;
                      start_pulse_count, count_before + 1);
             fail = fail + 1;
         end else pass = pass + 1;
+
+        // 0x240 is the first register above the context telemetry block.
+        // Exercise it through AXI-Lite to cover the full ten-bit decode and
+        // prove that reset has priority over a simultaneous start request.
+        axi_read(10'h240, rd);
+        check_eq(rd, 32'd0, "initial datapath reset count");
+        count_before = start_pulse_count;
+        axi_write(10'h000, 32'h0000_0005, 4'h1);
+        repeat (6) @(negedge clk);
+        axi_read(10'h240, rd);
+        check_eq(rd, 32'd1, "datapath reset count high-address decode");
+        check_eq(start_pulse_count, count_before,
+                 "AXI datapath reset wins over start");
+        axi_read(10'h004, rd);
+        check_eq(rd, {7'd0, 9'd5, 7'd0, 9'd8},
+                 "AXI datapath reset preserves configuration");
+        check_eq(datapath_reset_active, 1'b0,
+                 "AXI datapath reset completes");
+        axi_read(10'h248, rd);
+        check_eq(rd, 32'd0, "datapath reset clears compute-gap telemetry");
+        axi_read(10'h27c, rd);
+        check_eq(rd, 32'd0,
+                 "datapath reset clears compute-pipe protocol telemetry");
+        axi_read(10'h244, rd);
+        check_eq(rd, 32'd1, "datapath reset preserves telemetry version");
+        axi_read(10'h280, rd);
+        check_eq(rd, 32'd100000000,
+                 "AXI 0x280 returns default 100 MHz CLOCK_HZ");
 
         $display("=== tb_axi_lite_cfg_bridge: %0d pass, %0d fail ===", pass, fail);
         if (fail != 0) $fatal(1);

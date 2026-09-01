@@ -12,6 +12,7 @@ module tb_ofm_pooling;
     reg in_valid;
     wire in_ready;
     reg [ADDR_W-1:0] in_addr;
+    wire in_addr_zero = (in_addr == {ADDR_W{1'b0}});
     reg [10:0] in_cout_base;
     reg [COUT_TILE-1:0] in_channel_valid;
     reg [COUT_TILE*8-1:0] in_data;
@@ -28,7 +29,8 @@ module tb_ofm_pooling;
         .clk(clk), .rst(rst),
         .pool_enable(pool_enable), .pool_stride(pool_stride), .conv_ofm_w(conv_ofm_w),
         .in_valid(in_valid), .in_ready(in_ready),
-        .in_addr(in_addr), .in_cout_base(in_cout_base),
+        .in_addr(in_addr), .in_addr_zero(in_addr_zero),
+        .in_cout_base(in_cout_base),
         .in_channel_valid(in_channel_valid), .in_data(in_data),
         .out_valid(out_valid), .out_ready(out_ready),
         .out_addr(out_addr), .out_cout_base(out_cout_base),
@@ -40,6 +42,13 @@ module tb_ofm_pooling;
     integer pass, fail;
     integer lane;
     integer pkt;
+    integer hold_cycle;
+    reg [ADDR_W-1:0] held_out_addr;
+    reg [10:0] held_out_cout_base;
+    reg [COUT_TILE-1:0] held_out_channel_valid;
+    reg [COUT_TILE*8-1:0] held_out_data;
+    reg [8:0] held_x_cnt;
+    reg [8:0] held_y_cnt;
 
     function [7:0] pix_val;
         input integer y;
@@ -87,6 +96,35 @@ module tb_ofm_pooling;
         end
     endtask
 
+    task make_constant_packet;
+        input integer base;
+        output [COUT_TILE*8-1:0] data_o;
+        integer l;
+        begin
+            data_o = {COUT_TILE*8{1'b0}};
+            for (l = 0; l < COUT_TILE; l = l + 1)
+                data_o[l*8 +: 8] = (base + l) & 8'hff;
+        end
+    endtask
+
+    task send_payload;
+        input [ADDR_W-1:0] addr_i;
+        input [10:0] cout_base;
+        input [COUT_TILE-1:0] mask;
+        input [COUT_TILE*8-1:0] data_i;
+        begin
+            @(negedge clk);
+            in_addr = addr_i;
+            in_cout_base = cout_base;
+            in_channel_valid = mask;
+            in_data = data_i;
+            in_valid = 1'b1;
+            wait(in_ready);
+            @(negedge clk);
+            in_valid = 1'b0;
+        end
+    endtask
+
     task send_packet;
         input integer addr;
         input [10:0] cout_base;
@@ -94,15 +132,19 @@ module tb_ofm_pooling;
         reg [COUT_TILE*8-1:0] data_tmp;
         begin
             make_packet(addr, data_tmp);
-            @(negedge clk);
-            in_addr = addr[ADDR_W-1:0];
-            in_cout_base = cout_base;
-            in_channel_valid = mask;
-            in_data = data_tmp;
-            in_valid = 1'b1;
-            wait(in_ready);
-            @(negedge clk);
-            in_valid = 1'b0;
+            send_payload(addr[ADDR_W-1:0], cout_base, mask, data_tmp);
+        end
+    endtask
+
+    task send_constant_packet;
+        input integer addr;
+        input integer base;
+        input [10:0] cout_base;
+        input [COUT_TILE-1:0] mask;
+        reg [COUT_TILE*8-1:0] data_tmp;
+        begin
+            make_constant_packet(base, data_tmp);
+            send_payload(addr[ADDR_W-1:0], cout_base, mask, data_tmp);
         end
     endtask
 
@@ -123,27 +165,84 @@ module tb_ofm_pooling;
         end
     endtask
 
+    task check_pool_now;
+        input integer out_idx;
+        input integer py;
+        input integer px;
+        input [10:0] cout_base;
+        input [COUT_TILE-1:0] mask;
+        integer l;
+        reg [7:0] exp;
+        begin
+            check(out_valid == 1'b1, "pool output valid");
+            check(out_addr == out_idx[ADDR_W-1:0], "pool addr");
+            check(out_cout_base == cout_base, "pool cout");
+            check(out_channel_valid == mask, "pool mask");
+            for (l = 0; l < COUT_TILE; l = l + 1) begin
+                exp = max4(
+                    pix_val(py*2,   px*2,   l),
+                    pix_val(py*2,   px*2+1, l),
+                    pix_val(py*2+1, px*2,   l),
+                    pix_val(py*2+1, px*2+1, l)
+                );
+                check(out_data[l*8 +: 8] == exp, "pool data");
+            end
+        end
+    endtask
+
     task expect_pool_output;
         input integer out_idx;
         input integer py;
         input integer px;
-        reg [7:0] exp;
         begin
             wait(out_valid);
             #1;
-            check(out_addr == out_idx[ADDR_W-1:0], "pool addr");
-            check(out_cout_base == 11'd20, "pool cout");
-            check(out_channel_valid == 4'b1111, "pool mask");
-            for (lane = 0; lane < COUT_TILE; lane = lane + 1) begin
-                exp = max4(
-                    pix_val(py*2,   px*2,   lane),
-                    pix_val(py*2,   px*2+1, lane),
-                    pix_val(py*2+1, px*2,   lane),
-                    pix_val(py*2+1, px*2+1, lane)
-                );
-                check(out_data[lane*8 +: 8] == exp, "pool data");
-            end
+            check_pool_now(out_idx, py, px, 11'd20, 4'b1111);
             @(negedge clk);
+        end
+    endtask
+
+    task reset_stream;
+        begin
+            @(negedge clk);
+            rst = 1'b1;
+            in_valid = 1'b0;
+            out_ready = 1'b1;
+            @(negedge clk);
+            rst = 1'b0;
+        end
+    endtask
+
+    task run_continuous_4x4;
+        integer p;
+        reg [COUT_TILE*8-1:0] data_tmp;
+        begin
+            @(negedge clk);
+            in_valid = 1'b1;
+            in_cout_base = 11'd20;
+            in_channel_valid = 4'b1111;
+            for (p = 0; p < 16; p = p + 1) begin
+                make_packet(p, data_tmp);
+                in_addr = p[ADDR_W-1:0];
+                in_data = data_tmp;
+                #1;
+                check(in_ready == 1'b1, "continuous input ready");
+                @(posedge clk);
+                #1;
+                if (p == 5)
+                    check_pool_now(0, 0, 0, 11'd20, 4'b1111);
+                else if (p == 7)
+                    check_pool_now(1, 0, 1, 11'd20, 4'b1111);
+                else if (p == 13)
+                    check_pool_now(2, 1, 0, 11'd20, 4'b1111);
+                else if (p == 15)
+                    check_pool_now(3, 1, 1, 11'd20, 4'b1111);
+                else
+                    check(out_valid == 1'b0,
+                          "continuous non-bottom-right quiet");
+                @(negedge clk);
+            end
+            in_valid = 1'b0;
         end
     endtask
 
@@ -166,50 +265,118 @@ module tb_ofm_pooling;
         rst = 0;
 
         $display("=== bypass ===");
+        expect_bypass(0);
         expect_bypass(3);
+        pool_enable = 1'b1;
+        pool_stride = 2'd1;
+        expect_bypass(7);
 
-        $display("=== 2x2 stride2 pool 4x4 -> 2x2 ===");
+        $display("=== continuous 2x2 stride2 pool, two output rows ===");
+        reset_stream();
         pool_enable = 1'b1;
         pool_stride = 2'd2;
-        for (pkt = 0; pkt < 16; pkt = pkt + 1) begin
-            send_packet(pkt, 11'd20, 4'b1111);
-            if (pkt == 5)
-                expect_pool_output(0, 0, 0);
-            else if (pkt == 7)
-                expect_pool_output(1, 0, 1);
-            else if (pkt == 13)
-                expect_pool_output(2, 1, 0);
-            else if (pkt == 15)
-                expect_pool_output(3, 1, 1);
-            else begin
-                #1;
-                check(out_valid == 1'b0, "no output on non-bottom-right packet");
-            end
-        end
+        run_continuous_4x4();
+
+        $display("=== repeated addr0 resync at stale bottom-right ===");
+        reset_stream();
+        pool_enable = 1'b1;
+        pool_stride = 2'd2;
+        // Stop immediately before the old frame's first bottom-right pixel.
+        send_constant_packet(0, 200, 11'd30, 4'b1111);
+        send_constant_packet(1, 210, 11'd30, 4'b1111);
+        send_constant_packet(2, 220, 11'd30, 4'b1111);
+        send_constant_packet(3, 230, 11'd30, 4'b1111);
+        send_constant_packet(4, 190, 11'd30, 4'b1111);
+        #1;
+        check(out_valid == 1'b0, "pre-resync produces no output");
+        check(dut.x_cnt == 9'd1 && dut.y_cnt == 9'd1,
+              "pre-resync stale bottom-right position");
+
+        // Both address-zero packets are first-pixel resyncs.  The first one
+        // arrives while registered x/y names a bottom-right pixel and must
+        // still suppress the stale pooled result; the second must restart in
+        // place rather than advancing to column two.
+        send_constant_packet(0, 10, 11'd31, 4'b1011);
+        #1;
+        check(out_valid == 1'b0, "addr0 suppresses stale bottom-right output");
+        check(dut.x_cnt == 9'd1 && dut.y_cnt == 9'd0,
+              "addr0 restarts registered position");
+        send_constant_packet(0, 12, 11'd32, 4'b0111);
+        #1;
+        check(out_valid == 1'b0, "repeated addr0 produces no output");
+        check(dut.x_cnt == 9'd1 && dut.y_cnt == 9'd0,
+              "repeated addr0 remains first-pixel position");
+        for (lane = 0; lane < COUT_TILE; lane = lane + 1)
+            check(dut.top_row_data[0][lane*8 +: 8] == ((12 + lane) & 8'hff),
+                  "repeated addr0 replaces top-row column zero");
+
+        send_constant_packet(1, 20, 11'd33, 4'b1101);
+        send_constant_packet(2, 5,  11'd33, 4'b1101);
+        send_constant_packet(3, 6,  11'd33, 4'b1101);
+        send_constant_packet(4, 30, 11'd33, 4'b1101);
+        send_constant_packet(5, 40, 11'd33, 4'b1101);
+        wait(out_valid);
+        #1;
+        check(out_addr == {ADDR_W{1'b0}}, "resync pooled addr");
+        check(out_cout_base == 11'd33, "resync pooled cout");
+        check(out_channel_valid == 4'b1101, "resync pooled mask");
+        for (lane = 0; lane < COUT_TILE; lane = lane + 1)
+            check(out_data[lane*8 +: 8] == ((40 + lane) & 8'hff),
+                  "resync pooled data uses replacement row");
 
         $display("=== output backpressure ===");
-        @(negedge clk);
-        rst = 1;
-        @(negedge clk);
-        rst = 0;
+        reset_stream();
         pool_enable = 1'b1;
         pool_stride = 2'd2;
         out_ready = 1'b0;
-        for (pkt = 0; pkt < 5; pkt = pkt + 1)
+        for (pkt = 0; pkt < 6; pkt = pkt + 1)
             send_packet(pkt, 11'd9, 4'b1111);
+        #1;
+        check_pool_now(0, 0, 0, 11'd9, 4'b1111);
+        held_out_addr = out_addr;
+        held_out_cout_base = out_cout_base;
+        held_out_channel_valid = out_channel_valid;
+        held_out_data = out_data;
+        held_x_cnt = dut.x_cnt;
+        held_y_cnt = dut.y_cnt;
+
+        // Present the next packet while the pooled result is blocked.  No
+        // internal coordinate or output payload may move until out_ready.
         @(negedge clk);
-        in_addr = 5;
-        make_packet(5, in_data);
+        in_addr = 6;
+        make_packet(6, in_data);
         in_cout_base = 11'd9;
         in_channel_valid = 4'b1111;
         in_valid = 1'b1;
+        for (hold_cycle = 0; hold_cycle < 3; hold_cycle = hold_cycle + 1) begin
+            @(posedge clk);
+            #1;
+            check(out_valid == 1'b1, "held pooled output valid");
+            check(in_ready == 1'b0, "input stalls while pooled output held");
+            check(out_addr == held_out_addr &&
+                  out_cout_base == held_out_cout_base &&
+                  out_channel_valid == held_out_channel_valid &&
+                  out_data == held_out_data,
+                  "held pooled output payload stable");
+            check(dut.x_cnt == held_x_cnt && dut.y_cnt == held_y_cnt,
+                  "pool position stable under backpressure");
+        end
+
         @(negedge clk);
-        check(out_valid == 1'b1, "held pooled output valid");
-        check(in_ready == 1'b0, "input stalls while pooled output held");
         out_ready = 1'b1;
+        #1;
+        check(in_ready == 1'b1, "input ready with output release");
+        @(posedge clk);
+        #1;
+        check(out_valid == 1'b0, "held output consumed with packet six");
+        check(dut.x_cnt == 9'd3 && dut.y_cnt == 9'd1,
+              "packet six advances exactly once");
         @(negedge clk);
         in_valid = 1'b0;
-        check(out_valid == 1'b0 || out_ready == 1'b1, "backpressure released");
+        send_packet(7, 11'd9, 4'b1111);
+        wait(out_valid);
+        #1;
+        check_pool_now(1, 0, 1, 11'd9, 4'b1111);
 
         $display("=== tb_ofm_pooling: %0d pass, %0d fail ===", pass, fail);
         if (fail != 0) $fatal(1);

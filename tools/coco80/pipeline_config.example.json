@@ -1,0 +1,15 @@
+{
+  "format": "kv260-coco80-r5-pipeline-config",
+  "version": 1,
+  "paths": {
+    "upstream": "../../../coco80_assets/yolov3-v9.5.0",
+    "weights": "../../../coco80_assets/yolov3-tiny-v9.5.0.pt",
+    "local_weights": "../../../python_prj/models_files/yolov3-tiny.pt",
+    "download_dir": "../../../coco80_assets/downloads",
+    "coco_root": "../../../coco",
+    "bit": "../../build_abi_v2_release_r5/conv_accel_ps_dma_minimal/conv_accel_ps_dma_minimal.runs/impl_1/conv_accel_ps_dma_wrapper.bit",
+    "xsa": "../../build_abi_v2_release_r5/conv_accel_ps_dma_minimal.xsa",
+    "hardware_metadata": "../../build_abi_v2_release_r5/reports/build_profile.txt",
+    "hardware_sha_manifest": "../../build_abi_v2_release_r5/reports/system_artifacts.sha256"
+  }
+}

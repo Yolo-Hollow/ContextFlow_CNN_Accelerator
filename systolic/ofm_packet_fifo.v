@@ -8,7 +8,8 @@ module ofm_packet_fifo #(
     parameter COUT_TILE = 64,
     parameter ADDR_W = 10,
     parameter DEPTH = 16,
-    parameter AW = 4
+    parameter AW = 4,
+    parameter CONSERVATIVE_FULL_CREDIT = 0
 ) (
     input  clk,
     input  rst,
@@ -42,7 +43,11 @@ module ofm_packet_fifo #(
                      (wptr[AW-1:0] == rptr[AW-1:0]);
     wire [PTR_W-1:0] level = wptr - rptr;
     wire pop = out_valid && out_ready;
-    wire can_push = !fifo_full || pop;
+    // A conservative instance waits for the registered read pointer to
+    // release full credit.  This removes the combinational ready path from
+    // the downstream consumer while preserving the legacy default behavior.
+    wire can_push = !fifo_full ||
+                    ((CONSERVATIVE_FULL_CREDIT == 0) && pop);
     wire push = in_valid && can_push;
 
     assign in_ready = can_push;

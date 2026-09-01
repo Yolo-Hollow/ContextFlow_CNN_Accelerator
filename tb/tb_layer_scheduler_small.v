@@ -35,7 +35,7 @@ module tb_layer_scheduler_small;
     reg [7:0] dma_wr_data [0:4];
     reg dma_line_advance;
     reg [1:0] conv_stride, conv_pad;
-    reg [10:0] pass_base_k;
+    reg [13:0] pass_base_k;
     wire [31:0] ifm_fifo_full;
 
     reg [5:0] bias_wr_addr;
@@ -212,7 +212,7 @@ module tb_layer_scheduler_small;
             reset_dut();
             oy = py[8:0];
             ox = px[8:0];
-            pass_base_k = k_base[10:0];
+            pass_base_k = k_base[13:0];
             is_first_pass = first_pass;
             use_ext_psum = !first_pass;
             psum_top_ext = ext_psum;
