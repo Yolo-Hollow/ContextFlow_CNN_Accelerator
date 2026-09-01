@@ -83,6 +83,14 @@ The final controlled-ablation stage reports `34.978 ms`; it has a different meas
 - The 3000 timed images have zero output CRC mismatches.
 - A ten-minute soak test passes with 13,184 records, zero protocol errors, and zero unexpected reconnects.
 
+### Board inference examples
+
+These results were produced by the complete INT8 dual-scale YOLOv3-tiny network running on the KV260 with the demo threshold `confidence=0.25`. They illustrate board inference in a crowded scene, a dense same-class scene, and a multi-class scene; the COCO val2017 table above remains the authoritative accuracy result.
+
+| Crowded scene (COCO 36494) | Dense same-class scene (COCO 148957) | Multi-class scene (COCO 41872) |
+| :---: | :---: | :---: |
+| ![KV260 crowded-scene board detection](docs/assets/results/board_demo_000000036494.jpg) | ![KV260 donut board detection](docs/assets/results/board_demo_000000148957.jpg) | ![KV260 multi-class board detection](docs/assets/results/board_demo_000000041872.jpg) |
+
 ### Implementation cost
 
 | Resource or timing metric | Result |
@@ -117,6 +125,7 @@ Canonical measurements and hashes are recorded in the [34.9 ms release manifest]
 │   └── power/                        Power-report parsing
 ├── repro/                            Reproduction entry points and compact data packages
 ├── docs/                             Release manifest, implementation, and evidence docs
+│   └── assets/results/               Board inference examples used by the README
 ├── paper/
 │   └── lasa_journal_cn/              Frozen experimental data and publication evidence
 ├── release/
