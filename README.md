@@ -148,10 +148,26 @@ Get-Content repro\SHA256SUMS
 
 ## RTL 仿真
 
-运行日常短回归：
+XSIM 是统一且具有签核效力的 RTL 仿真器。运行日常短回归：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File tb/run_short_xsim_regression.ps1
+```
+
+运行全部非诊断 testbench，或连同显式 diagnostic 用例一起运行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tb/run_all_xsim_regression.ps1
+powershell -ExecutionPolicy Bypass -File tb/run_all_xsim_regression.ps1 `
+  -IncludeDiagnostics
+```
+
+Icarus 只保留为可选的模块级快速 smoke，不进入提交或发布门禁。完整层、18x16、
+随机 AXIS 背压及所有正式回归均使用 XSIM：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tb/run_large_xsim_regression.ps1 `
+  -Top tb_conv_accel_core_axi_lite_axis_stream_r18_c16_packed_ofm_tail
 ```
 
 运行指定的 XSIM 顶层测试，例如 Conv6 的 `3x3` raw-HWC full-tile 测试：
@@ -167,6 +183,31 @@ testbench 覆盖 AXI-Lite 配置、AXI-Stream 背压、weight/IFM loader、原�
 `1x1/3x3`、PSUM、requant、activation、pooling 和真实层数据流。大型完整层测试
 使用 XSIM，日常回归使用较小的定向用例控制运行时间。
 
+### 100 ms 优化分支状态
+
+仓库中的 ABI v2 数据面正在按 `18x16/COUT_TILE=32` 的 100 MHz、100 ms
+目标推进。当前 RTL 已接通层级 raw-HWC 长流、无运行时 tile 除法的双 bank
+materialized-window cache、PL 空间 tile sequencer、32-channel packed-HWC OFM
+ping-pong writer，以及启动前的描述符、容量和字节数原子校验。十层固定计划的
+精确有效计算量为 `3,889,197` cycles；相关小型集成用例与 18x16 packed OFM
+用例已由 XSIM 验证。
+
+2026-08-05 的最新 `abi_v2_release` 18x16 layer-long OOC 综合使用 Vivado
+2022.2，结果为 `0 error / 0 critical warning`、`94,256 LUT (80.48%)`、
+`175,110 FF`、`120 BRAM tile`、`44 URAM`、`402 DSP`，100 MHz 时序闭合：
+`WNS=+1.044 ns`、`TNS=0`、0 个失败端点。相对首轮 tagged OOC 的
+`103,402 LUT`，轻量双权重 PE 和 block-RAM tag FIFO 共减少 `9,146 LUT`；
+其中 tagged array 从 `31,619` 降至 `23,786 LUT`。正式 OOC 的资源/时序门禁、
+DCP 发布和 SHA256 校验均通过。18x8 与 18x16 的 936-pixel 连续 context XSIM
+分别通过 `33,706/0` 与 `63,658/0` 检查。该结果仍是 OOC 综合证据，不是完整
+Block Design 布局布线签核。
+
+mesh 内 per-token epoch、双 weight bank、context retirement 和 PSUM owner
+scoreboard 已端到端接入；`abi_v2_release` profile 的 capability 可构造为
+`0x0f`。但这一配置尚不是可发布的 `<100 ms` bitstream：完整 BD、软件四 DMA
+服务循环、十层 byte-exact 和正式 100 次板测尚未签核，软件
+`ACCEL_V2_LONG_STREAM_RUNTIME_READY` 继续保持为 0，现有 release 目录也不覆盖。
+
 ## 构建 KV260 硬件
 
 使用 Vivado 2022.2 从 RTL 和 Tcl 重新生成 Block Design、bitstream 和 XSA：
@@ -178,19 +219,73 @@ testbench 覆盖 AXI-Lite 配置、AXI-Stream 背压、weight/IFM loader、原�
   -tclargs -build_dir D:/MPSoC/build_lasa_kv260 -jobs 12
 ```
 
+下一阶段的显式构建配置使用 `-profile abi_v2_release`；旧的不带 profile 命令及
+参数覆盖方式保持兼容。profile、OOC/完整 BD 门禁、SHA256 产物记录和纯 Tcl
+静态检查见 [tcl/README.md](tcl/README.md)。
+
+200 MHz 工作流保留原 `abi_v2_release` 为不可变的 100 MHz profile，并新增
+`abi_v2_release_200`。125/150/175 MHz 用于显式 staged 探索；OOC 每档都会
+实际 place 并生成 setup top-50 报告。150/175 MHz 还可运行完整 BD 实现，但
+这些 sweep 产物都会写入独立目录并使用非发布 profile，不能进入 candidate：
+
+```powershell
+foreach ($MHz in 125, 150, 175) {
+  & 'C:\Xilinx\Vivado\2022.2\bin\vivado.bat' -mode batch `
+    -source tcl\run_synth_xck26.tcl -tclargs `
+    -profile abi_v2_release_200 -ooc `
+    -development_clock_mhz $MHz `
+    -build_dir "build_ooc_abi_v2_frequency_sweep_${MHz}"
+}
+
+foreach ($MHz in 150, 175) {
+  & 'C:\Xilinx\Vivado\2022.2\bin\vivado.bat' -mode batch `
+    -source tcl\build_kv260_system_xck26.tcl -tclargs `
+    -profile abi_v2_release_200 `
+    -development_clock_mhz $MHz `
+    -build_dir "build_system_abi_v2_frequency_sweep_${MHz}" `
+    -jobs 12
+}
+
+& 'C:\Xilinx\Vivado\2022.2\bin\vivado.bat' -mode batch `
+  -source tcl\run_synth_xck26.tcl `
+  -tclargs -profile abi_v2_release_200 -ooc
+
+& 'C:\Xilinx\Vivado\2022.2\bin\vivado.bat' -mode batch `
+  -source tcl\build_kv260_system_xck26.tcl `
+  -tclargs -profile abi_v2_release_200 -jobs 12
+```
+
+正式 200 MHz profile 从同一 `pl_clock_mhz` 派生 OOC period、PS `pl_clk0`、
+accelerator `CLOCK_HZ` 与 metadata，并锁定 weight MM2S burst=64。任何命令行
+降频、burst 降级或 gate 放宽都会在构建前失败。
+
 默认主配置为：
 
 ```text
 ROWS=18
-COLS=8
-COUT_TILE=16
+COLS=16
+COUT_TILE=32
+ENABLE_COLUMN_PSUM=0
+ENABLE_PACKED_HWC_OFM=1
+ENABLE_LAYER_TILE_SEQUENCER=0
+ENABLE_LAYER_LONG_HWC_IFM=0
 IFM_BANKS=2
 HWC_CACHE_AW=16
 HWC_CACHE_DEPTH=43264
 HWC_CACHE_STRIPES=4
 HWC_CACHE_USE_URAM=1
+MATERIALIZED_CACHE_AW=15
+MATERIALIZED_CACHE_DEPTH=32768
 TAIL_CYCLES=1
 ```
+
+`ENABLE_LAYER_TILE_SEQUENCER=1` 与 `ENABLE_LAYER_LONG_HWC_IFM=1` 可用于 ABI v2
+集成/OOC 构建；在 tagged context capability 发布前，它们不作为默认板级 release
+配置。
+
+显式传入 `-cols 8 -cout_tile 16 -enable_packed_hwc_ofm 0` 仍可构建旧的
+18x8 byte-address debug 数据通路。下列已发布 bitstream/XSA 是此前的 18x8
+稳定基线；18x16 正式产物必须在完整综合、布局布线和板级门禁通过后再替换。
 
 若不需要重新实现，可直接使用：
 

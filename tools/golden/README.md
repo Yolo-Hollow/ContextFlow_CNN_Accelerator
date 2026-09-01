@@ -67,9 +67,12 @@ Verify that the JSON layer spec and Vitis C scheduler plan still match:
 python tools\golden\verify_single_scale_schedule.py
 ```
 
-The verifier recalculates shape transitions, K passes, COUT blocks, feature
-buffer sizes, spatial tile counts, and maximum OFM AXIS capture sizes. It should
-match the scheduler dry-run summary printed by the Vitis smoke ELF.
+The verifier recalculates shape transitions, K passes, COUT32 blocks, feature
+buffer sizes, spatial tile counts, and packed OFM AXIS sizes. It also rejects
+any pre-pool tile above the 1,024-entry PSUM depth, any
+`output_pixels * ceil(Cout/32)` span above the 4,096-entry reorder depth, or a
+pooled regular/tail tile height that is not stride aligned. It should match the
+scheduler dry-run summary printed by the Vitis smoke ELF.
 
 ## Single-scale YOLO decode
 
