@@ -8,8 +8,6 @@ ContextFlow 是面向 AMD/Xilinx Kria KV260（XCK26）的完整 INT8 CNN 推理�
 
 最新预印本：[ContexFlow_preprint_thesis.pdf](output/pdf/ContexFlow_preprint_thesis.pdf)
 
-> 预印本 PDF 作为单独文件追踪；其 LaTeX 工程与本地编译目录不包含在发布提交中。
-
 ## 核心思路
 
 固定规模阵列执行长规约卷积时，需要沿规约维拆分为多个 `p` 轮次，并沿输出通道拆分为多个 `q` 块。ContextFlow 从空间和时间两个维度重新组织这一折叠序列。
@@ -118,13 +116,12 @@ tools/
 repro/                   可复现实验入口与小型数据包
 docs/                    发布清单、实现说明和证据边界
 paper/lasa_journal_cn/   冻结的实验数据、表格与论文证据源
-release/                 历史硬件交付物；不代表当前 34.943 ms 实现
+release/contextflow_34p9/
+                         34.943 ms 版本的 XSA、bitstream 与校验信息
 output/pdf/
   ContexFlow_preprint_thesis.pdf
-                         当前预印本，仅追踪最终 PDF
+                         当前预印本
 ```
-
-核心发布内容按可审查的提交分组：RTL、软件运行时、复现与上板证据、34.9 ms 文档冻结，以及单独追踪的预印本 PDF。Vivado/Vitis 构建目录、`tmp/`、本地结果抓取、论文 LaTeX 工程和历史 PDF 预览均不进入提交。
 
 ## 环境
 
@@ -146,7 +143,90 @@ C:\Xilinx\Vivado\2022.2
 C:\Xilinx\Vitis\2022.2
 ```
 
-## 构建与验证入口
+## 快速启动与复现
+
+以下命令均在仓库根目录执行。先激活 `pytorch_env`，并校验随仓库提供的硬件产物：
+
+```powershell
+conda activate pytorch_env
+Get-FileHash release\contextflow_34p9\conv_accel_ps_dma_minimal.xsa -Algorithm SHA256
+Get-FileHash release\contextflow_34p9\conv_accel_ps_dma_wrapper.bit -Algorithm SHA256
+```
+
+预期 SHA-256 分别为 `42d761b1cc77f1a7988d40dd71f0a1c7e1987a057bc457c7d5b55613637e3030` 和 `1ac606a279d60290935f32c5bc1a028b017d6cca4f22e623bd0bbb4baa3a613e`。
+
+### JTAG 启动
+
+先启动 Vivado `hw_server`，并用随仓库提供的 XSA 创建 EL3 网络运行平台。`<workspace>` 应为新的 Vitis 工作区：
+
+```powershell
+& 'C:\Xilinx\Vivado\2022.2\bin\hw_server.bat'
+
+& 'C:\Xilinx\Vitis\2022.2\bin\xsct.bat' `
+  sw\vitis_2022_2\scripts\create_coco80_net_project.tcl `
+  -workspace <workspace> `
+  -xsa release\contextflow_34p9\conv_accel_ps_dma_minimal.xsa `
+  -execution-level el3
+```
+
+按照 [COCO80 工具说明](tools/coco80/README.md)构建网络 runner 后，通过 JTAG 下载 bitstream 和 ELF，并保持板端服务运行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File `
+  sw\vitis_2022_2\scripts\run_coco80_net_board.ps1 `
+  -Workspace <workspace> `
+  -RunnerManifest <coco80_r5_ethernet.manifest.json> `
+  -BitFile release\contextflow_34p9\conv_accel_ps_dma_wrapper.bit
+```
+
+板端服务默认使用 `192.168.10.2:5001`。将主机网卡配置为 `192.168.10.1/24`，并先用 `ping 192.168.10.2` 检查链路。
+
+### SD 卡冷启动
+
+建议使用不小于 16 GB 的 SD 卡。以下命令创建 `COCO80_R5` 数据目录；它不会格式化磁盘，请将 `E:` 替换为实际盘符：
+
+```powershell
+python -m tools.coco80.sd_deploy prepare-card `
+  --card E:\COCO80_R5 `
+  --bit release\contextflow_34p9\conv_accel_ps_dma_wrapper.bit `
+  --xsa release\contextflow_34p9\conv_accel_ps_dma_minimal.xsa `
+  --source-root .
+
+python -m tools.coco80.sd_deploy install `
+  --card E:\COCO80_R5 `
+  --parameter-package <coco80_parameters.c8pa> `
+  --quantization-manifest <quantization_manifest.json>
+
+python -m tools.coco80.sd_deploy verify --card E:\COCO80_R5
+```
+
+真正的上电冷启动还需要 EL1 网络 runner 和 boot package。构建 EL1 runner 后执行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File `
+  sw\vitis_2022_2\boot\coco80_el1\package_sd_boot.ps1 `
+  -BuildDirectory <EL1-network-build> `
+  -BitFile release\contextflow_34p9\conv_accel_ps_dma_wrapper.bit `
+  -OutputDirectory <sd-boot-package> `
+  -Python (Get-Command python).Source
+```
+
+将生成目录的内容复制到 FAT 启动分区，由 KV260 的 QSPI U-Boot 加载 bitstream 和 EL1 应用。完整目录布局、输入注册和启动检查见 [SD 部署说明](tools/coco80/README.md)与 [Vitis 运行时说明](sw/vitis_2022_2/README.md)。
+
+### WebUI 推理测试
+
+先通过 JTAG 或 SD 卡启动板端以太网服务，再在主机运行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\coco80\run_inference_app.ps1 `
+  -RunnerManifest <coco80_r5_ethernet.manifest.json> `
+  -QuantizationManifest <quantization_manifest.json> `
+  -OpenBrowser
+```
+
+浏览器默认打开 `http://127.0.0.1:8088/`。WebUI 将图片送入 KV260 执行完整 INT8 推理，并保存输入、原始输出、检测结果和运行元数据；它不会静默回退为主机推理。详见 [WebUI 推理说明](tools/coco80/INFERENCE_APP.md)。
+
+## 构建与验证
 
 ### RTL 回归
 
@@ -183,14 +263,6 @@ sw/vitis_2022_2/scripts/run_coco80_sd_board.ps1
 ```
 
 COCO80 数据准备、量化、网络协议和结果评估见 [tools/coco80/README.md](tools/coco80/README.md)，裸机工程与上板流程见 [sw/vitis_2022_2/README.md](sw/vitis_2022_2/README.md)，Vivado profile 和签核门禁见 [tcl/README.md](tcl/README.md)。
-
-## 发布边界
-
-- 当前分支包含可审查的 RTL、软件、测试、脚本、证据摘要与预印本。
-- 冻结结果对应的 XSA 和 bitstream 以 SHA-256 标识，但因体积和交付策略未包含在本分支。
-- `release/kv260_hwcreplay_22/` 是约 280.340 ms 的历史 raw-HWC replay 交付物，不是 34.943 ms ContextFlow 硬件。
-- `paper/contextflow_journal_cn/` 的 LaTeX 工程和 `build/` 不进入本次发布；只追踪最终预印本 PDF。
-- INT8 精度相对 FP32 存在约 3.19 AP 点损失；仓库如实保留该结果，不将其描述为无精度损失。
 
 ## 上游与许可说明
 

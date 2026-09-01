@@ -35,16 +35,13 @@ implementation with the following hashes:
 - XSA SHA256: `42d761b1cc77f1a7988d40dd71f0a1c7e1987a057bc457c7d5b55613637e3030`
 - bitstream SHA256: `1ac606a279d60290935f32c5bc1a028b017d6cca4f22e623bd0bbb4baa3a613e`
 
-These final binary artifacts are not bundled in this branch. The existing
-`release/kv260_hwcreplay_22` directory is a legacy raw-HWC replay handoff whose
-README reports approximately 280.340 ms; it is not the 34.943 ms release
-hardware.
+The matching binaries are bundled in `release/contextflow_34p9/`:
+
+- `conv_accel_ps_dma_minimal.xsa`
+- `conv_accel_ps_dma_wrapper.bit`
 
 ## Evidence boundaries
 
-Generated build directories, local `results/` captures, temporary files,
-historical publication previews, and the LaTeX authoring project remain outside
-the release commits. The sole publication artifact tracked by the release is
-`output/pdf/ContexFlow_preprint_thesis.pdf`; its source project and build files
-are intentionally excluded. Measurement hashes and summaries remain in the
-evidence snapshot and generated manifest under `paper/lasa_journal_cn/`.
+Measurement hashes and summaries are stored in the evidence snapshot and
+generated manifest under `paper/lasa_journal_cn/`. The final preprint is
+available at `output/pdf/ContexFlow_preprint_thesis.pdf`.

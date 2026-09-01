@@ -8,8 +8,6 @@ The current 200 MHz release runs the complete dual-scale YOLOv3-tiny network wit
 
 Latest preprint: [ContexFlow_preprint_thesis.pdf](output/pdf/ContexFlow_preprint_thesis.pdf)
 
-> The final preprint PDF is tracked as a standalone artifact. Its LaTeX authoring project and local build directory are intentionally excluded from the release commits.
-
 ## Core Ideas
 
 A fixed-size array executes a long-reduction convolution as multiple reduction passes `p` and output-channel blocks `q`. ContextFlow reorganizes this folded sequence in space and time.
@@ -118,13 +116,12 @@ tools/
 repro/                   Reproducibility entry points and compact data packages
 docs/                    Release manifest, implementation notes, and evidence boundaries
 paper/lasa_journal_cn/   Frozen experimental data, tables, and publication evidence
-release/                 Historical hardware handoff; not the current 34.943 ms design
+release/contextflow_34p9/
+                         XSA, bitstream, and checksums for the 34.943 ms release
 output/pdf/
   ContexFlow_preprint_thesis.pdf
-                         Current preprint; only the final PDF is tracked
+                         Current preprint
 ```
-
-The core release content is split into reviewable commit groups: RTL, software runtime, reproducibility/board evidence, the frozen 34.9 ms documentation, and the standalone preprint PDF. Vivado/Vitis build directories, `tmp/`, local result captures, the LaTeX authoring project, and historical PDF previews are excluded.
 
 ## Environment
 
@@ -146,7 +143,90 @@ C:\Xilinx\Vivado\2022.2
 C:\Xilinx\Vitis\2022.2
 ```
 
-## Build and Verification Entry Points
+## Quick Start and Reproduction
+
+Run the commands below from the repository root. Activate `pytorch_env` and verify the bundled hardware artifacts first:
+
+```powershell
+conda activate pytorch_env
+Get-FileHash release\contextflow_34p9\conv_accel_ps_dma_minimal.xsa -Algorithm SHA256
+Get-FileHash release\contextflow_34p9\conv_accel_ps_dma_wrapper.bit -Algorithm SHA256
+```
+
+The expected SHA-256 values are `42d761b1cc77f1a7988d40dd71f0a1c7e1987a057bc457c7d5b55613637e3030` and `1ac606a279d60290935f32c5bc1a028b017d6cca4f22e623bd0bbb4baa3a613e`, respectively.
+
+### JTAG startup
+
+Start Vivado `hw_server`, then create an EL3 network platform from the bundled XSA. Use a fresh Vitis directory for `<workspace>`:
+
+```powershell
+& 'C:\Xilinx\Vivado\2022.2\bin\hw_server.bat'
+
+& 'C:\Xilinx\Vitis\2022.2\bin\xsct.bat' `
+  sw\vitis_2022_2\scripts\create_coco80_net_project.tcl `
+  -workspace <workspace> `
+  -xsa release\contextflow_34p9\conv_accel_ps_dma_minimal.xsa `
+  -execution-level el3
+```
+
+Build the network runner as described in the [COCO80 tooling guide](tools/coco80/README.md), then download the bitstream and ELF over JTAG and keep the board service running:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File `
+  sw\vitis_2022_2\scripts\run_coco80_net_board.ps1 `
+  -Workspace <workspace> `
+  -RunnerManifest <coco80_r5_ethernet.manifest.json> `
+  -BitFile release\contextflow_34p9\conv_accel_ps_dma_wrapper.bit
+```
+
+The board listens on `192.168.10.2:5001`. Configure the host adapter as `192.168.10.1/24` and confirm the link with `ping 192.168.10.2`.
+
+### SD-card cold boot
+
+Use a card of at least 16 GB. The following commands populate the `COCO80_R5` data directory; they do not format the card. Replace `E:` with the mounted drive:
+
+```powershell
+python -m tools.coco80.sd_deploy prepare-card `
+  --card E:\COCO80_R5 `
+  --bit release\contextflow_34p9\conv_accel_ps_dma_wrapper.bit `
+  --xsa release\contextflow_34p9\conv_accel_ps_dma_minimal.xsa `
+  --source-root .
+
+python -m tools.coco80.sd_deploy install `
+  --card E:\COCO80_R5 `
+  --parameter-package <coco80_parameters.c8pa> `
+  --quantization-manifest <quantization_manifest.json>
+
+python -m tools.coco80.sd_deploy verify --card E:\COCO80_R5
+```
+
+A true power-on boot also needs an EL1 network runner and boot package. After building the EL1 runner, run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File `
+  sw\vitis_2022_2\boot\coco80_el1\package_sd_boot.ps1 `
+  -BuildDirectory <EL1-network-build> `
+  -BitFile release\contextflow_34p9\conv_accel_ps_dma_wrapper.bit `
+  -OutputDirectory <sd-boot-package> `
+  -Python (Get-Command python).Source
+```
+
+Copy the package contents to the FAT boot partition. KV260 QSPI U-Boot then loads the bitstream and EL1 application. See the [SD deployment guide](tools/coco80/README.md) and [Vitis runtime guide](sw/vitis_2022_2/README.md) for the complete directory layout, input registration, and boot checks.
+
+### WebUI inference test
+
+Start the Ethernet board service through JTAG or SD boot, then run on the host:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\coco80\run_inference_app.ps1 `
+  -RunnerManifest <coco80_r5_ethernet.manifest.json> `
+  -QuantizationManifest <quantization_manifest.json> `
+  -OpenBrowser
+```
+
+The browser opens `http://127.0.0.1:8088/` by default. The WebUI sends images to the KV260 for complete INT8 inference and records inputs, raw outputs, detections, and run metadata; it does not silently fall back to host inference. See the [WebUI inference guide](tools/coco80/INFERENCE_APP.md).
+
+## Build and Verification
 
 ### RTL regression
 
@@ -183,14 +263,6 @@ sw/vitis_2022_2/scripts/run_coco80_sd_board.ps1
 ```
 
 See [tools/coco80/README.md](tools/coco80/README.md) for COCO80 preparation, quantization, network protocol, and evaluation; [sw/vitis_2022_2/README.md](sw/vitis_2022_2/README.md) for the bare-metal project and board flow; and [tcl/README.md](tcl/README.md) for Vivado profiles and signoff gates.
-
-## Release Boundaries
-
-- This branch contains reviewable RTL, software, tests, scripts, evidence summaries, and the preprint.
-- The frozen XSA and bitstream are identified by SHA-256 but are not bundled because of artifact size and delivery policy.
-- `release/kv260_hwcreplay_22/` is a historical approximately 280.340 ms raw-HWC replay handoff, not the 34.943 ms ContextFlow hardware.
-- The `paper/contextflow_journal_cn/` LaTeX project and its `build/` directory are excluded; only the final preprint PDF is tracked.
-- INT8 accuracy is approximately 3.19 AP points below FP32. The repository reports this result directly and does not claim zero accuracy loss.
 
 ## Upstream and Attribution
 
