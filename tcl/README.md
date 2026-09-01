@@ -4,6 +4,8 @@
 
 本目录提供 ContextFlow RTL 源文件清单、XSIM 回归、XCK26 OOC 综合、KV260 Block Design、完整实现和签核门禁。当前发布配置为 200 MHz `abi_v2_release_200`，阵列规模为 18×16，输出通道块为 32，使用 tagged context、URAM IFM epoch bank、256 深度结果 FIFO 和 `STREAM_CFG=0xBF`。
 
+> **路径替换说明：** 命令中的 `C:\Xilinx\Vivado\2022.2` 是默认安装路径。如果 Vivado 安装在其他位置，请替换为本机 `vivado.bat` 的实际绝对路径。其余 `tcl\...` 和 `tb\...` 相对路径要求从仓库根目录执行。
+
 ## 工具与源文件约束
 
 - 正式仿真、综合和实现均使用 Vivado/XSIM 2022.2。

@@ -7,6 +7,8 @@ deployment. It does not modify the r5 RTL or bitstream. Large models, COCO
 archives, generated quantization fixtures, SD images, and evaluation results
 remain outside Git; every such artifact is bound by SHA256 manifests.
 
+> **Path substitution:** `C:\Xilinx\...`, `E:\COCO80_R5`, and every `<...>` value in the commands are examples or placeholders. Replace them with the actual absolute tool, SD-card, workspace, and model-artifact paths on your host, and remove angle brackets. Run relative repository paths from the repository root.
+
 The canonical graph is `model_spec.json`. It contains thirteen PL convolution
 dispatches. All max-pooling, the padded stride-one pool, nearest upsample,
 route requantization/concat, and decode/NMS are A53 tensor operations. The
@@ -69,7 +71,8 @@ performance outputs can coexist. No individual file exceeds the FAT32 4 GiB
 limit.
 
 Card preparation never formats the device and never overwrites a different
-existing file. For a card mounted as `E:`:
+existing file. The example below uses `E:`; replace it with the actual mounted
+SD-card drive before running the commands:
 
 ```powershell
 $python=(Get-Command python).Source

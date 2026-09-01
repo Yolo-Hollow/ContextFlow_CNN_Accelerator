@@ -6,6 +6,8 @@ This directory contains the A53 bare-metal runtime, project generators, JTAG lau
 
 The release hardware is under `release/contextflow_34p9/` and identifies the 200 MHz `abi_v2_release_200` build. Launchers verify the SHA-256 identities of the bitstream, XSA, ELF, and runner manifest and reject mismatched combinations.
 
+> **Path substitution:** `C:\Xilinx\...` is the default tool installation and every `<...>` value is a workspace, manifest, build-directory, or output-directory placeholder. Replace each one with an actual absolute host path and remove the angle brackets. Run relative repository paths from the repository root, and replace `COMx` with the actual UART port.
+
 ## Layout
 
 ```text
@@ -22,7 +24,7 @@ conda activate pytorch_env
 & 'C:\Xilinx\Vivado\2022.2\bin\hw_server.bat'
 ```
 
-The default installations are `C:\Xilinx\Vitis\2022.2` and `C:\Xilinx\Vivado\2022.2`. JTAG flows require `hw_server` on TCP 3121. UART capture scripts require an explicit host-specific COM port.
+The examples use the default installations `C:\Xilinx\Vitis\2022.2` and `C:\Xilinx\Vivado\2022.2`; use the actual paths when installed elsewhere. JTAG flows require `hw_server` on TCP 3121. UART capture scripts require an explicit host-specific COM port.
 
 ## JTAG network runner
 

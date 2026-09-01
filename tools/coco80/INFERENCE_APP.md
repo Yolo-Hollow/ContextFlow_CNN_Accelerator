@@ -4,6 +4,8 @@
 
 该本地 WebUI 接收用户图片，生成与硬件 ABI 一致的 reduced-u8 C8IN 输入包，将其发送到 KV260 持久化以太网 runner，校验响应 CRC 和产物绑定，并显示板端检测结果及单图时延分解。工具不会回退为主机推理。
 
+> **路径替换说明：** `C:\Xilinx\...` 是默认工具安装路径，`<network-workspace>`、`<coco80_r5_ethernet.manifest.json>` 和 `<quantization_manifest.json>` 是占位符。请替换为本机实际绝对路径并去掉尖括号；仓库相对路径应从仓库根目录执行。
+
 ## 1. 启动板端服务
 
 连接 KV260 的 JTAG 与以太网，启动 `hw_server`，然后下载当前网络 runner：

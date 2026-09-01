@@ -4,6 +4,8 @@
 
 This directory provides the ContextFlow RTL manifest, XSIM regressions, XCK26 OOC synthesis, KV260 Block Design generation, complete implementation, and signoff gates. The current release profile is the 200 MHz `abi_v2_release_200` configuration: an 18x16 array, 32-channel output block, tagged context, URAM IFM epoch banks, 256-entry result FIFOs, and `STREAM_CFG=0xBF`.
 
+> **Path substitution:** `C:\Xilinx\Vivado\2022.2` in the commands is the default installation. If Vivado is installed elsewhere, replace it with the actual absolute path to `vivado.bat`. Relative `tcl\...` and `tb\...` paths assume the repository root as the working directory.
+
 ## Tool and source contracts
 
 - Formal simulation, synthesis, and implementation use Vivado/XSIM 2022.2.

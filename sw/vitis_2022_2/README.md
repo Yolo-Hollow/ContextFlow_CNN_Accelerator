@@ -6,6 +6,8 @@
 
 发布硬件位于 `release/contextflow_34p9/`，对应 200 MHz `abi_v2_release_200`。启动脚本会校验 bitstream、XSA、ELF 和 runner manifest 的 SHA-256，不接受身份不匹配的组合。
 
+> **路径替换说明：** `C:\Xilinx\...` 是默认工具安装路径，所有 `<...>` 内容均为工作区、清单、构建目录或输出目录占位符。请替换为本机实际绝对路径并去掉尖括号。仓库内相对路径要求从仓库根目录执行；UART 的 `COMx` 也必须替换为实际串口号。
+
 ## 目录
 
 ```text
@@ -22,7 +24,7 @@ conda activate pytorch_env
 & 'C:\Xilinx\Vivado\2022.2\bin\hw_server.bat'
 ```
 
-默认工具路径为 `C:\Xilinx\Vitis\2022.2` 和 `C:\Xilinx\Vivado\2022.2`。JTAG 流程要求 `hw_server` 监听 TCP 3121；UART 采集脚本中的串口号必须按主机实际情况显式指定。
+示例采用默认工具路径 `C:\Xilinx\Vitis\2022.2` 和 `C:\Xilinx\Vivado\2022.2`；若安装位置不同，应使用实际路径。JTAG 流程要求 `hw_server` 监听 TCP 3121；UART 采集脚本中的串口号必须按主机实际情况显式指定。
 
 ## JTAG 网络 runner
 

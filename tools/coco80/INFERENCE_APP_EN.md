@@ -7,6 +7,8 @@ package, sends it to the persistent KV260 Ethernet runner, validates all
 response CRCs and artifact bindings, and displays board detections plus the
 extended per-image timing record.  It never falls back to host inference.
 
+> **Path substitution:** `C:\Xilinx\...` is the default tool installation, while `<network-workspace>`, `<coco80_r5_ethernet.manifest.json>`, and `<quantization_manifest.json>` are placeholders. Replace them with actual absolute host paths and remove the angle brackets. Run relative repository paths from the repository root.
+
 ## 1. Start the persistent board service
 
 Power on the KV260, connect JTAG and Ethernet, start `hw_server`, and download

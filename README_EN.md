@@ -146,6 +146,8 @@ C:\Xilinx\Vivado\2022.2
 C:\Xilinx\Vitis\2022.2
 ```
 
+> **Path substitution:** `C:\Xilinx\...` denotes the default tool installation and `E:\COCO80_R5` is an example SD-card drive. Replace them with the actual absolute paths or drive letter on your host. Angle-bracket values such as `<workspace>` and `<quantization_manifest.json>` are placeholders; replace the complete value and remove the brackets before running a command. Relative paths such as `release\...` and `tools\...` assume the repository root as the working directory.
+
 ## Quick Start and Reproduction
 
 Run the commands below from the repository root. Activate `pytorch_env` and verify the bundled hardware artifacts first:
