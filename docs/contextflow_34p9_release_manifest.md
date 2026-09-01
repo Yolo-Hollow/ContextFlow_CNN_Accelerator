@@ -42,7 +42,9 @@ hardware.
 
 ## Evidence boundaries
 
-Generated build directories, local `results/` captures, temporary files, and
-rendered publication PDFs remain outside the release commits. Their relevant
-hashes and summarized measurements are retained by the evidence snapshot and
-generated evidence manifest under `paper/lasa_journal_cn/`.
+Generated build directories, local `results/` captures, temporary files,
+historical publication previews, and the LaTeX authoring project remain outside
+the release commits. The sole publication artifact tracked by the release is
+`output/pdf/ContexFlow_preprint_thesis.pdf`; its source project and build files
+are intentionally excluded. Measurement hashes and summaries remain in the
+evidence snapshot and generated manifest under `paper/lasa_journal_cn/`.
