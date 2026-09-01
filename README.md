@@ -99,28 +99,31 @@ PS 负责网络描述、四路 DMA、层间张量与检测后处理；PL 负责 
 ## 仓库结构
 
 ```text
-cal/                     DSP 与 INT8 MAC 基础单元
-com/                     通用 RTL 流水模块
-systolic/                ContextFlow 阵列、向量重放、PSUM 与上下文流水 RTL
-sw/vitis_2022_2/
-  src/                   KV260 裸机推理运行时
-  scripts/               工程生成、部署、上板与测量脚本
-  boot/coco80_el1/       EL1/SD 启动支持
-tb/                      RTL、软件与端到端回归测试
-tcl/                     Vivado 工程、综合、实现和签核脚本
-tools/
-  coco80/                量化、数据集、部署、协议与评估工具
-  demo/                  板端功能和性能演示
-  golden/                调度与整数语义参考模型
-  power/                 功耗报告解析
-repro/                   可复现实验入口与小型数据包
-docs/                    发布清单、实现说明和证据边界
-paper/lasa_journal_cn/   冻结的实验数据、表格与论文证据源
-release/contextflow_34p9/
-                         34.943 ms 版本的 XSA、bitstream 与校验信息
-output/pdf/
-  ContexFlow_preprint_thesis.pdf
-                         当前预印本
+.
+├── cal/                              DSP 与 INT8 MAC 基础单元
+├── com/                              通用 RTL 流水模块
+├── systolic/                         阵列、向量重放、PSUM 与上下文流水 RTL
+├── sw/
+│   └── vitis_2022_2/
+│       ├── src/                      KV260 裸机推理运行时
+│       ├── scripts/                  工程生成、部署、上板与测量脚本
+│       └── boot/coco80_el1/          EL1/SD 冷启动支持
+├── tb/                               RTL、软件与端到端回归测试
+├── tcl/                              Vivado 工程、综合、实现和签核脚本
+├── tools/
+│   ├── coco80/                       量化、数据集、部署、协议与评估工具
+│   ├── demo/                         板端功能和性能演示
+│   ├── golden/                       调度与整数语义参考模型
+│   └── power/                        功耗报告解析
+├── repro/                            可复现实验入口与小型数据包
+├── docs/                             发布清单、实现说明和证据文档
+├── paper/
+│   └── lasa_journal_cn/              冻结的实验数据、表格与论文证据源
+├── release/
+│   └── contextflow_34p9/             34.943 ms XSA、bitstream 与校验信息
+└── output/
+    └── pdf/
+        └── ContexFlow_preprint_thesis.pdf   当前预印本
 ```
 
 ## 环境
@@ -262,7 +265,7 @@ sw/vitis_2022_2/scripts/run_coco80_net_board.ps1
 sw/vitis_2022_2/scripts/run_coco80_sd_board.ps1
 ```
 
-COCO80 数据准备、量化、网络协议和结果评估见 [tools/coco80/README.md](tools/coco80/README.md)，裸机工程与上板流程见 [sw/vitis_2022_2/README.md](sw/vitis_2022_2/README.md)，Vivado profile 和签核门禁见 [tcl/README.md](tcl/README.md)。
+COCO80 数据准备、量化、网络协议和结果评估见 [COCO80 工具说明](tools/coco80/README.md)，裸机工程与上板流程见 [Vitis 运行时说明](sw/vitis_2022_2/README.md)，Vivado profile 和签核门禁见 [Vivado/XSIM 构建说明](tcl/README.md)。
 
 ## 上游与许可说明
 

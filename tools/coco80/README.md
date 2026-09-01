@@ -1,47 +1,37 @@
-# COCO80 YOLOv3-tiny on the r5 accelerator
+# R5 加速器上的 COCO80 YOLOv3-tiny
 
-This directory is the fail-closed host side of the full, dual-head COCO80
-deployment. It does not modify the r5 RTL or bitstream. Large models, COCO
-archives, generated quantization fixtures, SD images, and evaluation results
-remain outside Git; every such artifact is bound by SHA256 manifests.
+**语言 / Language：中文 | [English](README_EN.md)**
 
-The canonical graph is `model_spec.json`. It contains thirteen PL convolution
-dispatches. All max-pooling, the padded stride-one pool, nearest upsample,
-route requantization/concat, and decode/NMS are A53 tensor operations. The
-fixed PL tile heights are validated independently by `hardware_plan.py`.
+本目录提供完整双检测头 COCO80 部署所需的主机工具，包括数据清单、校准与量化、参数打包、SD 卡部署、板端结果校验和网络协议。大模型、COCO 数据集、生成的量化产物、SD 镜像与评估结果不写入仓库，而是通过 SHA-256 清单绑定。
 
-## Reproducible order
+权威网络描述为 `model_spec.json`。网络包含 13 次 PL 卷积调度；池化、带填充的步长 1 池化、最近邻上采样、route 重量化与拼接，以及 decode/NMS 均由 A53 执行。固定 PL 分块高度由 `hardware_plan.py` 独立校验。
 
-1. Clone `ultralytics/yolov3` tag `v9.5.0` and verify commit
-   `8eb4cde090022af73db12cfa725ec4bf01d49c0e`.
-2. Download the v9.5.0 `yolov3-tiny.pt` asset and verify SHA256
-   `74fb61c9593f563fc8c87a6d792cfe127632e402440acd9c142a396813946280`.
-3. Download/extract COCO train2017, val2017, official annotations, and
-   Ultralytics YOLO labels. Build `assets.json` with `make_asset_manifest.py`.
-4. Build the deterministic 1024 calibration / 512 holdout split with seed
-   `20260814` using `calibration.py`.
-5. Freeze the 128-image board conformance set and its 16-image full-node
-   golden subset with `conformance.py`; the selector covers all 80 classes and
-   240 class/area strata plus empty, crowded, wide, tall, and square images.
-6. Run `official640.py`, then the fixed-square FP32 baseline with
-   `evaluate.py --mode fp32`.
-7. Calibrate PTQ, export the canonical quant manifest and layer binaries,
-   package them with `parameter_package.py`, and evaluate with
-   `evaluate.py --mode ptq`.
-8. Invoke `qat.py` only when the PTQ delta exceeds 1.0 AP50:95 point or
-   2.0 AP50 points. QAT is capped at twenty epochs, uses no AMP, and retains
-   the same frozen per-tensor hardware domains.
-9. Generate SD images and run the persistent Vitis application. Compare the
-   board integer nodes byte-for-byte with `ptq_runner.py` exact-mode goldens.
+## 环境与数据准备
 
-Accuracy always uses confidence 0.001, class-aware multi-label NMS IoU 0.65,
-`max_nms=30000`, and `max_det=300`. The independent demo configuration uses
-0.25/0.45 and is never accepted for mAP signoff.
+使用项目指定的 Conda 环境：
 
-## SD card contract
+```powershell
+conda activate pytorch_env
+python --version
+```
 
-The bare-metal application mounts the first FAT volume and requires this
-layout. Filenames and directory names are part of the on-card ABI.
+建议按以下顺序准备模型和数据：
+
+1. 获取 `ultralytics/yolov3` 的 `v9.5.0` 标签，确认提交为 `8eb4cde090022af73db12cfa725ec4bf01d49c0e`。
+2. 下载 `yolov3-tiny.pt`，确认 SHA-256 为 `74fb61c9593f563fc8c87a6d792cfe127632e402440acd9c142a396813946280`。
+3. 准备 COCO train2017、val2017、官方 annotations 和 Ultralytics 标签，并用 `make_asset_manifest.py` 生成 `assets.json`。
+4. 用 `calibration.py` 和种子 `20260814` 固定 1024 张校准集与 512 张 holdout 集。
+5. 用 `conformance.py` 固定 128 张板端一致性集合及其中 16 张全节点 golden 子集。
+6. 运行 `official640.py`，再用 `evaluate.py --mode fp32` 建立固定尺寸 FP32 基线。
+7. 完成 PTQ、导出量化清单和逐层参数，并用 `parameter_package.py` 生成参数包；随后执行 `evaluate.py --mode ptq`。
+8. 仅在 PTQ 相对基线下降超过 1.0 AP 或 2.0 AP50 时运行 `qat.py`。
+9. 生成板端输入，在持久化 Vitis runner 上执行，并用 `ptq_runner.py` 的 exact 模式逐字节校验整数节点。
+
+精度评估固定使用置信度 `0.001`、类别感知 multi-label NMS、IoU `0.65`、`max_nms=30000` 和 `max_det=300`。演示模式的 `0.25/0.45` 阈值不能用于 mAP 签核。
+
+## SD 卡数据目录
+
+裸机程序挂载第一个 FAT 分区，并使用以下固定 ABI：
 
 ```text
 COCO80_R5/
@@ -51,7 +41,7 @@ COCO80_R5/
   INPUT/input_index.bin
   INPUT/in_0000.bin
   INPUT/in_0001.bin
-  INPUT/in_0002.bin
+  ...
   OUTPUT/ACCURACY/
   OUTPUT/PRODUCT/
   OUTPUT/PERF/
@@ -59,114 +49,60 @@ COCO80_R5/
   MANIFEST/card_manifest.json
 ```
 
-The 5000-image input set occupies about 2.60 GB. The final parameter package
-is exactly 18,682,508 bytes. A full raw-head accuracy run adds about 1.08 GB,
-and the 128-image, 22-node conformance run adds about 1.08 GB. A 16 GB card is
-the practical minimum; 32 GB is recommended so accuracy, conformance, and
-performance outputs can coexist. No individual file exceeds the FAT32 4 GiB
-limit.
+5000 张输入约占 2.60 GB，参数包为 18,682,508 字节。建议使用 32 GB SD 卡，以便同时保存 accuracy、conformance 和 performance 结果；最低建议容量为 16 GB。
 
-Card preparation never formats the device and never overwrites a different
-existing file. For a card mounted as `E:`:
+部署工具不会格式化 SD 卡，也不会覆盖内容不同的同名文件。以 `E:` 为例：
 
 ```powershell
-$python='D:\MPSoC\coco80_assets\venv\Scripts\python.exe'
-$bit='build_abi_v2_release_r5\conv_accel_ps_dma_minimal\conv_accel_ps_dma_minimal.runs\impl_1\conv_accel_ps_dma_wrapper.bit'
-$xsa='build_abi_v2_release_r5\conv_accel_ps_dma_minimal.xsa'
-& $python -m tools.coco80.sd_deploy prepare-card --card E:\COCO80_R5 --bit $bit --xsa $xsa --source-root .
-& $python -m tools.coco80.sd_deploy register-inputs --card E:\COCO80_R5 --input-manifest E:\COCO80_R5\INPUT\input_index.json
-& $python -m tools.coco80.sd_deploy verify --card E:\COCO80_R5
-```
+python -m tools.coco80.sd_deploy prepare-card `
+  --card E:\COCO80_R5 `
+  --bit release\contextflow_34p9\conv_accel_ps_dma_wrapper.bit `
+  --xsa release\contextflow_34p9\conv_accel_ps_dma_minimal.xsa `
+  --source-root .
 
-The first `register-inputs` command is intentionally only a staging action. It
-sets the card state to `INPUTS_PROVISIONAL` and `verify` reports
-`runnable=false`. Input tensors must be regenerated with the selected PTQ/QAT
-manifest's exact `m0` input scale and zero point; a structural shard set made
-with a placeholder scale is never accepted as a final board input.
-
-After calibration and checkpoint selection, bind the regenerated inputs and
-install the real parameter package as one fail-closed operation:
-
-```powershell
-$quant='<selected-quant-root>\quantization_manifest.json'
-$package='<selected-package-root>\coco80_parameters.c8pa'
-& $python -m tools.coco80.sd_deploy register-inputs `
+python -m tools.coco80.sd_deploy register-inputs `
   --card E:\COCO80_R5 `
   --input-manifest E:\COCO80_R5\INPUT\input_index.json `
-  --quantization-manifest $quant
-& $python -m tools.coco80.sd_deploy install `
+  --quantization-manifest <quantization_manifest.json>
+
+python -m tools.coco80.sd_deploy install `
   --card E:\COCO80_R5 `
-  --parameter-package $package `
-  --quantization-manifest $quant
-& $python -m tools.coco80.sd_deploy verify --card E:\COCO80_R5
+  --parameter-package <coco80_parameters.c8pa> `
+  --quantization-manifest <quantization_manifest.json>
+
+python -m tools.coco80.sd_deploy verify --card E:\COCO80_R5
 ```
 
-Do not populate `PARAM/` with a test fixture. `install` re-hashes the package,
-index, and every input shard, then cross-checks the package's m0 quantization
-and checkpoint binding before changing the card state to `DATA_READY`; only
-that state reports `runnable=true`.
+输入必须用最终选定量化清单中 `m0` 的输入 scale 和 zero point 重新生成。只有交叉校验参数包、量化清单和全部输入分片后，卡片状态才会成为 `DATA_READY`，此时 `verify` 才报告 `runnable=true`。
 
-## Vitis persistent runner
+## 持久化 Vitis runner
 
-Create the reusable A53 standalone platform once. The Tcl creates only the
-platform and `xilffs` BSP; application code is compiled directly with the
-checked-in linker script so the build does not depend on the Vitis Eclipse
-empty-application service.
+SD 文件系统 runner 使用单独的 A53 standalone 平台：
 
 ```powershell
 & 'C:\Xilinx\Vitis\2022.2\bin\xsct.bat' `
   sw\vitis_2022_2\scripts\create_coco80_sd_project.tcl `
-  -workspace D:\MPSoC\accelerator_systolic\build_vitis_2022_2_coco80_r5 `
-  -xsa D:\MPSoC\accelerator_systolic\build_abi_v2_release_r5\conv_accel_ps_dma_minimal.xsa
+  -workspace <fresh-sd-workspace> `
+  -xsa release\contextflow_34p9\conv_accel_ps_dma_minimal.xsa
 ```
 
-The workspace must be fresh. A release ELF is then built from a clean Git
-tree and is cryptographically bound to the signed r5 BIT/XSA, quantization
-manifest, parameter manifest, and exact SD parameter package:
+随后构建与硬件、量化清单和参数包绑定的 runner：
 
 ```powershell
-& powershell -ExecutionPolicy Bypass -File sw\vitis_2022_2\scripts\build_coco80_sd_runner.ps1 `
-  -Workspace D:\MPSoC\accelerator_systolic\build_vitis_2022_2_coco80_r5 `
-  -BitFile $bit -Xsa $xsa `
+powershell -ExecutionPolicy Bypass -File `
+  sw\vitis_2022_2\scripts\build_coco80_sd_runner.ps1 `
+  -Workspace <fresh-sd-workspace> `
+  -BitFile release\contextflow_34p9\conv_accel_ps_dma_wrapper.bit `
+  -Xsa release\contextflow_34p9\conv_accel_ps_dma_minimal.xsa `
   -ParameterManifest <coco80_parameter_manifest.json> `
   -QuantizationManifest <quantization_manifest.json> `
   -SdParameterPackage <coco80_parameters.c8pa> `
-  -TrainingSummary <qat-summary.json> `
-  -Fp32EvaluationSummary <fp32-deploy416-summary.json> `
-  -Int8EvaluationSummary <int8-deploy416-summary.json> `
-  -Mode accuracy -ImageLimit 5000
+  -TrainingSummary <training-summary.json> `
+  -Fp32EvaluationSummary <fp32-summary.json> `
+  -Int8EvaluationSummary <int8-summary.json> `
+  -Mode performance
 ```
 
-The build is fail-closed on the deployment accuracy budget. An intentionally
-non-release integration build additionally requires
-`-AllowNonReleaseDeployment` and a QAT summary already marked
-`deployment_override=true`; every ELF manifest then records
-`release_eligible=false`, the three summary hashes, and both AP deltas.
+可用模式为 `accuracy`、`product`、`performance` 和 `conformance`。构建与启动脚本会重新计算 ELF、bitstream、量化清单和参数包哈希；未满足模型门禁的集成构建必须显式使用 `-AllowNonReleaseDeployment`，且清单会记录 `release_eligible=false`。
 
-The modes are `accuracy`, `product`, `performance`, and `conformance`.
-Accuracy writes both raw heads for every image; product writes A53 detections;
-performance performs 20 warmups and writes timing records without raw dumps;
-conformance is limited to 128 images and writes all 22 integer tensors plus
-the raw heads. Output data and indexes are first written as `.partial` and are
-renamed only after all inputs and counters pass.
-
-Host validation must use `validate_board_output_index` and, for conformance,
-`validate_board_node_index` from `tools.coco80.sd_pack`. These validators check
-record order, offsets, lengths, CRC chains, mode, image count, and the complete
-22-node tensor sequence before any result is admitted to mAP or byte-exact
-comparison.
-
-After moving the prepared SD card from the host reader into the board, start
-the selected runner through JTAG. A non-release model requires the explicit
-override at both build and run time:
-
-```powershell
-& powershell -ExecutionPolicy Bypass -File `
-  sw\vitis_2022_2\scripts\run_coco80_sd_board.ps1 `
-  -Workspace D:\MPSoC\accelerator_systolic\build_vitis_2022_2_coco80_r5 `
-  -RunnerManifest <coco80_r5_conformance.manifest.json> `
-  -BitFile $bit -AllowNonReleaseDeployment
-```
-
-The launcher re-hashes the ELF and signed r5 BIT and rejects an unmarked
-failed-accuracy build. `hw_server` must already be listening on TCP port 3121.
+JTAG、SD 冷启动和 WebUI 的最短操作流程见仓库根目录[快速启动与复现](../../README.md#快速启动与复现)。WebUI 的详细说明见[上传推理工具](INFERENCE_APP.md)。

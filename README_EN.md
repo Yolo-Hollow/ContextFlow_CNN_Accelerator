@@ -1,6 +1,6 @@
 # ContextFlow: A Replay-Enabled Context-Pipelined Accelerator for Quantized CNNs
 
-**Language / 语言: English | [中文](README.md)**
+**Language / 语言: [中文](README.md) | English**
 
 ContextFlow is a complete INT8 CNN inference system for the AMD/Xilinx Kria KV260 (XCK26). It uses a fixed `18x16` dual-output systolic array and addresses two system-level costs of folded convolution: repeated transfer of the same HWC input across output-channel blocks and idle bubbles between adjacent folded execution contexts.
 
@@ -94,33 +94,36 @@ The final controlled-ablation stage reports `34.978 ms`; it has a different meas
 | WNS / TNS | +0.004 ns / 0 ns |
 | Post-route tool-estimated on-chip power | 4.008 W |
 
-Canonical measurements and hashes are recorded in the [34.9 ms release manifest](docs/contextflow_34p9_release_manifest.md) and the [machine-readable evidence snapshot](paper/lasa_journal_cn/data/evidence_snapshot.json). Power is a post-route vectorless tool estimate, not a board power measurement.
+Canonical measurements and hashes are recorded in the [34.9 ms release manifest](docs/contextflow_34p9_release_manifest_EN.md) and the [machine-readable evidence snapshot](paper/lasa_journal_cn/data/evidence_snapshot.json). Power is a post-route vectorless tool estimate, not a board power measurement.
 
 ## Repository Structure
 
 ```text
-cal/                     DSP and INT8 MAC primitives
-com/                     Common RTL pipeline modules
-systolic/                Array, vector replay, PSUM, and context-pipeline RTL
-sw/vitis_2022_2/
-  src/                   KV260 bare-metal inference runtime
-  scripts/               Project generation, deployment, board, and measurement scripts
-  boot/coco80_el1/       EL1/SD boot support
-tb/                      RTL, software, and end-to-end regression tests
-tcl/                     Vivado project, synthesis, implementation, and signoff scripts
-tools/
-  coco80/                Quantization, dataset, deployment, protocol, and evaluation tools
-  demo/                  Board functional and performance demos
-  golden/                Scheduling and integer-semantic reference models
-  power/                 Power-report parsing
-repro/                   Reproducibility entry points and compact data packages
-docs/                    Release manifest, implementation notes, and evidence boundaries
-paper/lasa_journal_cn/   Frozen experimental data, tables, and publication evidence
-release/contextflow_34p9/
-                         XSA, bitstream, and checksums for the 34.943 ms release
-output/pdf/
-  ContexFlow_preprint_thesis.pdf
-                         Current preprint
+.
+├── cal/                              DSP and INT8 MAC primitives
+├── com/                              Common RTL pipeline modules
+├── systolic/                         Array, vector replay, PSUM, and context-pipeline RTL
+├── sw/
+│   └── vitis_2022_2/
+│       ├── src/                      KV260 bare-metal inference runtime
+│       ├── scripts/                  Project generation, deployment, and board scripts
+│       └── boot/coco80_el1/          EL1/SD cold-boot support
+├── tb/                               RTL, software, and end-to-end regression tests
+├── tcl/                              Vivado build, implementation, and signoff scripts
+├── tools/
+│   ├── coco80/                       Quantization, dataset, deployment, and evaluation
+│   ├── demo/                         Board functional and performance demos
+│   ├── golden/                       Scheduling and integer-semantic reference models
+│   └── power/                        Power-report parsing
+├── repro/                            Reproduction entry points and compact data packages
+├── docs/                             Release manifest, implementation, and evidence docs
+├── paper/
+│   └── lasa_journal_cn/              Frozen experimental data and publication evidence
+├── release/
+│   └── contextflow_34p9/             34.943 ms XSA, bitstream, and checksums
+└── output/
+    └── pdf/
+        └── ContexFlow_preprint_thesis.pdf   Current preprint
 ```
 
 ## Environment
@@ -169,7 +172,7 @@ Start Vivado `hw_server`, then create an EL3 network platform from the bundled X
   -execution-level el3
 ```
 
-Build the network runner as described in the [COCO80 tooling guide](tools/coco80/README.md), then download the bitstream and ELF over JTAG and keep the board service running:
+Build the network runner as described in the [COCO80 tooling guide](tools/coco80/README_EN.md), then download the bitstream and ELF over JTAG and keep the board service running:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File `
@@ -211,7 +214,7 @@ powershell -ExecutionPolicy Bypass -File `
   -Python (Get-Command python).Source
 ```
 
-Copy the package contents to the FAT boot partition. KV260 QSPI U-Boot then loads the bitstream and EL1 application. See the [SD deployment guide](tools/coco80/README.md) and [Vitis runtime guide](sw/vitis_2022_2/README.md) for the complete directory layout, input registration, and boot checks.
+Copy the package contents to the FAT boot partition. KV260 QSPI U-Boot then loads the bitstream and EL1 application. See the [SD deployment guide](tools/coco80/README_EN.md) and [Vitis runtime guide](sw/vitis_2022_2/README_EN.md) for the complete directory layout, input registration, and boot checks.
 
 ### WebUI inference test
 
@@ -224,7 +227,7 @@ powershell -ExecutionPolicy Bypass -File tools\coco80\run_inference_app.ps1 `
   -OpenBrowser
 ```
 
-The browser opens `http://127.0.0.1:8088/` by default. The WebUI sends images to the KV260 for complete INT8 inference and records inputs, raw outputs, detections, and run metadata; it does not silently fall back to host inference. See the [WebUI inference guide](tools/coco80/INFERENCE_APP.md).
+The browser opens `http://127.0.0.1:8088/` by default. The WebUI sends images to the KV260 for complete INT8 inference and records inputs, raw outputs, detections, and run metadata; it does not silently fall back to host inference. See the [WebUI inference guide](tools/coco80/INFERENCE_APP_EN.md).
 
 ## Build and Verification
 
@@ -262,7 +265,7 @@ sw/vitis_2022_2/scripts/run_coco80_net_board.ps1
 sw/vitis_2022_2/scripts/run_coco80_sd_board.ps1
 ```
 
-See [tools/coco80/README.md](tools/coco80/README.md) for COCO80 preparation, quantization, network protocol, and evaluation; [sw/vitis_2022_2/README.md](sw/vitis_2022_2/README.md) for the bare-metal project and board flow; and [tcl/README.md](tcl/README.md) for Vivado profiles and signoff gates.
+See the [COCO80 tooling guide](tools/coco80/README_EN.md) for preparation, quantization, network protocol, and evaluation; the [Vitis runtime guide](sw/vitis_2022_2/README_EN.md) for the bare-metal project and board flow; and the [Vivado/XSIM guide](tcl/README_EN.md) for build profiles and signoff gates.
 
 ## Upstream and Attribution
 

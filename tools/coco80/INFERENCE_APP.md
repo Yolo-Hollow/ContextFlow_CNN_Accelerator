@@ -1,75 +1,58 @@
-# KV260 COCO80 upload inference app
+# KV260 COCO80 WebUI 推理工具
 
-This local web tool accepts a user image, creates the exact reduced-u8 C8IN
-package, sends it to the persistent KV260 Ethernet runner, validates all
-response CRCs and artifact bindings, and displays board detections plus the
-extended per-image timing record.  It never falls back to host inference.
+**语言 / Language：中文 | [English](INFERENCE_APP_EN.md)**
 
-## 1. Start the persistent board service
+该本地 WebUI 接收用户图片，生成与硬件 ABI 一致的 reduced-u8 C8IN 输入包，将其发送到 KV260 持久化以太网 runner，校验响应 CRC 和产物绑定，并显示板端检测结果及单图时延分解。工具不会回退为主机推理。
 
-Power on the KV260, connect JTAG and Ethernet, start `hw_server`, and download
-the currently built r5 multicore Ethernet runner:
+## 1. 启动板端服务
+
+连接 KV260 的 JTAG 与以太网，启动 `hw_server`，然后下载当前网络 runner：
 
 ```powershell
-& powershell -ExecutionPolicy Bypass -File `
+& 'C:\Xilinx\Vivado\2022.2\bin\hw_server.bat'
+
+powershell -ExecutionPolicy Bypass -File `
   sw\vitis_2022_2\scripts\run_coco80_net_board.ps1 `
-  -Workspace build_vitis_2022_2_coco80_r5_net `
-  -RunnerManifest build_vitis_2022_2_coco80_r5_net\coco80_net_manual_build\coco80_r5_ethernet.manifest.json `
-  -BitFile build_abi_v2_release_r5\conv_accel_ps_dma_minimal\conv_accel_ps_dma_minimal.runs\impl_1\conv_accel_ps_dma_wrapper.bit `
-  -AllowNonReleaseDeployment
+  -Workspace <network-workspace> `
+  -RunnerManifest <coco80_r5_ethernet.manifest.json> `
+  -BitFile release\contextflow_34p9\conv_accel_ps_dma_wrapper.bit
 ```
 
-The board must listen on `192.168.10.2:5001`.  Configure the host Ethernet
-adapter as `192.168.10.1/24` and verify `ping 192.168.10.2` first.
-
-For a QSPI/U-Boot SD chain-load build, create the standalone workspace as
-Non-Secure EL1 explicitly:
+板端监听 `192.168.10.2:5001`。主机网卡应配置为 `192.168.10.1/24`，启动 WebUI 前先执行：
 
 ```powershell
-& C:\Xilinx\Vitis\2022.2\bin\xsct.bat `
+ping 192.168.10.2
+```
+
+使用 QSPI/U-Boot 的 SD 冷启动时，网络 runner 必须构建为 Non-Secure EL1：
+
+```powershell
+& 'C:\Xilinx\Vitis\2022.2\bin\xsct.bat' `
   sw\vitis_2022_2\scripts\create_coco80_net_project.tcl `
-  -workspace build_vitis_2022_2_coco80_r5_net_el1 `
-  -xsa build_abi_v2_release_r5\conv_accel_ps_dma_minimal.xsa `
+  -workspace <el1-network-workspace> `
+  -xsa release\contextflow_34p9\conv_accel_ps_dma_minimal.xsa `
   -execution-level el1
 ```
 
-The EL1 cold-boot build deliberately enters the C runtime with the Xilinx
-Outer Shareable DDR table.  After the firmware has enabled SMPEN, the runner
-changes only isolated 2 MiB blocks covering the input chunks, parameter image,
-and shared inference workspace to Inner Shareable.  Worker cores apply the
-same workspace mapping before publishing ready.  This deferred mapping keeps
-the QSPI/U-Boot chain-load path reliable while retaining the faster DMA and
-four-core tensor-operator memory domains.
-PL and GEM DMA remain non-coherent and use explicit cache maintenance.  Pass
-`-ddr-shareability inner` only for diagnostic/JTAG work; it is not the SD
-cold-boot default.
-
-## 2. Start the web app
+## 2. 启动 WebUI
 
 ```powershell
-& powershell -ExecutionPolicy Bypass -File tools\coco80\run_inference_app.ps1 -OpenBrowser
+conda activate pytorch_env
+powershell -ExecutionPolicy Bypass -File tools\coco80\run_inference_app.ps1 `
+  -RunnerManifest <coco80_r5_ethernet.manifest.json> `
+  -QuantizationManifest <quantization_manifest.json> `
+  -OpenBrowser
 ```
 
-Open <http://127.0.0.1:8088/> if the browser is not opened automatically.
-The defaults intentionally bind the current epoch1 parameter/quantization
-package and the r5 200 MHz BIT/XSA.  Explicit path arguments can be supplied
-to the PowerShell wrapper after another model has completed its own board
-qualification.
+如果浏览器没有自动打开，请访问 <http://127.0.0.1:8088/>。更换模型后必须显式提供该模型完成板端验证后生成的 runner 和量化清单。
 
-## Modes and timing
+## 模式与时延含义
 
-- **Demo** uses board-side `confidence=0.25`, `IoU=0.45`, single-label NMS.
-- **Accuracy** uses `confidence=0.001`, `IoU=0.65`, multi-label NMS; a higher
-  local display threshold can keep the visualization readable.
-- **Resident** is quantized input already in DDR through the complete 13-conv
-  DAG and A53 detections.
-- **PL** is the sum of the 13 accelerator dispatches.
-- **A53** includes tensor operations and decode/NMS.
-- **Network session** is host wall time and also includes the fail-closed
-  HELLO/parameter transfer for this one-image session.  It is not a model
-  latency measurement.
+- **Demo**：板端使用 `confidence=0.25`、`IoU=0.45` 和 single-label NMS。
+- **Accuracy**：使用 `confidence=0.001`、`IoU=0.65` 和 multi-label NMS；显示阈值可单独提高。
+- **Resident**：量化输入已在 DDR 中，从完整 13 层卷积 DAG 到 A53 检测结果的时间。
+- **PL**：13 次加速器调度时间之和。
+- **A53**：张量操作以及 decode/NMS 时间。
+- **Network session**：主机端墙钟时间，包含连接、HELLO 与参数传输，不能作为模型推理延迟。
 
-Every successful request is archived below
-`results/coco80/inference_app/runs/<request-id>/`, including the uploaded
-source, C8IN index/shard, raw board detection package, extended timing record,
-visualization, result JSON, and SHA256 references.
+每次成功请求都会保存到 `results/coco80/inference_app/runs/<request-id>/`，包括上传原图、C8IN 索引和分片、板端原始检测包、时延记录、可视化结果、JSON 元数据及 SHA-256 引用。
