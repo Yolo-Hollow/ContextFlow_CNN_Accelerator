@@ -108,7 +108,7 @@ These results were produced by the complete INT8 dual-scale YOLOv3-tiny network 
 | WNS / TNS | +0.004 ns / 0 ns |
 | Post-route tool-estimated on-chip power | 4.008 W |
 
-Canonical measurements and hashes are recorded in the [34.9 ms release manifest](docs/contextflow_34p9_release_manifest_EN.md) and the [machine-readable evidence snapshot](paper/lasa_journal_cn/data/evidence_snapshot.json). Power is a post-route vectorless tool estimate, not a board power measurement.
+Canonical measurements and hashes are recorded in the [34.9 ms release manifest](docs/contextflow_34p9_release_manifest_EN.md) and the [machine-readable evidence snapshot](repro/evidence/contextflow_34p9_evidence.json). Power is a post-route vectorless tool estimate, not a board power measurement.
 
 ## Repository Structure
 
@@ -130,12 +130,11 @@ Canonical measurements and hashes are recorded in the [34.9 ms release manifest]
 │   ├── golden/                       Scheduling and integer-semantic reference models
 │   └── power/                        Power-report parsing
 ├── repro/                            Reproduction entry points and compact data packages
+│   └── evidence/                     Frozen performance, ablation, and same-board CPU evidence
 ├── docs/                             Release manifest, implementation, and evidence docs
 │   └── assets/
 │       ├── architecture/             Overall architecture vector used by the README
 │       └── results/                  Board inference examples used by the README
-├── paper/
-│   └── lasa_journal_cn/              Frozen experimental data and publication evidence
 ├── release/
 │   └── contextflow_34p9/             34.943 ms XSA, bitstream, and checksums
 └── output/

@@ -108,7 +108,7 @@ PS 负责网络描述、四路 DMA、层间张量与检测后处理；PL 负责 
 | WNS / TNS | +0.004 ns / 0 ns |
 | 布局后工具估算片上功耗 | 4.008 W |
 
-正式测量与哈希见 [34.9 ms 发布清单](docs/contextflow_34p9_release_manifest.md) 和 [机器可读证据快照](paper/lasa_journal_cn/data/evidence_snapshot.json)。功耗为布局布线后的 vectorless 工具估算，并非板端实测功耗。
+正式测量与哈希见 [34.9 ms 发布清单](docs/contextflow_34p9_release_manifest.md) 和 [机器可读证据快照](repro/evidence/contextflow_34p9_evidence.json)。功耗为布局布线后的 vectorless 工具估算，并非板端实测功耗。
 
 ## 仓库结构
 
@@ -130,12 +130,11 @@ PS 负责网络描述、四路 DMA、层间张量与检测后处理；PL 负责 
 │   ├── golden/                       调度与整数语义参考模型
 │   └── power/                        功耗报告解析
 ├── repro/                            可复现实验入口与小型数据包
+│   └── evidence/                     性能、消融与同板 CPU 冻结证据
 ├── docs/                             发布清单、实现说明和证据文档
 │   └── assets/
 │       ├── architecture/             README 使用的整体架构矢量图
 │       └── results/                  README 使用的板端推理示例
-├── paper/
-│   └── lasa_journal_cn/              冻结的实验数据、表格与论文证据源
 ├── release/
 │   └── contextflow_34p9/             34.943 ms XSA、bitstream 与校验信息
 └── output/

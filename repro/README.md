@@ -13,8 +13,14 @@ images/
 expected/
   conv9_golden_ofm_u8_hwc.bin
   decode_golden.json
+evidence/
+  contextflow_34p9_evidence.json
+  contextflow_ablation.json
+  kv260_cpu_baseline.json
 SHA256SUMS
 ```
+
+`evidence/` 保存 34.9 ms 发布使用的机器可读性能、消融和同板 CPU 证据，说明与文件哈希见 [冻结证据清单](evidence/README.md)。这些文件替代历史论文工程中的内部证据目录。
 
 每个网络层目录包含：
 
