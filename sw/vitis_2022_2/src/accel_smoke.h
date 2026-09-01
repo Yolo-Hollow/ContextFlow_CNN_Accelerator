@@ -1,6 +1,8 @@
 #ifndef ACCEL_SMOKE_H
 #define ACCEL_SMOKE_H
 
+#include "accel_abi_v2.h"
+
 #include <stdint.h>
 
 #define ACCEL_BASE_ADDR       0xA0000000U
@@ -129,6 +131,10 @@
 #define ACCEL_COLTRACE_MISSING_FIRST 0x1d0U
 #define ACCEL_COLTRACE_MISSING_LAST 0x1d4U
 #define ACCEL_COLTRACE_VERSION 0x1d8U
+/* 0x1dc/0x1e0 are defined in accel_abi_v2.h. */
+#define ACCEL_PERF_UNCLASSIFIED 0x1e4U
+/* ABI-v2 word address 0xA0 (byte address 0x280). */
+#define ACCEL_CLOCK_HZ         0x280U
 
 #define ACCEL_CONV_KERNEL_1X1 (1U << 16)
 
@@ -159,6 +165,8 @@
 #define DMA_DMASR_IDLE        0x00000002U
 #define DMA_DMASR_IOC_IRQ     0x00001000U
 #define DMA_DMASR_ERR_MASK    0x00000070U
+#define DMA_DMASR_IRQ_ACK_MASK 0x00007000U
+#define DMA_SIMPLE_MAX_LENGTH  (1U << 26)
 
 #define ST_BIAS_REQ           (1U << 0)
 #define ST_WEIGHT_REQ         (1U << 1)
@@ -222,6 +230,71 @@
 #define ACCEL_PASS_TRACE_K_PASS 0U
 #endif
 
+/* Existing board-smoke applications are ABI v1 unless explicitly rebuilt. */
+#ifndef ACCEL_RUNTIME_ABI_VERSION
+#define ACCEL_RUNTIME_ABI_VERSION ACCEL_ABI_VERSION_V1
+#endif
+
+/* Set only after the layer-long IFM/OFM runtime has replaced tile services. */
+#ifndef ACCEL_V2_LONG_STREAM_RUNTIME_READY
+#define ACCEL_V2_LONG_STREAM_RUNTIME_READY 0
+#endif
+
+#ifndef ACCEL_PERF_ONLY
+#define ACCEL_PERF_ONLY 0
+#endif
+
+/* Formal board timing is one in-process warm-up followed by 100 samples. */
+#ifndef ACCEL_V2_BENCHMARK_RUNS
+#define ACCEL_V2_BENCHMARK_RUNS 0
+#endif
+#if ACCEL_V2_BENCHMARK_RUNS != 0 && ACCEL_V2_BENCHMARK_RUNS != 30 && \
+    ACCEL_V2_BENCHMARK_RUNS != 100
+#error "ACCEL_V2_BENCHMARK_RUNS must be zero, legacy 30, or formal 100 runs"
+#endif
+#if ACCEL_V2_BENCHMARK_RUNS != 0 && !ACCEL_PERF_ONLY
+#error "ABI v2 benchmark runs require ACCEL_PERF_ONLY"
+#endif
+
+/*
+ * The soak image is a separate performance-mode ELF.  A nonzero value is
+ * intentionally constrained to at least ten minutes and cannot be combined
+ * with the finite 30/100-run timing harness.
+ */
+#ifndef ACCEL_V2_SOAK_SECONDS
+#define ACCEL_V2_SOAK_SECONDS 0U
+#endif
+#if ACCEL_V2_SOAK_SECONDS != 0U && ACCEL_V2_SOAK_SECONDS < 600U
+#error "ACCEL_V2_SOAK_SECONDS must be zero or at least 600 seconds"
+#endif
+#if ACCEL_V2_SOAK_SECONDS != 0U && !ACCEL_PERF_ONLY
+#error "ABI v2 soak requires ACCEL_PERF_ONLY"
+#endif
+#if ACCEL_V2_SOAK_SECONDS != 0U && ACCEL_V2_BENCHMARK_RUNS != 0
+#error "ABI v2 soak and finite benchmark runs are mutually exclusive"
+#endif
+#define ACCEL_V2_SOAK_TEMP_LIMIT_MILLIC 85000
+#define ACCEL_V2_SOAK_TEMP_MIN_MILLIC (-40000)
+#define ACCEL_V2_SOAK_PROGRESS_SECONDS 10U
+
+/*
+ * FIFO256 release profiles require continuous PSUM draining.  Safe staged
+ * bring-up therefore starts at 0x2b; 0x03/0x0b can deadlock any context with
+ * more than 256 pixels and are not ABI-v2 candidate configurations.
+ */
+#ifndef ACCEL_V2_STREAM_CFG
+#define ACCEL_V2_STREAM_CFG 0xBFU
+#endif
+
+#ifndef ACCEL_V2_EXPECTED_CLOCK_HZ
+#define ACCEL_V2_EXPECTED_CLOCK_HZ 100000000U
+#endif
+#if ACCEL_V2_EXPECTED_CLOCK_HZ != 100000000U && \
+    ACCEL_V2_EXPECTED_CLOCK_HZ != 125000000U && \
+    ACCEL_V2_EXPECTED_CLOCK_HZ != 200000000U
+#error "ACCEL_V2_EXPECTED_CLOCK_HZ must match a supported candidate manifest"
+#endif
+
 #define ACCEL_STREAM_CFG_BATCH   0x1U
 #define ACCEL_STREAM_CFG_RAW_HWC 0x2U
 #define ACCEL_STREAM_CFG_EARLY_DRAIN 0x4U
@@ -230,6 +303,10 @@
 #define ACCEL_STREAM_CFG_CONTINUOUS_PSUM 0x20U
 #define ACCEL_STREAM_CFG_COLUMN_PSUM 0x40U
 #define ACCEL_STREAM_CFG_DURING_COMPUTE_PREFETCH 0x80U
+
+#if (ACCEL_V2_STREAM_CFG & ACCEL_STREAM_CFG_COLUMN_PSUM) != 0
+#error "ABI v2 release software must never enable column-PSUM bit 6"
+#endif
 
 /* Mirrors tb_conv_accel_core_axi_lite_axis_stream_r18_c8_smoke.v. */
 #ifndef ACCEL_SMOKE_REAL_CONV0_CROP_POOL

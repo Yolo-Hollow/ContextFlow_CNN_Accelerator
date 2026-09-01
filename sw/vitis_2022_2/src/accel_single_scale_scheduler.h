@@ -2,11 +2,16 @@
 #define ACCEL_SINGLE_SCALE_SCHEDULER_H
 
 #include "accel_smoke.h"
+#include "accel_layer_desc.h"
 #include "accel_single_scale_plan.h"
 
 #include <stdint.h>
 
 #define ACCEL_SINGLE_SCALE_BUFFER_EXTERNAL 0xffffffffU
+#define ACCEL_SINGLE_SCALE_BIAS_PACKET_BYTES \
+    (ACCEL_SINGLE_SCALE_COUT_TILE * 4U)
+#define ACCEL_SINGLE_SCALE_WEIGHT_PACKET_BYTES \
+    (ACCEL_SINGLE_SCALE_ROWS * ACCEL_SINGLE_SCALE_COUT_TILE)
 
 typedef struct {
     const accel_single_scale_layer_plan_t *plan;
@@ -25,11 +30,16 @@ typedef struct {
     uint32_t max_tile_ofm_h;
     uint32_t max_tile_pixels;
     uint32_t max_tile_output_pixels;
+    uint32_t max_tile_reorder_entries;
     uint32_t max_tile_ofm_bytes;
     uint32_t max_tile_axis_bytes;
     uint32_t expected_output_pixels;
     uint32_t input_buffer_id;
     uint32_t output_buffer_id;
+    uint32_t bias_stream_packets;
+    uint32_t weight_stream_packets;
+    uint32_t bias_stream_bytes;
+    uint32_t weight_stream_bytes;
 } accel_single_scale_layer_schedule_t;
 
 typedef struct {
@@ -38,9 +48,20 @@ typedef struct {
     uint32_t feature_buffer_bytes[2];
     uint32_t max_ofm_axis_bytes;
     uint32_t max_tile_axis_bytes;
+    uint32_t max_tile_reorder_entries;
     uint32_t total_output_bytes;
+    uint32_t total_ifm_bytes;
+    uint32_t total_packed_ofm_beats;
+    uint32_t ifm_dma_starts;
+    uint32_t ofm_dma_starts;
     uint32_t total_spatial_tiles;
     uint32_t total_schedule_blocks;
+    uint32_t total_bias_stream_packets;
+    uint32_t total_weight_stream_packets;
+    uint32_t total_bias_stream_bytes;
+    uint32_t total_weight_stream_bytes;
+    uint32_t max_layer_bias_stream_bytes;
+    uint32_t max_layer_weight_stream_bytes;
 } accel_single_scale_schedule_summary_t;
 
 static uint32_t accel_ceil_div_u32(uint32_t value, uint32_t divisor)
@@ -52,6 +73,12 @@ static uint32_t accel_conv_out_dim_u32(uint32_t input, uint32_t kernel,
                                        uint32_t stride, uint32_t pad)
 {
     return ((input + (2U * pad) - kernel) / stride) + 1U;
+}
+
+static uint32_t accel_packed_axis_bytes_u32(uint32_t payload_bytes)
+{
+    return accel_ceil_div_u32(payload_bytes, OFM_AXIS_BEAT_BYTES) *
+           OFM_AXIS_BEAT_BYTES;
 }
 
 static int accel_single_scale_make_layer_schedule(
@@ -71,6 +98,11 @@ static int accel_single_scale_make_layer_schedule(
     uint32_t tile_count;
     uint32_t last_tile_h;
     uint32_t max_tile_output_pixels;
+    uint32_t max_tile_reorder_entries;
+    uint64_t bias_stream_packets;
+    uint64_t weight_stream_packets;
+    uint64_t bias_stream_bytes;
+    uint64_t weight_stream_bytes;
 
     if (layer == 0 || schedule == 0) {
         return -1;
@@ -107,6 +139,10 @@ static int accel_single_scale_make_layer_schedule(
     if (layer->expected_ofm_bytes != output_bytes) {
         return -12;
     }
+    if (layer->ifm_total_bytes != input_bytes ||
+        layer->ofm_total_bytes != output_bytes) {
+        return -17;
+    }
     if (layer->k_total != ((uint32_t)layer->cin * (uint32_t)layer->kernel * (uint32_t)layer->kernel)) {
         return -13;
     }
@@ -119,6 +155,13 @@ static int accel_single_scale_make_layer_schedule(
     if (ACCEL_SINGLE_SCALE_MAX_TILE_OFM_H == 0U) {
         return -16;
     }
+    if (layer->tile_h_max == 0U || layer->tile_h_max > conv_h ||
+        layer->tile_h_max > ACCEL_SINGLE_SCALE_MAX_TILE_OFM_H) {
+        return -18;
+    }
+    if (layer->layer_last != ((layer_index + 1U == ACCEL_SINGLE_SCALE_LAYER_COUNT) ? 1U : 0U)) {
+        return -19;
+    }
 
     if (layer_index > 0U) {
         if (prev == 0) {
@@ -130,12 +173,9 @@ static int accel_single_scale_make_layer_schedule(
         }
     }
 
-    max_tile_h = ACCEL_SINGLE_SCALE_MAX_TILE_OFM_H;
+    max_tile_h = layer->tile_h_max;
     if (layer->pool_enable != 0U) {
         if ((max_tile_h % layer->pool_stride) != 0U) {
-            max_tile_h -= (max_tile_h % layer->pool_stride);
-        }
-        if (max_tile_h == 0U) {
             return -30;
         }
     }
@@ -149,10 +189,36 @@ static int accel_single_scale_make_layer_schedule(
         return -31;
     }
 
+    if ((conv_w * max_tile_h) > ACCEL_SINGLE_SCALE_PSUM_BUF_DEPTH) {
+        return -32;
+    }
+
     max_tile_output_pixels = conv_w * max_tile_h;
     if (layer->pool_enable != 0U) {
         max_tile_output_pixels = (conv_w / layer->pool_stride) *
                                  (max_tile_h / layer->pool_stride);
+    }
+    max_tile_reorder_entries = max_tile_output_pixels * layer->cout_blocks;
+    if (max_tile_reorder_entries > ACCEL_SINGLE_SCALE_PACKED_REORDER_DEPTH) {
+        return -33;
+    }
+
+    /*
+     * The current tile engine reloads one bias block and all K-pass weight
+     * tiles for every spatial tile.  A layer-long software stream therefore
+     * repeats the per-tile parameter packet sequence and carries exactly one
+     * TLAST at the end of the complete physical DMA frame.
+     */
+    bias_stream_packets = (uint64_t)tile_count * layer->cout_blocks;
+    weight_stream_packets = bias_stream_packets * layer->k_passes;
+    bias_stream_bytes = bias_stream_packets *
+                        ACCEL_SINGLE_SCALE_BIAS_PACKET_BYTES;
+    weight_stream_bytes = weight_stream_packets *
+                          ACCEL_SINGLE_SCALE_WEIGHT_PACKET_BYTES;
+    if (bias_stream_packets > UINT32_MAX ||
+        weight_stream_packets > UINT32_MAX ||
+        bias_stream_bytes > UINT32_MAX || weight_stream_bytes > UINT32_MAX) {
+        return -34;
     }
 
     schedule->plan = layer;
@@ -162,7 +228,7 @@ static int accel_single_scale_make_layer_schedule(
     schedule->final_h = final_h;
     schedule->input_bytes = input_bytes;
     schedule->output_bytes = output_bytes;
-    schedule->ofm_axis_bytes = output_bytes * OFM_AXIS_BEAT_BYTES;
+    schedule->ofm_axis_bytes = accel_packed_axis_bytes_u32(output_bytes);
     schedule->tile_oy_base = 0U;
     schedule->tile_ofm_h = max_tile_h;
     schedule->tile_pixel_base = 0U;
@@ -171,17 +237,58 @@ static int accel_single_scale_make_layer_schedule(
     schedule->max_tile_ofm_h = max_tile_h;
     schedule->max_tile_pixels = conv_w * max_tile_h;
     schedule->max_tile_output_pixels = max_tile_output_pixels;
+    schedule->max_tile_reorder_entries = max_tile_reorder_entries;
     schedule->max_tile_ofm_bytes = max_tile_output_pixels * (uint32_t)layer->cout_total;
-    schedule->max_tile_axis_bytes = schedule->max_tile_ofm_bytes * OFM_AXIS_BEAT_BYTES;
+    schedule->max_tile_axis_bytes =
+        accel_packed_axis_bytes_u32(schedule->max_tile_ofm_bytes);
     schedule->expected_output_pixels = expected_pixels;
     schedule->input_buffer_id = (layer_index == 0U) ?
         ACCEL_SINGLE_SCALE_BUFFER_EXTERNAL : prev->output_buffer_id;
     schedule->output_buffer_id = layer_index & 1U;
+    schedule->bias_stream_packets = (uint32_t)bias_stream_packets;
+    schedule->weight_stream_packets = (uint32_t)weight_stream_packets;
+    schedule->bias_stream_bytes = (uint32_t)bias_stream_bytes;
+    schedule->weight_stream_bytes = (uint32_t)weight_stream_bytes;
 
     if (layer_index > 0U && schedule->input_buffer_id == schedule->output_buffer_id) {
         return -22;
     }
 
+    return 0;
+}
+
+static inline int accel_single_scale_make_layer_desc_v2(
+    const accel_single_scale_layer_schedule_t *schedule,
+    accel_layer_desc_v2_t *descriptor)
+{
+    const accel_single_scale_layer_plan_t *layer;
+
+    if (schedule == 0 || descriptor == 0 || schedule->plan == 0) {
+        return -1;
+    }
+    layer = schedule->plan;
+    descriptor->abi_version = ACCEL_ABI_VERSION_V2;
+    descriptor->flags = ACCEL_LAYER_DESC_V2_FLAG_HWC_IFM |
+                        ACCEL_LAYER_DESC_V2_FLAG_HWC_OFM |
+                        ((layer->kernel == 1U) ? ACCEL_LAYER_DESC_V2_FLAG_KERNEL_1X1 : 0U);
+    descriptor->fm_w = layer->fm_w;
+    descriptor->fm_h = layer->fm_h;
+    descriptor->ofm_w = schedule->conv_w;
+    descriptor->ofm_h = schedule->conv_h;
+    descriptor->cin = layer->cin;
+    descriptor->cout_total = layer->cout_total;
+    descriptor->k_total = layer->k_total;
+    descriptor->conv_stride = layer->stride;
+    descriptor->conv_pad = layer->pad;
+    descriptor->act_mode = layer->act_mode;
+    descriptor->input_zero_point = layer->input_zero_point;
+    descriptor->pool_enable = layer->pool_enable;
+    descriptor->pool_stride = layer->pool_stride;
+    descriptor->tile_h_max = layer->tile_h_max;
+    descriptor->ifm_total_bytes = layer->ifm_total_bytes;
+    descriptor->ofm_total_bytes = layer->ofm_total_bytes;
+    descriptor->layer_last = layer->layer_last;
+    descriptor->reserved0 = 0U;
     return 0;
 }
 
@@ -198,12 +305,13 @@ static int accel_single_scale_dry_run(
     if (schedule_count < ACCEL_SINGLE_SCALE_LAYER_COUNT) {
         return -2;
     }
-    if (ACCEL_SINGLE_SCALE_COUT_TILE != (ACCEL_SINGLE_SCALE_COLS * 2U)) {
+    if (ACCEL_SINGLE_SCALE_ABI_VERSION != ACCEL_ABI_VERSION_V2) {
         return -3;
     }
-    if (ACCEL_SINGLE_SCALE_ROWS != ROWS || ACCEL_SINGLE_SCALE_COLS != COLS ||
-        ACCEL_SINGLE_SCALE_IFM_BANKS != IFM_BANKS ||
-        ACCEL_SINGLE_SCALE_COUT_TILE != COUT_TILE) {
+    if (ACCEL_SINGLE_SCALE_COUT_TILE != (ACCEL_SINGLE_SCALE_COLS * 2U) ||
+        ACCEL_SINGLE_SCALE_ROWS != ACCEL_RELEASE_ROWS ||
+        ACCEL_SINGLE_SCALE_COLS != ACCEL_RELEASE_COLS ||
+        ACCEL_SINGLE_SCALE_COUT_TILE != ACCEL_RELEASE_COUT_TILE) {
         return -4;
     }
 
@@ -213,9 +321,20 @@ static int accel_single_scale_dry_run(
     summary->feature_buffer_bytes[1] = 0U;
     summary->max_ofm_axis_bytes = 0U;
     summary->max_tile_axis_bytes = 0U;
+    summary->max_tile_reorder_entries = 0U;
     summary->total_output_bytes = 0U;
+    summary->total_ifm_bytes = 0U;
+    summary->total_packed_ofm_beats = 0U;
+    summary->ifm_dma_starts = 0U;
+    summary->ofm_dma_starts = 0U;
     summary->total_spatial_tiles = 0U;
     summary->total_schedule_blocks = 0U;
+    summary->total_bias_stream_packets = 0U;
+    summary->total_weight_stream_packets = 0U;
+    summary->total_bias_stream_bytes = 0U;
+    summary->total_weight_stream_bytes = 0U;
+    summary->max_layer_bias_stream_bytes = 0U;
+    summary->max_layer_weight_stream_bytes = 0U;
 
     for (i = 0U; i < ACCEL_SINGLE_SCALE_LAYER_COUNT; ++i) {
         const accel_single_scale_layer_schedule_t *prev = (i == 0U) ? 0 : &schedule[i - 1U];
@@ -240,10 +359,54 @@ static int accel_single_scale_dry_run(
         if (schedule[i].max_tile_axis_bytes > summary->max_tile_axis_bytes) {
             summary->max_tile_axis_bytes = schedule[i].max_tile_axis_bytes;
         }
+        if (schedule[i].max_tile_reorder_entries > summary->max_tile_reorder_entries) {
+            summary->max_tile_reorder_entries = schedule[i].max_tile_reorder_entries;
+        }
         summary->total_output_bytes += schedule[i].output_bytes;
+        summary->total_ifm_bytes += schedule[i].input_bytes;
+        summary->total_packed_ofm_beats +=
+            accel_ceil_div_u32(schedule[i].output_bytes, OFM_AXIS_BEAT_BYTES);
+        summary->ifm_dma_starts += 1U;
+        summary->ofm_dma_starts += 1U;
         summary->total_spatial_tiles += schedule[i].tile_count;
         summary->total_schedule_blocks += schedule[i].tile_count *
                                           schedule[i].plan->cout_blocks;
+        summary->total_bias_stream_packets +=
+            schedule[i].bias_stream_packets;
+        summary->total_weight_stream_packets +=
+            schedule[i].weight_stream_packets;
+        summary->total_bias_stream_bytes += schedule[i].bias_stream_bytes;
+        summary->total_weight_stream_bytes += schedule[i].weight_stream_bytes;
+        if (schedule[i].bias_stream_bytes >
+            summary->max_layer_bias_stream_bytes) {
+            summary->max_layer_bias_stream_bytes =
+                schedule[i].bias_stream_bytes;
+        }
+        if (schedule[i].weight_stream_bytes >
+            summary->max_layer_weight_stream_bytes) {
+            summary->max_layer_weight_stream_bytes =
+                schedule[i].weight_stream_bytes;
+        }
+    }
+
+    if (summary->total_ifm_bytes != ACCEL_SINGLE_SCALE_TOTAL_IFM_BYTES ||
+        summary->total_output_bytes != ACCEL_SINGLE_SCALE_TOTAL_OFM_BYTES ||
+        summary->total_packed_ofm_beats != ACCEL_SINGLE_SCALE_TOTAL_OFM_BEATS) {
+        return -5;
+    }
+    if (summary->total_bias_stream_packets !=
+            ACCEL_SINGLE_SCALE_TOTAL_BIAS_PACKETS ||
+        summary->total_weight_stream_packets !=
+            ACCEL_SINGLE_SCALE_TOTAL_WEIGHT_PACKETS ||
+        summary->total_bias_stream_bytes !=
+            ACCEL_SINGLE_SCALE_TOTAL_BIAS_STREAM_BYTES ||
+        summary->total_weight_stream_bytes !=
+            ACCEL_SINGLE_SCALE_TOTAL_WEIGHT_STREAM_BYTES ||
+        summary->max_layer_bias_stream_bytes !=
+            ACCEL_SINGLE_SCALE_MAX_LAYER_BIAS_STREAM_BYTES ||
+        summary->max_layer_weight_stream_bytes !=
+            ACCEL_SINGLE_SCALE_MAX_LAYER_WEIGHT_STREAM_BYTES) {
+        return -6;
     }
 
     return 0;

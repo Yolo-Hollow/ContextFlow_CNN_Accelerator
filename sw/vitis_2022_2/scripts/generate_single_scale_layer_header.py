@@ -48,6 +48,8 @@ def pack_weight_kco(weight_oihw, cin, cout, kernel, emulate_1x1_as_3x3=False):
 
 
 def pack_weight_stream(weight_kco, k_total, cout, rows=18, cout_tile=16):
+    if rows <= 0 or cout_tile <= 0:
+        raise ValueError("rows and cout_tile must be positive")
     k_passes = (k_total + rows - 1) // rows
     cout_blocks = (cout + cout_tile - 1) // cout_tile
     packed = []
@@ -84,6 +86,18 @@ def main():
         action="store_true",
         help="Emit weights directly in COUT-block/K-pass AXI packet order.",
     )
+    parser.add_argument(
+        "--rows",
+        type=int,
+        default=18,
+        help="Systolic K rows used by the prepacked stream (default: 18).",
+    )
+    parser.add_argument(
+        "--cout-tile",
+        type=int,
+        default=16,
+        help="Output channels in one prepacked block (v1: 16, v2 release: 32).",
+    )
     args = parser.parse_args()
 
     layer_dir = Path(args.layer_dir).resolve()
@@ -119,7 +133,13 @@ def main():
 
     bias = list(struct.unpack("<" + "i" * cout, bias_raw))
     emitted_weight = (
-        pack_weight_stream(weight_kco, hw_k_total, cout)
+        pack_weight_stream(
+            weight_kco,
+            hw_k_total,
+            cout,
+            rows=args.rows,
+            cout_tile=args.cout_tile,
+        )
         if args.prepack_weight_stream
         else weight_kco
     )
@@ -151,6 +171,14 @@ def main():
         f.write(
             f"#define {args.prefix.upper()}_WEIGHT_PREPACKED "
             f"{1 if args.prepack_weight_stream else 0}U\n"
+        )
+        f.write(
+            f"#define {args.prefix.upper()}_WEIGHT_STREAM_ROWS "
+            f"{args.rows if args.prepack_weight_stream else 0}U\n"
+        )
+        f.write(
+            f"#define {args.prefix.upper()}_WEIGHT_STREAM_COUT_TILE "
+            f"{args.cout_tile if args.prepack_weight_stream else 0}U\n"
         )
         f.write(
             f"#define {args.prefix.upper()}_WEIGHT_STREAM_BYTES "

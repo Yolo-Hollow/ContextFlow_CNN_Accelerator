@@ -1,4 +1,11 @@
 #include "accel_smoke.h"
+#if ACCEL_RUNTIME_ABI_VERSION >= ACCEL_ABI_VERSION_V2
+#include "accel_layer_desc.h"
+#include "accel_runtime_v2.h"
+#include "accel_single_scale_plan.h"
+#include "accel_single_scale_scheduler.h"
+#include "accel_v2_parameter_package.h"
+#endif
 #if ACCEL_CHAIN_CONV0_CONV4 || ACCEL_CHAIN_CONV0_CONV5 || ACCEL_CHAIN_CONV0_CONV6 || ACCEL_CHAIN_CONV0_CONV7 || ACCEL_CHAIN_CONV0_CONV8 || ACCEL_CHAIN_CONV0_CONV9
 #include "conv0_pool_data.h"
 #include "conv1_pool_data.h"
@@ -47,6 +54,11 @@
 #include "xil_io.h"
 #include "xil_types.h"
 #include "xtime_l.h"
+#if ACCEL_V2_SOAK_SECONDS != 0U
+#include "xparameters.h"
+#include "xstatus.h"
+#include "xsysmonpsu.h"
+#endif
 
 #ifndef ACCEL_TAIL_CYCLES_OVERRIDE
 #define ACCEL_TAIL_CYCLES_OVERRIDE 0
@@ -86,11 +98,28 @@
 #define UART_SR_TXFULL        0x10U
 
 #define CHAIN_ROWS            18U
+#if ACCEL_RUNTIME_ABI_VERSION >= ACCEL_ABI_VERSION_V2
+#define CHAIN_COLS            16U
+#else
 #define CHAIN_COLS            8U
+#endif
 #define CHAIN_IFM_BANKS       2U
 #define CHAIN_COUT_TILE       (CHAIN_COLS * 2U)
 #define CHAIN_KH              3U
 #define CHAIN_KW              3U
+
+#if ACCEL_RUNTIME_ABI_VERSION >= ACCEL_ABI_VERSION_V2 && !ACCEL_CHAIN_CONV0_CONV9
+#error "ABI v2 is only supported by the complete Conv0-Conv9 runtime"
+#endif
+
+#if ACCEL_PREPACKED_WEIGHT && ACCEL_CHAIN_CONV0_CONV9
+#if CONV0_POOL_WEIGHT_STREAM_ROWS != CHAIN_ROWS || \
+    CONV0_POOL_WEIGHT_STREAM_COUT_TILE != CHAIN_COUT_TILE || \
+    CONV9_WEIGHT_STREAM_ROWS != CHAIN_ROWS || \
+    CONV9_WEIGHT_STREAM_COUT_TILE != CHAIN_COUT_TILE
+#error "Generated prepacked weights do not match CHAIN_ROWS/CHAIN_COUT_TILE"
+#endif
+#endif
 
 #if ACCEL_BATCH_STREAM
 #define BATCH_BIAS_ADDR       0x18000000U
@@ -226,6 +255,10 @@ typedef struct {
     uint32_t kernel_1x1;
     uint32_t raw_hwc_mode;
 } chain_layer_t;
+
+static int compare_layer_ofm(const chain_layer_t *layer);
+static uint64_t ticks_to_us(XTime ticks);
+static uint64_t pl_cycles_to_us_ceil(uint64_t cycles, uint32_t clock_hz);
 
 static uint64_t bias_buf[CHAIN_COUT_TILE / 2U] __attribute__((aligned(64)));
 static uint64_t weight_buf[(CHAIN_ROWS * CHAIN_COUT_TILE) / 8U] __attribute__((aligned(64)));
@@ -405,12 +438,18 @@ static const chain_tile_t conv6_tiles[4] = {
 #endif
 
 #if ACCEL_CHAIN_CONV0_CONV7 || ACCEL_CHAIN_CONV0_CONV8 || ACCEL_CHAIN_CONV0_CONV9
+#if ACCEL_RUNTIME_ABI_VERSION >= ACCEL_ABI_VERSION_V2
+static const chain_tile_t conv7_tiles[1] = {
+    {"conv7_fulltile", 0U, 13U, 0U, 13U * 13U, 13U * 13U * 256U},
+};
+#else
 static const chain_tile_t conv7_tiles[4] = {
     {"conv7_tile0", 0U, 4U, 0U * 13U, 13U * 4U, 13U * 4U * 256U},
     {"conv7_tile1", 4U, 4U, 4U * 13U, 13U * 4U, 13U * 4U * 256U},
     {"conv7_tile2", 8U, 4U, 8U * 13U, 13U * 4U, 13U * 4U * 256U},
     {"conv7_tile3", 12U, 1U, 12U * 13U, 13U * 1U, 13U * 1U * 256U},
 };
+#endif
 #endif
 
 #if ACCEL_CHAIN_CONV0_CONV8 || ACCEL_CHAIN_CONV0_CONV9
@@ -429,6 +468,11 @@ static const chain_tile_t conv8_tiles[4] = {
 #endif
 
 #if ACCEL_CHAIN_CONV0_CONV9
+#if ACCEL_RUNTIME_ABI_VERSION >= ACCEL_ABI_VERSION_V2
+static const chain_tile_t conv9_tiles[1] = {
+    {"conv9_fulltile", 0U, 13U, 0U, 13U * 13U, 13U * 13U * 24U},
+};
+#else
 static const chain_tile_t conv9_tiles[4] = {
     {"conv9_tile0", 0U, 4U, 0U * 13U, 13U * 4U, 13U * 4U * 24U},
     {"conv9_tile1", 4U, 4U, 4U * 13U, 13U * 4U, 13U * 4U * 24U},
@@ -436,12 +480,13 @@ static const chain_tile_t conv9_tiles[4] = {
     {"conv9_tile3", 12U, 1U, 12U * 13U, 13U * 1U, 13U * 1U * 24U},
 };
 #endif
+#endif
 
 #if ACCEL_CHAIN_CONV0_CONV4 || ACCEL_CHAIN_CONV0_CONV5 || ACCEL_CHAIN_CONV0_CONV6 || ACCEL_CHAIN_CONV0_CONV7 || ACCEL_CHAIN_CONV0_CONV8 || ACCEL_CHAIN_CONV0_CONV9
 static chain_layer_t conv0_layer = {
     "conv0_pool",
     416U, 416U, 416U, 416U,
-    3U, 16U, 3U * 9U, 2U, 1U,
+    3U, 16U, 3U * 9U, 2U, (16U + CHAIN_COUT_TILE - 1U) / CHAIN_COUT_TILE,
     0U, 18898U, 9U, 69U,
     1U, 2U,
     208U * 208U, 208U * 208U * 16U,
@@ -463,7 +508,7 @@ static chain_layer_t conv0_layer = {
 static chain_layer_t conv1_layer = {
     "conv1_pool",
     208U, 208U, 208U, 208U,
-    16U, 32U, 16U * 9U, 8U, 2U,
+    16U, 32U, 16U * 9U, 8U, (32U + CHAIN_COUT_TILE - 1U) / CHAIN_COUT_TILE,
     13U, 18333U, 7U, 101U,
     1U, 2U,
     104U * 104U, 104U * 104U * 32U,
@@ -481,7 +526,7 @@ static chain_layer_t conv1_layer = {
 static chain_layer_t conv2_layer = {
     "conv2_pool",
     104U, 104U, 104U, 104U,
-    32U, 64U, 32U * 9U, 16U, 4U,
+    32U, 64U, 32U * 9U, 16U, (64U + CHAIN_COUT_TILE - 1U) / CHAIN_COUT_TILE,
     36U, 21260U, 7U, 101U,
     1U, 2U,
     52U * 52U, 52U * 52U * 64U,
@@ -499,7 +544,7 @@ static chain_layer_t conv2_layer = {
 static chain_layer_t conv3_layer = {
     "conv3_pool",
     52U, 52U, 52U, 52U,
-    64U, 128U, 64U * 9U, 32U, 8U,
+    64U, 128U, 64U * 9U, 32U, (128U + CHAIN_COUT_TILE - 1U) / CHAIN_COUT_TILE,
     36U, 18055U, 7U, 75U,
     1U, 2U,
     26U * 26U, 26U * 26U * 128U,
@@ -524,7 +569,7 @@ static chain_layer_t conv3_layer = {
 static chain_layer_t conv4_layer = {
     "conv4_pool",
     26U, 26U, 26U, 26U,
-    128U, 256U, 128U * 9U, 64U, 16U,
+    128U, 256U, 128U * 9U, 64U, (256U + CHAIN_COUT_TILE - 1U) / CHAIN_COUT_TILE,
     16U, 18831U, 7U, 73U,
     1U, 2U,
     13U * 13U, 13U * 13U * 256U,
@@ -550,7 +595,7 @@ static chain_layer_t conv4_layer = {
 static chain_layer_t conv5_layer = {
     "conv5",
     13U, 13U, 13U, 13U,
-    256U, 512U, 256U * 9U, 128U, 32U,
+    256U, 512U, 256U * 9U, 128U, (512U + CHAIN_COUT_TILE - 1U) / CHAIN_COUT_TILE,
     15U, 16863U, 7U, 82U,
     0U, 0U,
     13U * 13U, 13U * 13U * 512U,
@@ -576,7 +621,7 @@ static chain_layer_t conv5_layer = {
 static chain_layer_t conv6_layer = {
     "conv6",
     13U, 13U, 13U, 13U,
-    512U, 1024U, 512U * 9U, 256U, 64U,
+    512U, 1024U, 512U * 9U, 256U, (1024U + CHAIN_COUT_TILE - 1U) / CHAIN_COUT_TILE,
     19U, 26505U, 9U, 85U,
     0U, 0U,
     13U * 13U, 13U * 13U * 1024U,
@@ -603,7 +648,8 @@ static chain_layer_t conv7_layer = {
     ACCEL_NATIVE_1X1 ? "conv7_native1x1" : "conv7_sparse3x3",
     13U, 13U, 13U, 13U,
     1024U, 256U, CONV7_HW_K_TOTAL,
-    (CONV7_HW_K_TOTAL + CHAIN_ROWS - 1U) / CHAIN_ROWS, 16U,
+    (CONV7_HW_K_TOTAL + CHAIN_ROWS - 1U) / CHAIN_ROWS,
+    (256U + CHAIN_COUT_TILE - 1U) / CHAIN_COUT_TILE,
     21U, 28217U, 7U, 69U,
     0U, 0U,
     13U * 13U, 13U * 13U * 256U,
@@ -614,7 +660,11 @@ static chain_layer_t conv7_layer = {
     conv7_golden_ofm_u8,
     feature_buffer1,
     conv7_tiles,
+#if ACCEL_RUNTIME_ABI_VERSION >= ACCEL_ABI_VERSION_V2
+    1U,
+#else
     4U,
+#endif
     0U,
     ACCEL_NATIVE_1X1,
     0U,
@@ -625,7 +675,7 @@ static chain_layer_t conv7_layer = {
 static chain_layer_t conv8_layer = {
     "conv8",
     13U, 13U, 13U, 13U,
-    256U, 512U, 256U * 9U, 128U, 32U,
+    256U, 512U, 256U * 9U, 128U, (512U + CHAIN_COUT_TILE - 1U) / CHAIN_COUT_TILE,
     13U, 22396U, 8U, 63U,
     0U, 0U,
     13U * 13U, 13U * 13U * 512U,
@@ -652,7 +702,8 @@ static chain_layer_t conv9_layer = {
     ACCEL_NATIVE_1X1 ? "conv9_detect_native1x1" : "conv9_detect_sparse3x3",
     13U, 13U, 13U, 13U,
     512U, 24U, CONV9_HW_K_TOTAL,
-    (CONV9_HW_K_TOTAL + CHAIN_ROWS - 1U) / CHAIN_ROWS, 2U,
+    (CONV9_HW_K_TOTAL + CHAIN_ROWS - 1U) / CHAIN_ROWS,
+    (24U + CHAIN_COUT_TILE - 1U) / CHAIN_COUT_TILE,
     11U, 23304U, 8U, 80U,
     0U, 0U,
     13U * 13U, 13U * 13U * 24U,
@@ -663,7 +714,11 @@ static chain_layer_t conv9_layer = {
     conv9_golden_ofm_u8,
     feature_buffer1,
     conv9_tiles,
+#if ACCEL_RUNTIME_ABI_VERSION >= ACCEL_ABI_VERSION_V2
+    1U,
+#else
     4U,
+#endif
     0U,
     ACCEL_NATIVE_1X1,
     0U,
@@ -1003,13 +1058,13 @@ static int dma_wait(uint32_t base, uint32_t sr_off, const char *name)
 {
     for (uint32_t i = 0U; i < 50000000U; ++i) {
         uint32_t sr = rd32(base, sr_off);
-        if ((sr & DMA_DMASR_IOC_IRQ) != 0U) {
-            wr32(base, sr_off, DMA_DMASR_IOC_IRQ);
-            return 0;
-        }
         if ((sr & DMA_DMASR_ERR_MASK) != 0U) {
             xil_printf("%s DMA error dmasr=0x%08lx\r\n", name, (unsigned long)sr);
             return -1;
+        }
+        if ((sr & DMA_DMASR_IOC_IRQ) != 0U) {
+            wr32(base, sr_off, DMA_DMASR_IOC_IRQ);
+            return 0;
         }
     }
     xil_printf("%s DMA timeout dmasr=0x%08lx\r\n", name, (unsigned long)rd32(base, sr_off));
@@ -1035,6 +1090,991 @@ static void dma_start_s2mm(uint32_t base, void *buf, uint32_t bytes)
     wr32(base, DMA_S2MM_DA_MSB, (uint32_t)(addr >> 32));
     wr32(base, DMA_S2MM_LENGTH, bytes);
 }
+
+#if ACCEL_RUNTIME_ABI_VERSION >= ACCEL_ABI_VERSION_V2
+/*
+ * ABI-v2 software candidate.
+ *
+ * The executable dispatch below is independent from the v1 tile service and
+ * byte-addressed OFM parser.  The public runtime-ready gate stays closed until
+ * matching bit/XSA/package artifacts pass simulation and board validation.
+ */
+#if ACCEL_BATCH_STREAM
+typedef struct {
+    const void *bias_data;
+    uint32_t bias_bytes;
+    uint32_t bias_packets;
+    uint32_t bias_last_packet;
+    const void *weight_data;
+    uint32_t weight_bytes;
+    uint32_t weight_packets;
+    uint32_t weight_last_packet;
+} v2_layer_param_streams_t;
+
+static int v2_validate_param_stream_contract(
+    const accel_single_scale_layer_schedule_t *schedule)
+{
+    uint64_t expected_bias_packets;
+    uint64_t expected_weight_packets;
+    uint64_t expected_bias_bytes;
+    uint64_t expected_weight_bytes;
+
+    if (schedule == 0 || schedule->plan == 0 ||
+        schedule->tile_count == 0U) {
+        return -1;
+    }
+    if (BATCH_BIAS_ADDR + BATCH_BIAS_CAPACITY != BATCH_WEIGHT_ADDR ||
+        BATCH_WEIGHT_ADDR + BATCH_WEIGHT_CAPACITY != BATCH_IFM0_ADDR ||
+        BATCH_IFM0_ADDR + BATCH_IFM_CAPACITY != BATCH_IFM1_ADDR ||
+        BATCH_IFM1_ADDR + BATCH_IFM_CAPACITY != BATCH_SCRATCH_END ||
+        (BATCH_IFM0_ADDR & 63U) != 0U) {
+        return -2;
+    }
+#if ACCEL_CHAIN_CONV0_CONV9_DDR
+    if (IMAGE_PACKAGE_ADDR + IMAGE_PACKAGE_HEADER_BYTES +
+            416U * 416U * 3U > BATCH_BIAS_ADDR) {
+        return -3;
+    }
+#endif
+
+    expected_bias_packets =
+        (uint64_t)schedule->tile_count * schedule->plan->cout_blocks;
+    expected_weight_packets =
+        expected_bias_packets * schedule->plan->k_passes;
+    expected_bias_bytes = expected_bias_packets *
+        ACCEL_SINGLE_SCALE_BIAS_PACKET_BYTES;
+    expected_weight_bytes = expected_weight_packets *
+        ACCEL_SINGLE_SCALE_WEIGHT_PACKET_BYTES;
+
+    if (expected_bias_packets != schedule->bias_stream_packets ||
+        expected_weight_packets != schedule->weight_stream_packets ||
+        expected_bias_bytes != schedule->bias_stream_bytes ||
+        expected_weight_bytes != schedule->weight_stream_bytes ||
+        schedule->bias_stream_packets == 0U ||
+        schedule->weight_stream_packets == 0U ||
+        schedule->bias_stream_bytes > BATCH_BIAS_CAPACITY ||
+        schedule->weight_stream_bytes > BATCH_IFM_CAPACITY) {
+        return -4;
+    }
+    return 0;
+}
+
+static int __attribute__((unused)) v2_prepare_layer_param_streams(
+    const chain_layer_t *layer,
+    const accel_single_scale_layer_schedule_t *schedule,
+    v2_layer_param_streams_t *streams)
+{
+    uint64_t *bias_dst = (uint64_t *)(UINTPTR)BATCH_BIAS_ADDR;
+    uint8_t *weight_dst = (uint8_t *)(UINTPTR)BATCH_IFM0_ADDR;
+    uint32_t bias_packet_bytes = ACCEL_SINGLE_SCALE_BIAS_PACKET_BYTES;
+    uint32_t tile_weight_bytes;
+    int rc;
+
+    if (layer == 0 || streams == 0) {
+        return -1;
+    }
+    rc = v2_validate_param_stream_contract(schedule);
+    if (rc != 0) {
+        xil_printf("%s ABI v2 parameter stream contract invalid rc=%d\r\n",
+                   layer->name, rc);
+        return -2;
+    }
+#if !ACCEL_PREPACKED_WEIGHT
+    /*
+     * The long stream must already be in COUT32 packet order.  Retaining this
+     * guard prevents a KxC tensor from being mistaken for an AXIS frame.
+     */
+    xil_printf("%s ABI v2 requires prepacked COUT32 weights\r\n", layer->name);
+    return -3;
+#else
+    for (uint32_t tile = 0U; tile < schedule->tile_count; ++tile) {
+        for (uint32_t cb = 0U; cb < schedule->plan->cout_blocks; ++cb) {
+            pack_bias_to(layer, cb * CHAIN_COUT_TILE, bias_dst);
+            bias_dst += bias_packet_bytes / sizeof(uint64_t);
+        }
+    }
+
+    tile_weight_bytes = schedule->plan->cout_blocks *
+        schedule->plan->k_passes *
+        ACCEL_SINGLE_SCALE_WEIGHT_PACKET_BYTES;
+    for (uint32_t tile = 0U; tile < schedule->tile_count; ++tile) {
+        memcpy(weight_dst + tile * tile_weight_bytes,
+               layer->weight_s8, tile_weight_bytes);
+    }
+
+    streams->bias_data = (const void *)(UINTPTR)BATCH_BIAS_ADDR;
+    streams->bias_bytes = schedule->bias_stream_bytes;
+    streams->bias_packets = schedule->bias_stream_packets;
+    streams->bias_last_packet = schedule->bias_stream_packets - 1U;
+    streams->weight_data = (const void *)(UINTPTR)BATCH_IFM0_ADDR;
+    streams->weight_bytes = schedule->weight_stream_bytes;
+    streams->weight_packets = schedule->weight_stream_packets;
+    streams->weight_last_packet = schedule->weight_stream_packets - 1U;
+
+    /*
+     * One simple-mode DMA transfer is used for each parameter stream.  AXI
+     * DMA therefore emits exactly one TLAST, on the final beat containing the
+     * packet indices recorded above; the loader's expected-packet registers
+     * use the same counts.
+     */
+    return 0;
+#endif
+}
+
+static void __attribute__((unused)) v2_start_layer_param_mm2s(
+    const v2_layer_param_streams_t *streams)
+{
+    dma_start_mm2s(
+        DMA_BIAS_BASE_ADDR, streams->bias_data, streams->bias_bytes);
+    dma_start_mm2s(
+        DMA_WEIGHT_BASE_ADDR, streams->weight_data, streams->weight_bytes);
+}
+
+static int __attribute__((unused)) v2_finish_layer_param_mm2s(void)
+{
+    uint32_t status;
+
+    if (dma_wait(DMA_BIAS_BASE_ADDR, DMA_MM2S_DMASR,
+                 "ABI v2 layer-long bias MM2S") != 0 ||
+        dma_wait(DMA_WEIGHT_BASE_ADDR, DMA_MM2S_DMASR,
+                 "ABI v2 layer-long weight MM2S") != 0) {
+        return -1;
+    }
+    status = rd32(GPIO_BASE_ADDR, GPIO2_DATA);
+    if ((status & (ST_BIAS_ERR | ST_WEIGHT_ERR)) != 0U) {
+        xil_printf("ABI v2 parameter TLAST/TKEEP error gpio2=0x%08lx\r\n",
+                   (unsigned long)status);
+        return -2;
+    }
+    return 0;
+}
+#else
+static int v2_validate_param_stream_contract(
+    const accel_single_scale_layer_schedule_t *schedule)
+{
+    (void)schedule;
+    return -1;
+}
+#endif
+
+static int v2_validate_plan_binding(
+    const chain_layer_t *layer,
+    const accel_single_scale_layer_schedule_t *schedule,
+    uint32_t layer_index)
+{
+    const accel_single_scale_layer_plan_t *plan;
+    uint32_t expect_kernel_1x1;
+
+    if (layer == 0 || schedule == 0 || schedule->plan == 0) {
+        return -1;
+    }
+    plan = schedule->plan;
+    expect_kernel_1x1 = (plan->kernel == 1U) ? 1U : 0U;
+
+    if (plan != &accel_single_scale_plan[layer_index] ||
+        layer->fm_w != plan->fm_w || layer->fm_h != plan->fm_h ||
+        layer->ofm_w != schedule->conv_w ||
+        layer->ofm_h != schedule->conv_h ||
+        layer->cin != plan->cin || layer->cout_total != plan->cout_total ||
+        layer->k_total != plan->k_total ||
+        layer->k_passes != plan->k_passes ||
+        layer->cout_blocks != plan->cout_blocks ||
+        layer->input_zero_point != plan->input_zero_point ||
+        layer->pool_enable != plan->pool_enable ||
+        layer->pool_stride != plan->pool_stride ||
+        layer->total_output_pixels != schedule->expected_output_pixels ||
+        layer->total_expected_ofm_bytes != schedule->output_bytes ||
+        ((layer->kernel_1x1 != 0U) ? 1U : 0U) != expect_kernel_1x1 ||
+        layer->ifm_u8 == 0 || layer->weight_s8 == 0 ||
+        layer->bias_i32 == 0 || layer->activation_lut_u8 == 0 ||
+        layer->ofm_u8 == 0) {
+        xil_printf("ABI v2 plan binding mismatch layer=%lu runtime=%s plan=%s\r\n",
+                   (unsigned long)layer_index, layer->name, plan->name);
+        return -2;
+    }
+    return 0;
+}
+
+static int v2_build_layer_contracts(
+    accel_single_scale_layer_schedule_t *schedule,
+    accel_layer_desc_v2_t *descriptor,
+    uint32_t count,
+    accel_single_scale_schedule_summary_t *summary)
+{
+    uint32_t chain_count =
+        (uint32_t)(sizeof(chain_layers) / sizeof(chain_layers[0]));
+    int rc;
+
+    if (schedule == 0 || descriptor == 0 || summary == 0 ||
+        count < ACCEL_SINGLE_SCALE_LAYER_COUNT ||
+        chain_count != ACCEL_SINGLE_SCALE_LAYER_COUNT) {
+        return -1;
+    }
+
+    rc = accel_single_scale_dry_run(schedule, count, summary);
+    if (rc != 0) {
+        xil_printf("ABI v2 schedule dry-run failed rc=%d\r\n", rc);
+        return rc;
+    }
+
+    for (uint32_t i = 0U; i < ACCEL_SINGLE_SCALE_LAYER_COUNT; ++i) {
+        rc = v2_validate_plan_binding(chain_layers[i], &schedule[i], i);
+        if (rc != 0) {
+            return -100 - (int)i;
+        }
+        if (chain_layers[i]->ifm_u8 == chain_layers[i]->ofm_u8) {
+            xil_printf("ABI v2 in-place feature buffer rejected layer=%lu\r\n",
+                       (unsigned long)i);
+            return -120 - (int)i;
+        }
+        if (i + 1U < ACCEL_SINGLE_SCALE_LAYER_COUNT &&
+            (chain_layers[i]->ofm_u8 != chain_layers[i + 1U]->ifm_u8 ||
+             schedule[i].output_bytes != schedule[i + 1U].input_bytes)) {
+            xil_printf(
+                "ABI v2 packed HWC chain mismatch layer=%lu next=%lu "
+                "out=%lu in=%lu\r\n",
+                (unsigned long)i, (unsigned long)(i + 1U),
+                (unsigned long)schedule[i].output_bytes,
+                (unsigned long)schedule[i + 1U].input_bytes);
+            return -125 - (int)i;
+        }
+        rc = v2_validate_param_stream_contract(&schedule[i]);
+        if (rc != 0) {
+            xil_printf(
+                "ABI v2 layer-long parameter capacity failed layer=%lu "
+                "bias=%lu weight=%lu rc=%d\r\n",
+                (unsigned long)i,
+                (unsigned long)schedule[i].bias_stream_bytes,
+                (unsigned long)schedule[i].weight_stream_bytes, rc);
+            return -150 - (int)i;
+        }
+        rc = accel_single_scale_make_layer_desc_v2(
+            &schedule[i], &descriptor[i]);
+        if (rc != 0) {
+            xil_printf("ABI v2 descriptor build failed layer=%lu rc=%d\r\n",
+                       (unsigned long)i, rc);
+            return -200 - (int)i;
+        }
+    }
+
+    return 0;
+}
+
+static int __attribute__((unused)) v2_program_layer_registers(
+    const chain_layer_t *layer,
+    const accel_single_scale_layer_schedule_t *schedule,
+    const accel_layer_desc_v2_t *descriptor)
+{
+    uint32_t descriptor_word;
+    uint32_t bias_packets;
+    uint32_t weight_packets;
+    uint32_t conv_word;
+
+    if (layer == 0 || schedule == 0 || descriptor == 0 ||
+        schedule->plan == 0 ||
+        descriptor->abi_version != ACCEL_ABI_VERSION_V2) {
+        return -1;
+    }
+    if ((rd32(ACCEL_BASE_ADDR, ACCEL_CTRL) & 0x1U) != 0U) {
+        xil_printf("%s ABI v2 accelerator busy before config\r\n", layer->name);
+        return -2;
+    }
+
+    bias_packets = schedule->bias_stream_packets;
+    weight_packets = schedule->weight_stream_packets;
+    descriptor_word =
+        (descriptor->layer_last ? ACCEL_LAYER_DESC_LAST_MASK : 0U) |
+        (descriptor->tile_h_max & ACCEL_LAYER_DESC_TILE_H_MAX_MASK);
+    conv_word = ((descriptor->flags & ACCEL_LAYER_DESC_V2_FLAG_KERNEL_1X1) ?
+                 ACCEL_CONV_KERNEL_1X1 : 0U) |
+                ((descriptor->conv_pad & 0xffU) << 8) |
+                (descriptor->conv_stride & 0xffU);
+
+    wr32(ACCEL_BASE_ADDR, ACCEL_FM_SIZE,
+         (descriptor->fm_w << 16) | descriptor->fm_h);
+    wr32(ACCEL_BASE_ADDR, ACCEL_OFM_SIZE,
+         (descriptor->ofm_w << 16) | descriptor->ofm_h);
+    wr32(ACCEL_BASE_ADDR, ACCEL_CONV, conv_word);
+    wr32(ACCEL_BASE_ADDR, ACCEL_K_TOTAL, descriptor->k_total);
+    wr32(ACCEL_BASE_ADDR, ACCEL_COUT_TOTAL, descriptor->cout_total);
+    wr32(ACCEL_BASE_ADDR, ACCEL_NUM_PIXELS, schedule->max_tile_pixels);
+    wr32(ACCEL_BASE_ADDR, ACCEL_ACT_CFG, descriptor->act_mode);
+    wr32(ACCEL_BASE_ADDR, ACCEL_TILE_ROWS, descriptor->tile_h_max << 16);
+    wr32(ACCEL_BASE_ADDR, ACCEL_PIXEL_BASE, 0U);
+    wr32(ACCEL_BASE_ADDR, ACCEL_IFM_ZP, descriptor->input_zero_point);
+    wr32(ACCEL_BASE_ADDR, ACCEL_POOL_CFG,
+         (descriptor->pool_stride << 2) | descriptor->pool_enable);
+    wr32(ACCEL_BASE_ADDR, ACCEL_EXPECTED_BYTES, schedule->output_bytes);
+    wr32(ACCEL_BASE_ADDR, ACCEL_STREAM_CFG, ACCEL_V2_STREAM_CFG);
+    wr32(ACCEL_BASE_ADDR, ACCEL_STREAM_BIAS_PACKETS, bias_packets);
+    wr32(ACCEL_BASE_ADDR, ACCEL_STREAM_WEIGHT_PACKETS, weight_packets);
+    /* One physical raw-HWC AXIS frame is accepted for the complete layer. */
+    wr32(ACCEL_BASE_ADDR, ACCEL_STREAM_IFM_PACKETS, 1U);
+    wr32(ACCEL_BASE_ADDR, ACCEL_TAIL_CONFIG, 0U);
+    wr32(ACCEL_BASE_ADDR, ACCEL_PASSTRACE_SELECT, 0U);
+    wr32(ACCEL_BASE_ADDR, ACCEL_COLTRACE_CTRL, 0U);
+    wr32(ACCEL_BASE_ADDR, ACCEL_LAYER_DESC_REG, descriptor_word);
+    wr32(ACCEL_BASE_ADDR, ACCEL_IFM_TOTAL_BYTES_REG,
+         descriptor->ifm_total_bytes);
+    wr32(ACCEL_BASE_ADDR, ACCEL_OFM_TOTAL_BYTES_REG,
+         descriptor->ofm_total_bytes);
+
+    if (rd32(ACCEL_BASE_ADDR, ACCEL_LAYER_DESC_REG) != descriptor_word ||
+        rd32(ACCEL_BASE_ADDR, ACCEL_IFM_TOTAL_BYTES_REG) !=
+            descriptor->ifm_total_bytes ||
+        rd32(ACCEL_BASE_ADDR, ACCEL_OFM_TOTAL_BYTES_REG) !=
+            descriptor->ofm_total_bytes) {
+        xil_printf("%s ABI v2 descriptor register readback mismatch\r\n",
+                   layer->name);
+        return -3;
+    }
+    if (program_quant_tile(layer) != 0) {
+        return -4;
+    }
+    return program_activation_lut(layer);
+}
+
+static void __attribute__((unused)) v2_start_packed_ofm_s2mm(
+    const chain_layer_t *layer,
+    const accel_single_scale_layer_schedule_t *schedule)
+{
+    dma_start_s2mm(
+        DMA_OFM_BASE_ADDR, layer->ofm_u8, schedule->output_bytes);
+}
+
+static int __attribute__((unused)) v2_validate_layer_counters(
+    const chain_layer_t *layer,
+    const accel_single_scale_layer_schedule_t *schedule)
+{
+    uint32_t expected_ifm_beats =
+        accel_ceil_div_u32(schedule->input_bytes, OFM_AXIS_BEAT_BYTES);
+    uint32_t expected_ofm_beats =
+        accel_ceil_div_u32(schedule->output_bytes, OFM_AXIS_BEAT_BYTES);
+    uint32_t expected_packets =
+        schedule->expected_output_pixels * schedule->plan->cout_blocks;
+    uint32_t expected_bias_packets = schedule->bias_stream_packets;
+    uint32_t expected_weight_packets = schedule->weight_stream_packets;
+    uint32_t expected_compute_fire =
+        schedule->conv_w * schedule->conv_h *
+        schedule->plan->cout_blocks * schedule->plan->k_passes;
+    uint32_t datapath_errors =
+        rd32(ACCEL_BASE_ADDR, ACCEL_DATAPATH_ERRORS_REG);
+    uint32_t packed_bytes =
+        rd32(ACCEL_BASE_ADDR, ACCEL_PACKED_OFM_BYTES_REG);
+    uint32_t ofm_beats =
+        rd32(ACCEL_BASE_ADDR, ACCEL_OFM_AXIS_BEATS_REG);
+    uint32_t ifm_beats = rd32(ACCEL_BASE_ADDR, ACCEL_VECTOR_BEATS);
+    uint32_t bias_packets =
+        rd32(ACCEL_BASE_ADDR, ACCEL_STREAM_BIAS_DONE);
+    uint32_t weight_packets =
+        rd32(ACCEL_BASE_ADDR, ACCEL_STREAM_WEIGHT_DONE);
+    uint32_t compute_fire = rd32(ACCEL_BASE_ADDR, ACCEL_COMP_FIRE);
+    uint32_t core_packets = rd32(ACCEL_BASE_ADDR, ACCEL_DBG_CORE_WR);
+    uint32_t tlasts = rd32(ACCEL_BASE_ADDR, ACCEL_DBG_TLASTS);
+    uint32_t last_beat = rd32(ACCEL_BASE_ADDR, ACCEL_DBG_LAST_END);
+    uint32_t prefetch_miss =
+        rd32(ACCEL_BASE_ADDR, ACCEL_PREFETCH_MISS);
+    uint32_t psum_overlap_underflow =
+        rd32(ACCEL_BASE_ADDR, ACCEL_PSUMOVL_UNDERFLOW);
+
+    if (datapath_errors != 0U || packed_bytes != schedule->output_bytes ||
+        ofm_beats != expected_ofm_beats || ifm_beats != expected_ifm_beats ||
+        bias_packets != expected_bias_packets ||
+        weight_packets != expected_weight_packets ||
+        compute_fire != expected_compute_fire ||
+        core_packets != expected_packets || tlasts != 1U ||
+        last_beat != expected_ofm_beats || prefetch_miss != 0U ||
+        psum_overlap_underflow != 0U) {
+        xil_printf(
+            "%s ABI v2 counter mismatch err=0x%08lx ifm_beats=%lu/%lu "
+            "ofm_bytes=%lu/%lu ofm_beats=%lu/%lu b=%lu/%lu w=%lu/%lu "
+            "fire=%lu/%lu packets=%lu/%lu tlast=%lu last=%lu "
+            "prefetch_miss=%lu psum_underflow=%lu\r\n",
+            layer->name, (unsigned long)datapath_errors,
+            (unsigned long)ifm_beats, (unsigned long)expected_ifm_beats,
+            (unsigned long)packed_bytes, (unsigned long)schedule->output_bytes,
+            (unsigned long)ofm_beats, (unsigned long)expected_ofm_beats,
+            (unsigned long)bias_packets,
+            (unsigned long)expected_bias_packets,
+            (unsigned long)weight_packets,
+            (unsigned long)expected_weight_packets,
+            (unsigned long)compute_fire,
+            (unsigned long)expected_compute_fire,
+            (unsigned long)core_packets, (unsigned long)expected_packets,
+            (unsigned long)tlasts, (unsigned long)last_beat,
+            (unsigned long)prefetch_miss,
+            (unsigned long)psum_overlap_underflow);
+        return -1;
+    }
+    return 0;
+}
+
+static int __attribute__((unused)) v2_finish_packed_ofm_s2mm(
+    const chain_layer_t *layer,
+    const accel_single_scale_layer_schedule_t *schedule)
+{
+    if (dma_wait(DMA_OFM_BASE_ADDR, DMA_S2MM_DMASR,
+                 "ABI v2 packed OFM S2MM") != 0) {
+        return -1;
+    }
+    Xil_DCacheInvalidateRange(
+        (UINTPTR)layer->ofm_u8, schedule->output_bytes);
+    return v2_validate_layer_counters(layer, schedule);
+}
+
+#if ACCEL_BATCH_STREAM
+typedef struct {
+    const chain_layer_t *layer;
+    const accel_single_scale_layer_schedule_t *schedule;
+    const accel_layer_desc_v2_t *descriptor;
+} v2_program_cookie_t;
+
+typedef struct {
+    uint64_t busy;
+    uint64_t feeder;
+    uint64_t context_psum_gap;
+    uint64_t drain_ofm;
+    uint64_t bias_weight;
+    uint64_t unclassified;
+    uint64_t contexts;
+    uint64_t compute_fire;
+    uint64_t ifm_bytes;
+    uint64_t ofm_bytes;
+    uint64_t ofm_beats;
+    uint32_t bias_dma_starts;
+    uint32_t weight_dma_starts;
+    uint32_t ifm_dma_starts;
+    uint32_t ofm_dma_starts;
+} v2_release_totals_t;
+
+static uint32_t v2_runtime_read32(
+    void *opaque, uint32_t base, uint32_t offset)
+{
+    (void)opaque;
+    return rd32(base, offset);
+}
+
+static void v2_runtime_write32(
+    void *opaque, uint32_t base, uint32_t offset, uint32_t value)
+{
+    (void)opaque;
+    wr32(base, offset, value);
+}
+
+static void v2_runtime_cache_flush(
+    void *opaque, uintptr_t address, uint32_t bytes)
+{
+    (void)opaque;
+    Xil_DCacheFlushRange((UINTPTR)address, bytes);
+}
+
+static void v2_runtime_cache_invalidate(
+    void *opaque, uintptr_t address, uint32_t bytes)
+{
+    (void)opaque;
+    Xil_DCacheInvalidateRange((UINTPTR)address, bytes);
+}
+
+static int v2_runtime_program_layer(void *opaque)
+{
+    const v2_program_cookie_t *cookie = (const v2_program_cookie_t *)opaque;
+    return v2_program_layer_registers(
+        cookie->layer, cookie->schedule, cookie->descriptor);
+}
+
+static accel_v2_runtime_t v2_make_runtime(void)
+{
+    accel_v2_runtime_t runtime;
+    memset(&runtime, 0, sizeof(runtime));
+    runtime.read32 = v2_runtime_read32;
+    runtime.write32 = v2_runtime_write32;
+    runtime.cache_flush = v2_runtime_cache_flush;
+    runtime.cache_invalidate = v2_runtime_cache_invalidate;
+    runtime.accel_base = ACCEL_BASE_ADDR;
+    runtime.dma_base[ACCEL_V2_DMA_BIAS] = DMA_BIAS_BASE_ADDR;
+    runtime.dma_base[ACCEL_V2_DMA_WEIGHT] = DMA_WEIGHT_BASE_ADDR;
+    runtime.dma_base[ACCEL_V2_DMA_IFM] = DMA_IFM_BASE_ADDR;
+    runtime.dma_base[ACCEL_V2_DMA_OFM] = DMA_OFM_BASE_ADDR;
+    runtime.poll_limit = ACCEL_V2_DEFAULT_POLL_LIMIT;
+    return runtime;
+}
+
+static int v2_stream_cfg_is_staged_candidate(uint32_t value)
+{
+    return value == 0x2bU || value == 0x3bU ||
+        value == 0x3fU || value == 0xbfU;
+}
+
+static int __attribute__((unused)) v2_long_stream_dispatch_scaffold(
+    const accel_single_scale_layer_schedule_t *schedule,
+    const accel_layer_desc_v2_t *descriptor)
+{
+    accel_v2_runtime_t runtime = v2_make_runtime();
+    v2_release_totals_t totals = {0};
+    uint32_t bias_package_end = 0U;
+    uint32_t weight_package_end = 0U;
+    XTime inference_begin = 0U;
+    XTime inference_end = 0U;
+    XTime final_cache_begin = 0U;
+    XTime final_cache_end = 0U;
+    uint64_t total_us;
+    uint64_t pl_busy_us;
+    uint64_t unhidden_us;
+    uint64_t final_cache_us;
+    uint32_t clock_hz;
+    int rc;
+
+    if (schedule == 0 || descriptor == 0 ||
+        !v2_stream_cfg_is_staged_candidate(ACCEL_V2_STREAM_CFG) ||
+        (ACCEL_V2_STREAM_CFG &
+         ACCEL_STREAM_CFG_CONTINUOUS_PSUM) == 0U ||
+        (ACCEL_V2_STREAM_CFG & ACCEL_STREAM_CFG_COLUMN_PSUM) != 0U) {
+        xil_printf(
+            "FAIL: ABI v2 FIFO256 runtime requires continuous PSUM "
+            "STREAM_CFG=0x2B/0x3B/0x3F/0xBF\r\n");
+        return ACCEL_V2_RUN_ERR_ARGUMENT;
+    }
+    clock_hz = rd32(ACCEL_BASE_ADDR, ACCEL_CLOCK_HZ);
+    if (clock_hz != ACCEL_V2_EXPECTED_CLOCK_HZ) {
+        xil_printf(
+            "FAIL: ABI v2 CLOCK_HZ hardware=%lu manifest=%lu\r\n",
+            (unsigned long)clock_hz,
+            (unsigned long)ACCEL_V2_EXPECTED_CLOCK_HZ);
+        return ACCEL_V2_RUN_ERR_CONFIG;
+    }
+    /*
+     * The two package images are generated offline.  Their payloads are
+     * already ordered by {layer,tile,cout_block,k_pass}; dispatch performs no
+     * parameter packing or memcpy in the inference timing interval.
+     */
+    if (ACCEL_V2_PARAMETER_PACKAGE_ALIGNMENT != 64U ||
+        ACCEL_V2_PARAMETER_LAYER_COUNT != ACCEL_SINGLE_SCALE_LAYER_COUNT ||
+        ACCEL_V2_BIAS_PACKAGE_BYTES > BATCH_BIAS_CAPACITY ||
+        ACCEL_V2_WEIGHT_PACKAGE_BYTES > BATCH_IFM_CAPACITY) {
+        xil_printf("FAIL: ABI v2 offline parameter packages exceed DDR windows\r\n");
+        return ACCEL_V2_RUN_ERR_LENGTH;
+    }
+    rc = accel_v2_runtime_recover(&runtime);
+    if (rc != ACCEL_V2_RUN_OK) {
+        xil_printf("FAIL: ABI v2 startup recovery rc=%d\r\n", rc);
+        return rc;
+    }
+#if ACCEL_PERF_ONLY
+    /*
+     * The release parameter images and initial input are resident in DDR
+     * before the timed interval.  Clean/invalidate every DMA-owned region
+     * once here, then avoid repeating cache-line maintenance for the same
+     * immutable parameter subranges on every layer dispatch.  Intermediate
+     * OFM invalidation remains below so the ping-pong buffers stay safe when
+     * ownership passes from S2MM to the following MM2S transfer.
+     */
+    Xil_DCacheFlushRange(
+        (UINTPTR)BATCH_BIAS_ADDR, ACCEL_V2_BIAS_PACKAGE_BYTES);
+    Xil_DCacheFlushRange(
+        (UINTPTR)BATCH_IFM0_ADDR, ACCEL_V2_WEIGHT_PACKAGE_BYTES);
+    Xil_DCacheFlushRange(
+        (UINTPTR)chain_layers[0]->ifm_u8, schedule[0].input_bytes);
+    Xil_DCacheFlushRange(
+        (UINTPTR)feature_buffer0, (uint32_t)sizeof(feature_buffer0));
+    Xil_DCacheFlushRange(
+        (UINTPTR)feature_buffer1, (uint32_t)sizeof(feature_buffer1));
+    runtime.cache_flush = NULL;
+#endif
+    /*
+     * Intermediate OFM invalidations are required before the next layer and
+     * therefore stay inside the inference interval.  The final invalidation
+     * is issued explicitly after recording the Conv9 S2MM completion time.
+     */
+    runtime.cache_invalidate = NULL;
+    XTime_GetTime(&inference_begin);
+
+    for (uint32_t i = 0U; i < ACCEL_SINGLE_SCALE_LAYER_COUNT; ++i) {
+        const chain_layer_t *layer = chain_layers[i];
+        const accel_v2_parameter_layer_t *parameter =
+            &accel_v2_parameter_layers[i];
+        accel_v2_layer_transfer_t transfer;
+        accel_v2_layer_report_t report = {0};
+        v2_program_cookie_t program_cookie;
+
+        if ((parameter->bias_offset & 63U) != 0U ||
+            (parameter->weight_offset & 63U) != 0U ||
+            parameter->bias_offset > ACCEL_V2_BIAS_PACKAGE_BYTES ||
+            parameter->bias_bytes >
+                ACCEL_V2_BIAS_PACKAGE_BYTES - parameter->bias_offset ||
+            parameter->weight_offset > ACCEL_V2_WEIGHT_PACKAGE_BYTES ||
+            parameter->weight_bytes >
+                ACCEL_V2_WEIGHT_PACKAGE_BYTES - parameter->weight_offset) {
+            xil_printf("FAIL: ABI v2 parameter package alignment layer=%lu\r\n",
+                       (unsigned long)i);
+            return ACCEL_V2_RUN_ERR_ARGUMENT;
+        }
+        if (parameter->bias_bytes != schedule[i].bias_stream_bytes ||
+            parameter->weight_bytes != schedule[i].weight_stream_bytes ||
+            parameter->bias_packets != schedule[i].bias_stream_packets ||
+            parameter->weight_packets != schedule[i].weight_stream_packets) {
+            xil_printf(
+                "FAIL: ABI v2 parameter manifest/schedule mismatch layer=%lu\r\n",
+                (unsigned long)i);
+            return ACCEL_V2_RUN_ERR_LENGTH;
+        }
+        program_cookie.layer = layer;
+        program_cookie.schedule = &schedule[i];
+        program_cookie.descriptor = &descriptor[i];
+        memset(&transfer, 0, sizeof(transfer));
+        transfer.bias_data =
+            (const void *)(UINTPTR)(BATCH_BIAS_ADDR + parameter->bias_offset);
+        transfer.bias_bytes = parameter->bias_bytes;
+        transfer.weight_data =
+            (const void *)(UINTPTR)(BATCH_IFM0_ADDR + parameter->weight_offset);
+        transfer.weight_bytes = parameter->weight_bytes;
+        transfer.ifm_data = layer->ifm_u8;
+        transfer.ifm_bytes = schedule[i].input_bytes;
+        transfer.ofm_data = layer->ofm_u8;
+        transfer.ofm_bytes = schedule[i].output_bytes;
+        transfer.expected_contexts = schedule[i].weight_stream_packets;
+        transfer.program_layer = v2_runtime_program_layer;
+        transfer.program_opaque = &program_cookie;
+
+        rc = accel_v2_dispatch_layer(&runtime, &transfer, &report);
+        if (rc != ACCEL_V2_RUN_OK) {
+            xil_printf(
+                "FAIL: %s ABI v2 dispatch rc=%d recovery=%d dma=%u "
+                "complete=0x%02lx poll=%lu errors=0x%08lx\r\n",
+                layer->name, rc, report.recovery_result,
+                (unsigned)report.failed_dma,
+                (unsigned long)report.dma_complete_mask,
+                (unsigned long)report.poll_count,
+                (unsigned long)report.datapath_errors);
+            return rc;
+        }
+        if (i + 1U == ACCEL_SINGLE_SCALE_LAYER_COUNT) {
+            XTime_GetTime(&inference_end);
+            XTime_GetTime(&final_cache_begin);
+        }
+        Xil_DCacheInvalidateRange(
+            (UINTPTR)transfer.ofm_data, transfer.ofm_bytes);
+        if (i + 1U == ACCEL_SINGLE_SCALE_LAYER_COUNT) {
+            XTime_GetTime(&final_cache_end);
+        }
+        rc = v2_validate_layer_counters(layer, &schedule[i]);
+        if (rc != 0) {
+            (void)accel_v2_runtime_recover(&runtime);
+            return rc;
+        }
+#if !ACCEL_PERF_ONLY
+        if (compare_layer_ofm(layer) != 0) {
+            (void)accel_v2_runtime_recover(&runtime);
+            return ACCEL_V2_RUN_ERR_DATAPATH;
+        }
+#endif
+        totals.busy += rd32(ACCEL_BASE_ADDR, ACCEL_PERF_BUSY);
+        totals.feeder += rd32(ACCEL_BASE_ADDR, ACCEL_STAGE_FEEDER);
+        totals.context_psum_gap +=
+            (uint64_t)report.delta.context_gap +
+            (uint64_t)report.delta.psum_credit_stall;
+        totals.drain_ofm +=
+            (uint64_t)rd32(ACCEL_BASE_ADDR, ACCEL_STAGE_DRAIN) +
+            (uint64_t)rd32(ACCEL_BASE_ADDR, ACCEL_STAGE_OFM_POST);
+        totals.bias_weight +=
+            (uint64_t)rd32(ACCEL_BASE_ADDR, ACCEL_STAGE_BIAS) +
+            (uint64_t)rd32(ACCEL_BASE_ADDR, ACCEL_STAGE_WEIGHT);
+        totals.unclassified +=
+            rd32(ACCEL_BASE_ADDR, ACCEL_PERF_UNCLASSIFIED);
+        totals.contexts += report.delta.collector_done;
+        totals.compute_fire += rd32(ACCEL_BASE_ADDR, ACCEL_COMP_FIRE);
+        totals.ifm_bytes += schedule[i].input_bytes;
+        totals.ofm_bytes += schedule[i].output_bytes;
+        totals.ofm_beats +=
+            accel_ceil_div_u32(schedule[i].output_bytes,
+                               OFM_AXIS_BEAT_BYTES);
+        ++totals.bias_dma_starts;
+        ++totals.weight_dma_starts;
+        ++totals.ifm_dma_starts;
+        ++totals.ofm_dma_starts;
+        trace_printf(
+            "%s ABI v2 contexts=%lu gap=%lu ifm_owner=%lu "
+            "weight_owner=%lu psum_credit=%lu polls=%lu\r\n",
+            layer->name,
+            (unsigned long)report.delta.collector_done,
+            (unsigned long)report.delta.context_gap,
+            (unsigned long)report.delta.ifm_owner_stall,
+            (unsigned long)report.delta.weight_owner_stall,
+            (unsigned long)report.delta.psum_credit_stall,
+            (unsigned long)report.poll_count);
+        bias_package_end = parameter->bias_offset + parameter->bias_bytes;
+        weight_package_end = parameter->weight_offset + parameter->weight_bytes;
+    }
+
+    if (bias_package_end != ACCEL_V2_BIAS_PACKAGE_BYTES ||
+        weight_package_end != ACCEL_V2_WEIGHT_PACKAGE_BYTES ||
+        ACCEL_V2_BIAS_PACKAGE_BYTES !=
+            ACCEL_SINGLE_SCALE_TOTAL_BIAS_STREAM_BYTES ||
+        ACCEL_V2_WEIGHT_PACKAGE_BYTES !=
+            ACCEL_SINGLE_SCALE_TOTAL_WEIGHT_STREAM_BYTES) {
+        xil_printf(
+            "FAIL: ABI v2 package totals bias=%lu/%lu weight=%lu/%lu\r\n",
+            (unsigned long)bias_package_end,
+            (unsigned long)ACCEL_V2_BIAS_PACKAGE_BYTES,
+            (unsigned long)weight_package_end,
+            (unsigned long)ACCEL_V2_WEIGHT_PACKAGE_BYTES);
+        return ACCEL_V2_RUN_ERR_LENGTH;
+    }
+    if (totals.contexts != ACCEL_SINGLE_SCALE_TOTAL_WEIGHT_PACKETS ||
+        totals.compute_fire != ACCEL_SINGLE_SCALE_TOTAL_COMPUTE_FIRE ||
+        totals.ifm_bytes != ACCEL_SINGLE_SCALE_TOTAL_IFM_BYTES ||
+        totals.ofm_bytes != ACCEL_SINGLE_SCALE_TOTAL_OFM_BYTES ||
+        totals.ofm_beats != ACCEL_SINGLE_SCALE_TOTAL_OFM_BEATS ||
+        totals.bias_dma_starts != ACCEL_SINGLE_SCALE_LAYER_COUNT ||
+        totals.weight_dma_starts != ACCEL_SINGLE_SCALE_LAYER_COUNT ||
+        totals.ifm_dma_starts != ACCEL_SINGLE_SCALE_LAYER_COUNT ||
+        totals.ofm_dma_starts != ACCEL_SINGLE_SCALE_LAYER_COUNT) {
+        xil_printf("FAIL: ABI v2 aggregate traffic/lifecycle mismatch\r\n");
+        return ACCEL_V2_RUN_ERR_CONTEXT_COUNTER;
+    }
+    if (ACCEL_V2_STREAM_CFG == 0xbfU &&
+        (totals.busy > 7000000ULL || totals.feeder > 2000000ULL ||
+         totals.context_psum_gap > 300000ULL ||
+         totals.drain_ofm > 600000ULL ||
+         totals.bias_weight > 200000ULL ||
+         totals.unclassified > 10000ULL)) {
+        xil_printf("FAIL: ABI v2 aggregate performance gate\r\n");
+        return ACCEL_V2_RUN_ERR_CONTEXT_COUNTER;
+    }
+    total_us = ticks_to_us(inference_end - inference_begin);
+    final_cache_us = ticks_to_us(final_cache_end - final_cache_begin);
+#if ACCEL_V2_SOAK_SECONDS != 0U
+    (void)final_cache_us;
+#endif
+    pl_busy_us = pl_cycles_to_us_ceil(totals.busy, clock_hz);
+    unhidden_us = total_us > pl_busy_us ? total_us - pl_busy_us : 0U;
+#if ACCEL_PERF_ONLY && ACCEL_V2_BENCHMARK_RUNS == 0
+    if (ACCEL_V2_STREAM_CFG == 0xbfU &&
+        (total_us >= 100000ULL || unhidden_us > 15000ULL)) {
+        xil_printf("FAIL: ABI v2 wall-clock performance gate\r\n");
+        return ACCEL_V2_RUN_ERR_CONTEXT_COUNTER;
+    }
+#endif
+#if ACCEL_V2_SOAK_SECONDS == 0U
+    xil_printf(
+        "ABI_V2_TOTAL busy=%llu feeder=%llu context_psum_gap=%llu "
+        "drain_ofm=%llu bias_weight=%llu unclassified=%llu "
+        "contexts=%llu compute_fire=%llu ifm_bytes=%llu ofm_bytes=%llu "
+        "ofm_beats=%llu dma_bias=%lu dma_weight=%lu dma_ifm=%lu dma_ofm=%lu "
+        "errors=0\r\n",
+        (unsigned long long)totals.busy,
+        (unsigned long long)totals.feeder,
+        (unsigned long long)totals.context_psum_gap,
+        (unsigned long long)totals.drain_ofm,
+        (unsigned long long)totals.bias_weight,
+        (unsigned long long)totals.unclassified,
+        (unsigned long long)totals.contexts,
+        (unsigned long long)totals.compute_fire,
+        (unsigned long long)totals.ifm_bytes,
+        (unsigned long long)totals.ofm_bytes,
+        (unsigned long long)totals.ofm_beats,
+        (unsigned long)totals.bias_dma_starts,
+        (unsigned long)totals.weight_dma_starts,
+        (unsigned long)totals.ifm_dma_starts,
+        (unsigned long)totals.ofm_dma_starts);
+    xil_printf(
+        "ABI_V2_TIMING mode=%s clock_hz=%lu total_us=%llu pl_busy_us=%llu "
+        "unhidden_us=%llu final_cache_us=%llu ifm_pack_us=0 "
+        "ofm_parse_us=0\r\n",
+#if ACCEL_PERF_ONLY
+        "performance",
+#else
+        "functional",
+#endif
+        (unsigned long)clock_hz,
+        (unsigned long long)total_us,
+        (unsigned long long)pl_busy_us,
+        (unsigned long long)unhidden_us,
+        (unsigned long long)final_cache_us);
+    xil_printf("PASS: ABI v2 ten-layer four-DMA dispatch complete\r\n");
+#endif
+    return ACCEL_V2_RUN_OK;
+}
+#else
+static int __attribute__((unused)) v2_long_stream_dispatch_scaffold(
+    const accel_single_scale_layer_schedule_t *schedule,
+    const accel_layer_desc_v2_t *descriptor)
+{
+    (void)schedule;
+    (void)descriptor;
+    xil_printf("FAIL: ABI v2 layer-long runtime requires batch DMA support\r\n");
+    return ACCEL_ABI_ERR_RUNTIME_NOT_READY;
+}
+#endif
+#endif
+
+#if ACCEL_RUNTIME_ABI_VERSION >= ACCEL_ABI_VERSION_V2 && \
+    ACCEL_V2_SOAK_SECONDS != 0U
+typedef struct {
+    XSysMonPsu instance;
+    int32_t max_temp_millic;
+} v2_soak_thermal_t;
+
+static int32_t v2_soak_temp_millic(uint16_t raw)
+{
+    float temp_c = XSysMonPsu_RawToTemperature_OnChip(raw);
+    return (int32_t)(temp_c * 1000.0f +
+                     (temp_c >= 0.0f ? 0.5f : -0.5f));
+}
+
+static int v2_soak_thermal_init(v2_soak_thermal_t *thermal)
+{
+    XSysMonPsu_Config *config;
+    uint64_t eos_mask =
+        (uint64_t)XSYSMONPSU_ISR_1_EOS_MASK << 32;
+    uint64_t channels = XSYSMONPSU_SEQ_CH0_TEMP_MASK |
+        XSYSMONPSU_SEQ_CH0_CALIBRTN_MASK;
+
+    memset(thermal, 0, sizeof(*thermal));
+    config = XSysMonPsu_LookupConfig(XPAR_XSYSMONPSU_0_DEVICE_ID);
+    if (config == NULL ||
+        XSysMonPsu_CfgInitialize(
+            &thermal->instance, config, config->BaseAddress) != XST_SUCCESS) {
+        xil_printf("FAIL: ABI v2 soak SysMon initialization failed\r\n");
+        return ACCEL_V2_RUN_ERR_CONFIG;
+    }
+    XSysMonPsu_SetSequencerMode(
+        &thermal->instance, XSM_SEQ_MODE_SAFE, XSYSMON_PS);
+    XSysMonPsu_SetAvg(
+        &thermal->instance, XSM_AVG_16_SAMPLES, XSYSMON_PS);
+    if (XSysMonPsu_SetSeqAvgEnables(
+            &thermal->instance, channels, XSYSMON_PS) != XST_SUCCESS ||
+        XSysMonPsu_SetSeqChEnables(
+            &thermal->instance, channels, XSYSMON_PS) != XST_SUCCESS) {
+        xil_printf("FAIL: ABI v2 soak SysMon sequencer setup failed\r\n");
+        return ACCEL_V2_RUN_ERR_CONFIG;
+    }
+    XSysMonPsu_IntrClear(
+        &thermal->instance,
+        XSysMonPsu_IntrGetStatus(&thermal->instance));
+    XSysMonPsu_SetSequencerMode(
+        &thermal->instance, XSM_SEQ_MODE_CONTINPASS, XSYSMON_PS);
+    for (uint32_t poll = 0U; poll < 1000000U; ++poll) {
+        if ((XSysMonPsu_IntrGetStatus(&thermal->instance) & eos_mask) != 0U) {
+            XSysMonPsu_IntrClear(&thermal->instance, eos_mask);
+            thermal->max_temp_millic =
+                v2_soak_temp_millic(XSysMonPsu_GetAdcData(
+                    &thermal->instance, XSM_CH_TEMP, XSYSMON_PS));
+            return ACCEL_V2_RUN_OK;
+        }
+    }
+    xil_printf("FAIL: ABI v2 soak SysMon conversion timeout\r\n");
+    return ACCEL_V2_RUN_ERR_TIMEOUT;
+}
+
+static int v2_soak_sample_temperature(
+    v2_soak_thermal_t *thermal, int32_t *temp_millic)
+{
+    uint64_t ot_mask =
+        (uint64_t)(XSYSMONPSU_ISR_1_PL_OT_MASK |
+                   XSYSMONPSU_ISR_1_PS_LPD_OT_MASK |
+                   XSYSMONPSU_ISR_1_PS_FPD_OT_MASK) << 32;
+    uint64_t interrupt_status =
+        XSysMonPsu_IntrGetStatus(&thermal->instance);
+
+    *temp_millic = v2_soak_temp_millic(XSysMonPsu_GetAdcData(
+        &thermal->instance, XSM_CH_TEMP, XSYSMON_PS));
+    if (*temp_millic > thermal->max_temp_millic) {
+        thermal->max_temp_millic = *temp_millic;
+    }
+    if (*temp_millic < ACCEL_V2_SOAK_TEMP_MIN_MILLIC) {
+        xil_printf(
+            "FAIL: ABI v2 soak invalid SysMon sample temp_millic=%ld\r\n",
+            (long)*temp_millic);
+        return ACCEL_V2_RUN_ERR_CONFIG;
+    }
+    if (*temp_millic >= ACCEL_V2_SOAK_TEMP_LIMIT_MILLIC ||
+        (interrupt_status & ot_mask) != 0U) {
+        xil_printf(
+            "FAIL: ABI v2 soak thermal warning temp_millic=%ld "
+            "limit_millic=%ld sysmon_irq=0x%08lx%08lx\r\n",
+            (long)*temp_millic,
+            (long)ACCEL_V2_SOAK_TEMP_LIMIT_MILLIC,
+            (unsigned long)(interrupt_status >> 32),
+            (unsigned long)interrupt_status);
+        return ACCEL_V2_RUN_ERR_DATAPATH;
+    }
+    return ACCEL_V2_RUN_OK;
+}
+
+static int v2_run_soak(
+    const accel_single_scale_layer_schedule_t *schedule,
+    const accel_layer_desc_v2_t *descriptor)
+{
+    v2_soak_thermal_t thermal;
+    XTime soak_begin = 0U;
+    XTime now = 0U;
+    uint64_t elapsed_ms = 0U;
+    uint64_t minimum_ms = (uint64_t)ACCEL_V2_SOAK_SECONDS * 1000ULL;
+    uint64_t progress_ms =
+        (uint64_t)ACCEL_V2_SOAK_PROGRESS_SECONDS * 1000ULL;
+    uint64_t next_progress_ms = progress_ms;
+    uint32_t runs = 0U;
+    int32_t temp_millic = 0;
+    int rc = v2_soak_thermal_init(&thermal);
+
+    if (rc != ACCEL_V2_RUN_OK) {
+        return rc;
+    }
+    rc = v2_soak_sample_temperature(&thermal, &temp_millic);
+    if (rc != ACCEL_V2_RUN_OK) {
+        return rc;
+    }
+    xil_printf(
+        "ABI_V2_SOAK_BEGIN min_seconds=%lu progress_seconds=%lu "
+        "temp_limit_millic=%ld temp_min_millic=%ld clock_hz=%lu "
+        "sensor=ps_onchip\r\n",
+        (unsigned long)ACCEL_V2_SOAK_SECONDS,
+        (unsigned long)ACCEL_V2_SOAK_PROGRESS_SECONDS,
+        (long)ACCEL_V2_SOAK_TEMP_LIMIT_MILLIC,
+        (long)ACCEL_V2_SOAK_TEMP_MIN_MILLIC,
+        (unsigned long)ACCEL_V2_EXPECTED_CLOCK_HZ);
+    XTime_GetTime(&soak_begin);
+    while (elapsed_ms < minimum_ms) {
+        rc = v2_long_stream_dispatch_scaffold(schedule, descriptor);
+        if (rc != ACCEL_V2_RUN_OK) {
+            xil_printf(
+                "FAIL: ABI v2 soak dispatch run=%lu rc=%d\r\n",
+                (unsigned long)(runs + 1U), rc);
+            return rc;
+        }
+        ++runs;
+        rc = v2_soak_sample_temperature(&thermal, &temp_millic);
+        if (rc != ACCEL_V2_RUN_OK) {
+            return rc;
+        }
+        XTime_GetTime(&now);
+        elapsed_ms = ticks_to_us(now - soak_begin) / 1000ULL;
+        if (elapsed_ms >= next_progress_ms || elapsed_ms >= minimum_ms) {
+            xil_printf(
+                "ABI_V2_SOAK_PROGRESS elapsed_ms=%llu runs=%lu "
+                "temp_millic=%ld max_temp_millic=%ld thermal_warnings=0\r\n",
+                (unsigned long long)elapsed_ms,
+                (unsigned long)runs,
+                (long)temp_millic,
+                (long)thermal.max_temp_millic);
+            while (next_progress_ms <= elapsed_ms) {
+                next_progress_ms += progress_ms;
+            }
+        }
+    }
+    xil_printf(
+        "ABI_V2_SOAK_END elapsed_ms=%llu runs=%lu verified_runs=%lu "
+        "max_temp_millic=%ld thermal_warnings=0 dma_errors=0 "
+        "counter_errors=0 timeouts=0 clock_hz=%lu\r\n",
+        (unsigned long long)elapsed_ms,
+        (unsigned long)runs,
+        (unsigned long)runs,
+        (long)thermal.max_temp_millic,
+        (unsigned long)ACCEL_V2_EXPECTED_CLOCK_HZ);
+    xil_printf("PASS: ABI v2 soak complete\r\n");
+    return ACCEL_V2_RUN_OK;
+}
+#endif
 
 static int status_fill_fy(uint32_t status)
 {
@@ -1414,6 +2454,14 @@ static int service_ifm(const chain_layer_t *layer, uint32_t status, uint32_t act
     XTime_GetTime(&end);
     layer_perf.ifm_dma += end - begin;
     return 0;
+}
+
+static uint64_t pl_cycles_to_us_ceil(uint64_t cycles, uint32_t clock_hz)
+{
+    uint64_t seconds = cycles / clock_hz;
+    uint64_t remainder = cycles % clock_hz;
+    return seconds * 1000000ULL +
+        (remainder * 1000000ULL + clock_hz - 1U) / clock_hz;
 }
 
 static uint64_t ticks_to_us(XTime ticks)
@@ -2921,6 +3969,82 @@ static int decode_and_print_conv9(void)
 int main(void)
 {
     xil_printf("\r\n%s\r\n", CHAIN_SMOKE_NAME);
+#if ACCEL_RUNTIME_ABI_VERSION >= ACCEL_ABI_VERSION_V2
+    {
+        accel_single_scale_layer_schedule_t
+            schedule[ACCEL_SINGLE_SCALE_LAYER_COUNT];
+        accel_layer_desc_v2_t descriptor[ACCEL_SINGLE_SCALE_LAYER_COUNT];
+        accel_single_scale_schedule_summary_t summary;
+        uint32_t abi_version = rd32(ACCEL_BASE_ADDR, ACCEL_ABI_VERSION_REG);
+        uint32_t capability = rd32(ACCEL_BASE_ADDR, ACCEL_CAPABILITY_REG);
+        int abi_rc = accel_abi_v2_validate(
+            abi_version, capability, ACCEL_CAP_V2_REQUIRED_FLAGS);
+        if (abi_rc != ACCEL_ABI_OK) {
+            xil_printf("FAIL: accelerator ABI v2 mismatch rc=%d version=%lu capability=0x%08lx\r\n",
+                       abi_rc, (unsigned long)abi_version,
+                       (unsigned long)capability);
+            return -1;
+        }
+        abi_rc = v2_build_layer_contracts(
+            schedule, descriptor, ACCEL_SINGLE_SCALE_LAYER_COUNT, &summary);
+        if (abi_rc != 0) {
+            xil_printf("FAIL: ABI v2 software plan binding rc=%d\r\n", abi_rc);
+            return -1;
+        }
+        xil_printf(
+            "ABI v2 software contract: layers=%lu IFM=%luB OFM=%luB "
+            "IFM_DMA=%lu OFM_DMA=%lu bias=%luB/%lupkt "
+            "weight=%luB/%lupkt max_weight=%luB\r\n",
+            (unsigned long)summary.layer_count,
+            (unsigned long)summary.total_ifm_bytes,
+            (unsigned long)summary.total_output_bytes,
+            (unsigned long)summary.ifm_dma_starts,
+            (unsigned long)summary.ofm_dma_starts,
+            (unsigned long)summary.total_bias_stream_bytes,
+            (unsigned long)summary.total_bias_stream_packets,
+            (unsigned long)summary.total_weight_stream_bytes,
+            (unsigned long)summary.total_weight_stream_packets,
+            (unsigned long)summary.max_layer_weight_stream_bytes);
+#if !ACCEL_V2_LONG_STREAM_RUNTIME_READY
+        /*
+         * Do not run the v1 tile-service/byte-address parser against a v2
+         * packed layer-long data plane.  This guard is removed only when the
+         * long-DMA service loop is implemented and verified.
+         */
+        xil_printf("FAIL: ABI v2 hardware found, but layer-long software runtime is not integrated\r\n");
+        return ACCEL_ABI_ERR_RUNTIME_NOT_READY;
+#else
+#if ACCEL_V2_SOAK_SECONDS != 0U
+        return v2_run_soak(schedule, descriptor);
+#elif ACCEL_V2_BENCHMARK_RUNS == 0
+        return v2_long_stream_dispatch_scaffold(schedule, descriptor);
+#else
+        for (uint32_t run_index = 0U;
+             run_index <= ACCEL_V2_BENCHMARK_RUNS; ++run_index) {
+            int run_rc;
+            xil_printf(
+                "ABI_V2_RUN_BEGIN index=%lu warmup=%lu\r\n",
+                (unsigned long)run_index,
+                (unsigned long)(run_index == 0U));
+            run_rc = v2_long_stream_dispatch_scaffold(schedule, descriptor);
+            if (run_rc != ACCEL_V2_RUN_OK) {
+                xil_printf(
+                    "FAIL: ABI v2 benchmark run=%lu rc=%d\r\n",
+                    (unsigned long)run_index, run_rc);
+                return run_rc;
+            }
+            xil_printf(
+                "ABI_V2_RUN_END index=%lu warmup=%lu\r\n",
+                (unsigned long)run_index,
+                (unsigned long)(run_index == 0U));
+        }
+        return ACCEL_V2_RUN_OK;
+#endif
+#endif
+    }
+#elif ACCEL_RUNTIME_ABI_VERSION != ACCEL_ABI_VERSION_V1
+#error "Unsupported ACCEL_RUNTIME_ABI_VERSION"
+#endif
 #if ACCEL_BATCH_STREAM
     if (batch_check_layout() != 0) {
         xil_printf("FAIL: batch scratch layout invalid\r\n");

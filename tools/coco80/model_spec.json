@@ -1,0 +1,52 @@
+{
+  "format": "kv260-coco80-yolov3-tiny-dag",
+  "version": 1,
+  "model": {
+    "name": "Ultralytics YOLOv3-tiny COCO80",
+    "upstream_tag": "v9.5.0",
+    "upstream_commit": "8eb4cde090022af73db12cfa725ec4bf01d49c0e",
+    "input_hwc": [416, 416, 3],
+    "classes": 80,
+    "values_per_anchor": 85,
+    "anchors_per_head": 3
+  },
+  "array": {
+    "rows": 18,
+    "cols": 16,
+    "cout_tile": 32,
+    "psum_depth": 1024,
+    "materialized_depth": 32768,
+    "packed_reorder_depth": 4096,
+    "line_words_depth": 2048,
+    "dma_length_bits": 26
+  },
+  "conv_layers": [
+    {"infer_index": 0, "name": "m0", "model_index": 0, "source": "input", "ifm_hwc": [416,416,3], "ofm_hwc": [416,416,16], "kernel": 3, "stride": 1, "pad": 1, "tile_h": 2, "activation": "leaky_relu_0p1"},
+    {"infer_index": 1, "name": "m2", "model_index": 2, "source": "pool1", "ifm_hwc": [208,208,16], "ofm_hwc": [208,208,32], "kernel": 3, "stride": 1, "pad": 1, "tile_h": 4, "activation": "leaky_relu_0p1"},
+    {"infer_index": 2, "name": "m4", "model_index": 4, "source": "pool3", "ifm_hwc": [104,104,32], "ofm_hwc": [104,104,64], "kernel": 3, "stride": 1, "pad": 1, "tile_h": 8, "activation": "leaky_relu_0p1"},
+    {"infer_index": 3, "name": "m6", "model_index": 6, "source": "pool5", "ifm_hwc": [52,52,64], "ofm_hwc": [52,52,128], "kernel": 3, "stride": 1, "pad": 1, "tile_h": 8, "activation": "leaky_relu_0p1"},
+    {"infer_index": 4, "name": "m8", "model_index": 8, "source": "pool7", "ifm_hwc": [26,26,128], "ofm_hwc": [26,26,256], "kernel": 3, "stride": 1, "pad": 1, "tile_h": 13, "activation": "leaky_relu_0p1"},
+    {"infer_index": 5, "name": "m10", "model_index": 10, "source": "pool9", "ifm_hwc": [13,13,256], "ofm_hwc": [13,13,512], "kernel": 3, "stride": 1, "pad": 1, "tile_h": 13, "activation": "leaky_relu_0p1"},
+    {"infer_index": 6, "name": "m13", "model_index": 13, "source": "pool12", "ifm_hwc": [13,13,512], "ofm_hwc": [13,13,1024], "kernel": 3, "stride": 1, "pad": 1, "tile_h": 8, "activation": "leaky_relu_0p1"},
+    {"infer_index": 7, "name": "m14", "model_index": 14, "source": "m13", "ifm_hwc": [13,13,1024], "ofm_hwc": [13,13,256], "kernel": 1, "stride": 1, "pad": 0, "tile_h": 13, "activation": "leaky_relu_0p1"},
+    {"infer_index": 8, "name": "m15", "model_index": 15, "source": "m14", "ifm_hwc": [13,13,256], "ofm_hwc": [13,13,512], "kernel": 3, "stride": 1, "pad": 1, "tile_h": 13, "activation": "leaky_relu_0p1"},
+    {"infer_index": 9, "name": "m16", "model_index": 16, "source": "m14", "ifm_hwc": [13,13,256], "ofm_hwc": [13,13,128], "kernel": 1, "stride": 1, "pad": 0, "tile_h": 13, "activation": "leaky_relu_0p1"},
+    {"infer_index": 10, "name": "m19", "model_index": 19, "source": "concat18", "ifm_hwc": [26,26,384], "ofm_hwc": [26,26,256], "kernel": 3, "stride": 1, "pad": 1, "tile_h": 6, "activation": "leaky_relu_0p1"},
+    {"infer_index": 11, "name": "p4_detect", "model_index": 20, "detect_head": 0, "source": "m19", "ifm_hwc": [26,26,256], "ofm_hwc": [26,26,255], "kernel": 1, "stride": 1, "pad": 0, "tile_h": 13, "activation": "identity"},
+    {"infer_index": 12, "name": "p5_detect", "model_index": 20, "detect_head": 1, "source": "m15", "ifm_hwc": [13,13,512], "ofm_hwc": [13,13,255], "kernel": 1, "stride": 1, "pad": 0, "tile_h": 13, "activation": "identity"}
+  ],
+  "tensor_ops": [
+    {"name": "pool1", "op": "maxpool2d", "source": "m0", "kernel": 2, "stride": 2, "pads": [0,0,0,0], "shape_hwc": [208,208,16]},
+    {"name": "pool3", "op": "maxpool2d", "source": "m2", "kernel": 2, "stride": 2, "pads": [0,0,0,0], "shape_hwc": [104,104,32]},
+    {"name": "pool5", "op": "maxpool2d", "source": "m4", "kernel": 2, "stride": 2, "pads": [0,0,0,0], "shape_hwc": [52,52,64]},
+    {"name": "pool7", "op": "maxpool2d", "source": "m6", "kernel": 2, "stride": 2, "pads": [0,0,0,0], "shape_hwc": [26,26,128]},
+    {"name": "pool9", "op": "maxpool2d", "source": "m8", "kernel": 2, "stride": 2, "pads": [0,0,0,0], "shape_hwc": [13,13,256]},
+    {"name": "pool12", "op": "maxpool2d", "source": "m10", "kernel": 2, "stride": 1, "pads": [0,1,0,1], "pad_value": "source_zero_point", "shape_hwc": [13,13,512]},
+    {"name": "upsample17", "op": "nearest", "source": "m16", "factor": 2, "shape_hwc": [26,26,128]},
+    {"name": "concat18", "op": "requant_concat_hwc", "sources": ["upsample17","m8"], "requantize_source": "m8", "output_quant_source": "m16", "channel_order": ["upsample17","m8"], "shape_hwc": [26,26,384]}
+  ],
+  "heads": [
+    {"name": "p4_detect", "stride": 16, "shape_hwc": [26,26,255], "anchors": [[10,14],[23,27],[37,58]]},
+    {"name": "p5_detect", "stride": 32, "shape_hwc": [13,13,255], "anchors": [[81,82],[135,169],[344,319]]}
+  ]
+}

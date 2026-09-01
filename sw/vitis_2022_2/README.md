@@ -1,5 +1,185 @@
 # Vitis 2022.2 r18_c8 smoke test
 
+## ABI v2 integration status
+
+The release software contract is now defined by `src/accel_abi_v2.h` as
+`ABI_VERSION=2`, `ROWS=18`, `COLS=16`, and `COUT_TILE=32`.  The capability
+registers are `0x1dc` (ABI version) and `0x1e0` (packed dimensions/features).
+A v2 runtime requires raw HWC IFM, packed HWC OFM, layer-long DMA, and epoch
+context flags; zero/unknown registers and an 18x8 bitstream are rejected.
+
+`accel_single_scale_plan.h` is the v2 ten-layer plan.  It records per-layer
+`tile_h_max`, IFM/OFM totals, and `layer_last`, and models one IFM plus one OFM
+DMA per layer.  Conv7 and Conv9 use a full 13x13 tile.  Its fixed totals are
+2,249,728 IFM bytes and 1,734,616 OFM bytes (216,827 packed 64-bit beats).
+Tile geometry is fail-closed against the release buffers: a pre-pool tile may
+use at most 1,024 PSUM addresses and its packed
+`output_pixels * ceil(Cout/32)` span may use at most 4,096 reorder entries.
+Consequently Conv0/Conv1 use tile heights 2/4, respectively; all pooled regular
+and tail tile heights are stride-2 aligned.  Conv7/Conv9 remain full 13x13.
+
+The existing programs below remain explicit ABI v1 smoke/runtime code.  A
+manual build may be compiled with `-RuntimeAbiVersion 2` to exercise COUT32
+packing, ten-layer plan binding, 80-byte descriptor generation, register
+programming contracts, direct packed-OFM S2MM, and strict post-run counter
+checks.  `accel_runtime_v2.h` now contains the executable four-DMA ordering,
+uint32 wrap-safe context accounting, ERR-before-IOC checks, timeout handling,
+and the fixed DMA-reset-then-datapath-reset recovery sequence.  Its host mock
+is run by `tb/run_sw_host_tests.ps1`.
+
+The parameter images are generated before inference, with no timed-path pack
+or memcpy, by `scripts/generate_abi_v2_parameter_package.py`.  It emits two
+64-byte-aligned binaries, a JSON manifest with per-layer offsets/shapes/hashes,
+and a C binding header.  The exact payload totals are 61,824 bias bytes and
+16,849,728 COUT32 weight bytes.  The candidate build consumes that generated
+header directly; parameter packing and copying are not part of the timed
+inference path.  Runtime dispatch uses the generated per-layer offset, byte,
+and packet table and rejects any disagreement with the compiled schedule.
+
+ABI v2 uses the isolated `build_vitis_2022_2_abi_v2_candidate` workspace, the
+fixed app/platform names `conv_accel_abi_v2_candidate{,_platform}`, and the
+unique `conv_accel_abi_v2_candidate.elf`.  It cannot reuse the ABI-v1 smoke
+workspace or ELF names.  `abi_v2_candidate_artifacts.py` first binds the clean
+`abi_v2_release` (100 MHz) or `abi_v2_release_200` (200 MHz) XSA/bit and both
+parameter images, then adds the ELF to the
+same SHA256 manifest after compilation.  Build and JTAG entry points re-hash
+all applicable files and reject a changed hash, wrong ABI/profile, dirty
+hardware/software candidate, or workspace/ELF selection mismatch.  Hardware
+and software Git SHAs are recorded separately because their gated commits are
+intentionally distinct.
+
+The Vitis workspace marker includes the source XSA SHA256, so an existing
+platform/application is reused only when it was created from the currently
+bound XSA.  ABI-v2 JTAG runs also reject `-fast` and `-skip_bit`: the download
+entry point must program the exact bitstream re-verified from the candidate
+manifest, rather than assuming that the PL already contains it.
+
+The complete Block Design and board service loop are not signed off, so
+`ACCEL_V2_LONG_STREAM_RUNTIME_READY=0` remains fail-closed.  Candidate tooling
+does not create or update the formal release directory.  A candidate ELF uses
+an explicit compiler opt-in without changing that source default; its unified
+manifest records the selected staged `STREAM_CFG`, the opt-in, and whether the
+ELF omits byte comparisons for a performance run.  FIFO256 candidate builds
+start at `0x2B`, which enables continuous PSUM draining; the unsafe `0x03` and
+`0x0B` combinations are rejected.  The default and every performance
+candidate use the formal `0xBF` configuration.
+
+The `abi_v2_frequency_sweep_125` hardware profile has two deliberately narrow
+exceptions for early board feedback: a one-run functional ELF, or a separate
+development performance ELF containing one warm-up plus exactly 30 measured
+runs.  Both manifests record `release_eligible=false`; soak and formal 100-run
+identities remain forbidden.  The functional parser requires all ten layer
+OFMs to match their RTL-semantic goldens bit-for-bit.  The performance parser
+requires exact aggregate counters and timing decomposition on every run, then
+reports the observed 30 ms target without using it as a qualification gate.
+Neither path can produce a performance-signoff result.
+
+```powershell
+# One-run non-release 125 MHz functional candidate.  Use explicit hardware
+# paths when the full-system sweep build has a suffix such as _board_r1.
+powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/build_abi_v2_candidate.ps1 `
+  -ExpectedClockHz 125000000 `
+  -Workspace build_vitis_2022_2_abi_v2_candidate_125_functional `
+  -Xsa build_system_abi_v2_frequency_sweep_125/conv_accel_ps_dma_minimal.xsa `
+  -BitFile build_system_abi_v2_frequency_sweep_125/conv_accel_ps_dma_minimal/conv_accel_ps_dma_minimal.runs/impl_1/conv_accel_ps_dma_wrapper.bit `
+  -HardwareMetadata build_system_abi_v2_frequency_sweep_125/reports/build_profile.txt `
+  -HardwareShaManifest build_system_abi_v2_frequency_sweep_125/reports/system_artifacts.sha256
+
+# PortName is mandatory because Windows COM numbering is host-specific.  This
+# always programs the hash-bound bitstream; fast/skip-bit modes are forbidden.
+powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/run_abi_v2_board_functional.ps1 `
+  -PortName COMx `
+  -Workspace build_vitis_2022_2_abi_v2_candidate_125_functional
+
+# Formal 200 MHz staged functional qualification uses four separately bound
+# workspaces/ELFs in this exact order: 0x2B -> 0x3B -> 0x3F -> 0xBF. Every
+# invocation performs a full PS init and reprograms the verified bitstream.
+# The release runner requires explicit r5 paths and emits a hash-bound JSON.
+powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/run_abi_v2_board_functional.ps1 `
+  -PortName COMx -ExpectedClockHz 200000000 -ExpectedStreamCfg 0x2B `
+  -Workspace build_vitis_2022_2_abi_v2_candidate_r5_func_2b `
+  -BitFile build_abi_v2_release_r5/conv_accel_ps_dma_minimal/conv_accel_ps_dma_minimal.runs/impl_1/conv_accel_ps_dma_wrapper.bit `
+  -OutputDir build_abi_v2_release_r5/board_functional_logs
+
+# Separate non-release 125 MHz performance measurement.  This preserves the
+# functional ELF/manifest, performs one warm-up plus 30 measured inferences,
+# and records whether (but does not claim that) the 30 ms target was met.
+powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/build_abi_v2_candidate.ps1 `
+  -ExpectedClockHz 125000000 -StreamCfg 0xBF `
+  -Performance -BenchmarkRuns 30 `
+  -Workspace b125_perf_abi_v2_candidate
+
+powershell -ExecutionPolicy Bypass -File `
+  sw/vitis_2022_2/scripts/run_abi_v2_board_performance_125.ps1 `
+  -PortName COMx -Workspace b125_perf_abi_v2_candidate
+
+# The defaults point at build_system_xck26_kv260_abi_v2_release.  Explicit
+# -Xsa/-BitFile/-HardwareMetadata/-Workspace arguments are also supported.
+powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/build_abi_v2_candidate.ps1
+
+# Formal performance candidate after the safe functional 2B -> 3B -> 3F -> BF
+# sequence has passed on the board.  This ELF executes one in-process warm-up
+# and then 100 measured inferences by default.  Use `-BenchmarkRuns 30` for
+# the development board pass; StreamCfg defaults to 0xBF.
+powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/build_abi_v2_candidate.ps1 `
+  -Performance -BenchmarkRuns 30 -ExpectedClockHz 200000000 `
+  -Workspace build_vitis_2022_2_abi_v2_candidate_dev30
+
+powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/run_abi_v2_board_signoff.ps1 `
+  -PortName COM8 -ExpectedRuns 30 -ExpectedClockHz 200000000 `
+  -Workspace build_vitis_2022_2_abi_v2_candidate_dev30
+
+powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/build_abi_v2_candidate.ps1 `
+  -Performance -ExpectedClockHz 200000000
+
+# Build a distinct hash-bound soak ELF in its own workspace.  The compiled
+# contract runs complete ten-layer dispatches continuously for at least 600 s,
+# checks every dispatch's DMA/error/exact counters, samples PS SysMon after
+# every run, emits progress every 10 s, and fails at temperature >=85 C.
+powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/build_abi_v2_candidate.ps1 `
+  -Soak -SoakSeconds 600 -ExpectedClockHz 200000000
+
+powershell -ExecutionPolicy Bypass -File `
+  sw/vitis_2022_2/scripts/run_abi_v2_board_soak.ps1 `
+  -PortName COM8 -ExpectedSeconds 600 -ExpectedClockHz 200000000
+
+# Validate and bind inputs without invoking XSCT/GCC.
+powershell -ExecutionPolicy Bypass -File sw/vitis_2022_2/scripts/build_abi_v2_candidate.ps1 -CheckOnly
+
+# Download is allowed only after the unified manifest reaches state=complete.
+xsct sw/vitis_2022_2/scripts/download_run_accel_smoke.tcl `
+  -abi_version 2 `
+  -workspace build_vitis_2022_2_abi_v2_candidate `
+  -platform_name conv_accel_abi_v2_candidate_platform `
+  -artifact_manifest build_vitis_2022_2_abi_v2_candidate/abi_v2_candidate_manifest.json `
+  -bit_file build_system_xck26_kv260_abi_v2_release/conv_accel_ps_dma_minimal/conv_accel_ps_dma_minimal.runs/impl_1/conv_accel_ps_dma_wrapper.bit `
+  -elf build_vitis_2022_2_abi_v2_candidate/conv_accel_abi_v2_candidate/manual_build/conv_accel_abi_v2_candidate.elf `
+  -bias_file build_abi_v2_parameters/abi_v2_bias_cout32.bin `
+  -weight_file build_abi_v2_parameters/abi_v2_weight_cout32.bin
+
+powershell -ExecutionPolicy Bypass -File tb/run_sw_host_tests.ps1
+
+# After collecting one warm-up followed by 100 formal performance records
+# or multiple ordered UART logs), enforce all board counters and nearest-rank
+# p95 and write a hash-bound result summary.
+python tools/demo/abi_v2_board_signoff.py <ordered-uart-logs...> `
+  --expected-runs 100 --expected-clock-hz 200000000 `
+  --max-us-exclusive 30000 --p95-us-exclusive 30000 `
+  --max-busy-cycles 5400000 --max-busy-us 30000 `
+  --max-unhidden-us 2500 `
+  --json-out abi_v2_board_signoff.json
+
+# Or program/load/capture the complete in-process 101-run candidate and apply
+# the same gates automatically.
+powershell -ExecutionPolicy Bypass -File `
+  sw/vitis_2022_2/scripts/run_abi_v2_board_signoff.ps1 -PortName COM8
+
+# The soak runner writes a SHA256-bound JSON result containing elapsed time,
+# completed/verified run counts, maximum temperature, progress cadence, clock,
+# and zero DMA/counter/timeout/thermal-warning gates.  A UART timeout or any
+# target FAIL record is fail-closed and cannot produce a passing soak result.
+```
+
 This bare-metal test mirrors the current `ROWS=18, COLS=8, IFM_BANKS=2`
 KV260 smoke-test profile.
 It is an early deterministic smoke test, not the current real-layer runtime.
@@ -579,14 +759,15 @@ src/accel_single_scale_scheduler.h
 
 `accel_layer_desc_t` is the per-run descriptor used by the current single-layer
 smoke path. It holds shape, tile, pool, quant, LUT, expected byte count, and
-golden pointers. `accel_single_scale_plan.h` records the 10-layer single-scale
-YOLOv3-tiny plan for the current `ROWS=18, COLS=8, COUT_TILE=16` profile. The
-current smoke still runs one descriptor at a time.
+golden pointers. `accel_single_scale_plan.h` records the ABI v2 10-layer
+single-scale YOLOv3-tiny plan for the `ROWS=18, COLS=16, COUT_TILE=32` release
+profile. The legacy smoke paths still run one descriptor at a time.
 
 At startup the ELF runs a scheduler dry-run over the 10-layer table before it
 touches DMA or accelerator registers. The dry-run checks layer chaining, output
-shape, COUT blocks, K passes, expected OFM byte counts, and ping-pong feature
-buffer assignment. It prints a compact per-layer plan such as `ext->fb0`,
+shape, COUT blocks, K passes, expected OFM byte counts, PSUM/reorder bounds,
+pool-tile alignment, and ping-pong feature buffer assignment. It prints a
+compact per-layer plan such as `ext->fb0`,
 `fb0->fb1`, plus the required external input bytes, feature buffer sizes, and
 maximum OFM debug AXIS capture size.
 
