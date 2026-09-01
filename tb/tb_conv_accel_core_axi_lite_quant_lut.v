@@ -8,7 +8,7 @@ module tb_conv_accel_core_axi_lite_quant_lut;
     localparam OFM_ADDR_W = 24;
 
     reg clk, rst;
-    reg  [8:0]  awaddr;
+    reg  [9:0]  awaddr;
     reg         awvalid;
     wire        awready;
     reg  [31:0] wdata;
@@ -18,7 +18,7 @@ module tb_conv_accel_core_axi_lite_quant_lut;
     wire [1:0]  bresp;
     wire        bvalid;
     reg         bready;
-    reg  [8:0]  araddr;
+    reg  [9:0]  araddr;
     reg         arvalid;
     wire        arready;
     wire [31:0] rdata;
@@ -33,7 +33,7 @@ module tb_conv_accel_core_axi_lite_quant_lut;
     wire feeder_fill_req;
     wire [8:0] feeder_fill_fy;
     wire [10:0] current_cout_base;
-    wire [10:0] current_pass_base_k;
+    wire [13:0] current_pass_base_k;
     wire [10:0] configured_cout_total;
     wire [15:0] configured_num_pixels;
     wire [7:0] configured_input_zero_point;
@@ -92,6 +92,9 @@ module tb_conv_accel_core_axi_lite_quant_lut;
         .debug_expected_bytes(32'd0), .debug_core_wr_count(32'd0),
         .debug_axis_wr_count(32'd0), .debug_tlast_count(32'd0),
         .debug_last_tlast_index(32'd0),
+        .debug_packed_ofm_axis_byte_count(32'd0),
+        .debug_packed_ofm_axis_stall_cycles(32'd0),
+        .debug_packed_ofm_protocol_error(1'b0),
         .raw_hwc_load_active_cycles(32'd0),
         .raw_hwc_load_unpack_cycles(32'd0),
         .raw_hwc_replay_active_cycles(32'd0),
@@ -121,7 +124,7 @@ module tb_conv_accel_core_axi_lite_quant_lut;
     reg [31:0] rd;
 
     task axi_write;
-        input [7:0] addr;
+        input [9:0] addr;
         input [31:0] data;
         begin
             @(negedge clk);
@@ -146,7 +149,7 @@ module tb_conv_accel_core_axi_lite_quant_lut;
     endtask
 
     task axi_read;
-        input [7:0] addr;
+        input [9:0] addr;
         output [31:0] data;
         begin
             @(negedge clk);

@@ -11,7 +11,13 @@
 //       drain PSUMs (partial writeback or final output)
 module layer_scheduler_stream #(
     parameter K_TILE = 32,
-    parameter COUT_TILE = 64
+    parameter COUT_TILE = 64,
+    // When enabled, the next tagged K-pass is armed while the current pass is
+    // still computing.  compute_start remains a one-cycle request; the
+    // downstream context frontend holds that request until it can return
+    // compute_start_accepted.  The default preserves the legacy commit/start
+    // state sequence exactly.
+    parameter ENABLE_FAST_CONTEXT_HANDOFF = 0
 ) (
     input  clk,
     input  rst,
@@ -39,6 +45,7 @@ module layer_scheduler_stream #(
     output reg weight_load_start,
     input      weight_load_done,
     output reg feeder_start,
+    input      feeder_start_ready,
     input      feeder_done,
     input      feeder_compute_ready,
     input      feeder_overlap_mode,
@@ -58,10 +65,12 @@ module layer_scheduler_stream #(
     input      psum_drain_packet_fire,
     input      compute_fire,
     output reg compute_start,
+    input      compute_start_accepted,
     input      compute_done,
     output reg psum_drain_start,
     input      psum_drain_done,
     output reg [13:0] feeder_pass_base_k,
+    output reg [15:0] feeder_k_pass,
     output reg perf_prefetch_start,
     output reg perf_prefetch_weight_done,
     output reg perf_prefetch_feed_done,
@@ -103,10 +112,14 @@ module layer_scheduler_stream #(
     reg prefetch_weight_done;
     reg prefetch_feed_done;
     reg [13:0] prefetch_pass_base_k;
+    reg [15:0] pass_index;
+    reg [15:0] prefetch_pass_index;
     reg pass_bank;
     reg prev_drain_pending;
     reg [15:0] drain_packet_count;
     reg collector_final_done_seen;
+    reg fast_handoff_armed;
+    reg fast_handoff_accepted;
 
     localparam [14:0] K_STEP_EXT = K_TILE;
     localparam [10:0] COUT_STEP = COUT_TILE;
@@ -137,7 +150,22 @@ module layer_scheduler_stream #(
         (!feeder_overlap_mode || feeder_done_seen || feeder_done);
     wire prefetch_start_now =
         busy && prefetch_enable_current && !prefetch_started &&
+        feeder_start_ready &&
         (prefetch_start_serial_ready || prefetch_start_during_compute_ready);
+    wire fast_handoff_mode_current =
+        (ENABLE_FAST_CONTEXT_HANDOFF != 0) && continuous_psum_enable &&
+        prefetch_enable_current;
+    wire fast_handoff_arm_now =
+        prefetch_start_now && fast_handoff_mode_current;
+    wire fast_handoff_pending_now =
+        fast_handoff_armed || fast_handoff_arm_now;
+    wire fast_handoff_accept_now =
+        compute_start_accepted && fast_handoff_pending_now;
+    wire fast_handoff_accepted_now =
+        fast_handoff_accepted || fast_handoff_accept_now;
+    wire active_context_complete_now =
+        (compute_done_seen || compute_done) &&
+        (!feeder_overlap_mode || feeder_done_seen || feeder_done);
     wire psum_overlap_enable_current =
         psum_stream_overlap_enable && prefetch_enable_current && prefetch_started;
     wire psum_overlap_ready_now =
@@ -155,17 +183,27 @@ module layer_scheduler_stream #(
     assign perf_stage_weight =
         busy && (state == ST_WGT_START || state == ST_WGT_WAIT);
     assign perf_stage_feeder =
-        busy && (state == ST_FEED_START || state == ST_FEED_WAIT);
+        busy && (state == ST_FEED_START || state == ST_FEED_WAIT ||
+                 // The prefetched weight/vector pair is still being filled.
+                 // Keep this known wait out of PERF_UNCLASSIFIED while the
+                 // dedicated prefetch-stall counter retains the root cause.
+                 state == ST_PREFETCH_WAIT);
     wire continuous_final_collect_wait =
         continuous_psum_enable && (state == ST_COMP_WAIT) && last_k &&
         (compute_done_seen || compute_done) &&
         !(collector_final_done_seen || collector_final_done);
     assign perf_stage_compute =
         busy && (state == ST_COMP_START ||
-                 (state == ST_COMP_WAIT && !continuous_final_collect_wait));
+                 (state == ST_COMP_WAIT && !continuous_final_collect_wait) ||
+                 // A committed prefetch is the one-cycle context handoff
+                 // immediately preceding the next compute start.
+                 state == ST_PREFETCH_COMMIT);
     assign perf_stage_drain =
         busy && (state == ST_DRAIN_START || state == ST_DRAIN_WAIT ||
-                 continuous_final_collect_wait);
+                 continuous_final_collect_wait ||
+                 // ST_DONE retires the final collector context and emits the
+                 // scheduler completion pulse on the following edge.
+                 state == ST_DONE);
     assign perf_prefetch_stall = busy && (state == ST_PREFETCH_WAIT);
     assign perf_psumovl_wait_psum =
         busy && psum_overlap_enable_current && prefetch_ready_now && drain_started &&
@@ -195,6 +233,7 @@ module layer_scheduler_stream #(
             compute_start <= 1'b0;
             psum_drain_start <= 1'b0;
             feeder_pass_base_k <= 14'd0;
+            feeder_k_pass <= 16'd0;
             compute_done_seen <= 1'b0;
             compute_started_seen <= 1'b0;
             feeder_done_seen <= 1'b0;
@@ -204,10 +243,14 @@ module layer_scheduler_stream #(
             prefetch_weight_done <= 1'b0;
             prefetch_feed_done <= 1'b0;
             prefetch_pass_base_k <= 14'd0;
+            pass_index <= 16'd0;
+            prefetch_pass_index <= 16'd0;
             pass_bank <= 1'b0;
             prev_drain_pending <= 1'b0;
             drain_packet_count <= 16'd0;
             collector_final_done_seen <= 1'b0;
+            fast_handoff_armed <= 1'b0;
+            fast_handoff_accepted <= 1'b0;
             perf_prefetch_start <= 1'b0;
             perf_prefetch_weight_done <= 1'b0;
             perf_prefetch_feed_done <= 1'b0;
@@ -239,6 +282,13 @@ module layer_scheduler_stream #(
             if (continuous_psum_enable && collector_final_done)
                 collector_final_done_seen <= 1'b1;
 
+            // A context request can be accepted many cycles after its
+            // one-cycle compute_start pulse.  Keep the acknowledgement until
+            // the old context has also completed, allowing either ordering or
+            // a true same-edge completion/acceptance handoff.
+            if (fast_handoff_accept_now)
+                fast_handoff_accepted <= 1'b1;
+
             if (prefetch_started && weight_load_done &&
                 !prefetch_weight_done) begin
                 prefetch_weight_done <= 1'b1;
@@ -267,10 +317,15 @@ module layer_scheduler_stream #(
                         prefetch_weight_done <= 1'b0;
                         prefetch_feed_done <= 1'b0;
                         feeder_pass_base_k <= 14'd0;
+                        feeder_k_pass <= 16'd0;
+                        pass_index <= 16'd0;
+                        prefetch_pass_index <= 16'd0;
                         pass_bank <= 1'b0;
                         prev_drain_pending <= 1'b0;
                         drain_packet_count <= 16'd0;
                         collector_final_done_seen <= 1'b0;
+                        fast_handoff_armed <= 1'b0;
+                        fast_handoff_accepted <= 1'b0;
                         state <= ST_BIAS_START;
                     end
                 end
@@ -296,10 +351,13 @@ module layer_scheduler_stream #(
                 end
 
                 ST_FEED_START: begin
-                    feeder_start <= 1'b1;
-                    feeder_pass_base_k <= pass_base_k;
-                    feeder_done_seen <= 1'b0;
-                    state <= ST_FEED_WAIT;
+                    if (feeder_start_ready) begin
+                        feeder_start <= 1'b1;
+                        feeder_pass_base_k <= pass_base_k;
+                        feeder_k_pass <= pass_index;
+                        feeder_done_seen <= 1'b0;
+                        state <= ST_FEED_WAIT;
+                    end
                 end
 
                 ST_FEED_WAIT: begin
@@ -310,6 +368,13 @@ module layer_scheduler_stream #(
                 end
 
                 ST_COMP_START: begin
+                    // With raw overlap enabled, feeder_compute_ready may move
+                    // ST_FEED_WAIT forward on the final vector one cycle
+                    // before the registered feeder_done pulse.  Preserve that
+                    // pulse here so pass prefetch cannot deadlock waiting for
+                    // a completion that already occurred.
+                    if (feeder_done)
+                        feeder_done_seen <= 1'b1;
                     if (!continuous_psum_enable || collector_ctx_ready) begin
                         compute_start <= 1'b1;
                         compute_done_seen <= 1'b0;
@@ -340,10 +405,20 @@ module layer_scheduler_stream #(
                         prefetch_weight_done <= 1'b0;
                         prefetch_feed_done <= 1'b0;
                         prefetch_pass_base_k <= next_k[13:0];
+                        prefetch_pass_index <= pass_index + 1'b1;
                         feeder_pass_base_k <= next_k[13:0];
+                        feeder_k_pass <= pass_index + 1'b1;
                         weight_load_start <= 1'b1;
                         feeder_start <= 1'b1;
                         perf_prefetch_start <= 1'b1;
+                        if (fast_handoff_mode_current) begin
+                            // The frontend converts this pulse into a held
+                            // request.  Never repeat it in ST_COMP_START.
+                            compute_start <= 1'b1;
+                            fast_handoff_armed <= 1'b1;
+                            fast_handoff_accepted <=
+                                compute_start_accepted;
+                        end
                     end
 
                     if (early_drain_enable && !drain_started && !prev_drain_pending &&
@@ -355,13 +430,62 @@ module layer_scheduler_stream #(
                     end
 
                     if (continuous_psum_enable) begin
-                        if (!prefetch_start_now &&
+                        if (fast_handoff_pending_now) begin
+                            if (active_context_complete_now &&
+                                fast_handoff_accepted_now) begin
+                                // The next context was already selected by the
+                                // tagged frontend, so its acceptance is the
+                                // authoritative collector/bank-safety check.
+                                // Rechecking collector_next_bank_safe here
+                                // would see the newly admitted collector as
+                                // active on next_wr_bank and deadlock.  Retire
+                                // the scheduler's old
+                                // descriptor and make the prefetched pass
+                                // current without visiting COMMIT/COMP_START.
+                                // This permits the first new compute_fire on
+                                // the immediately following cycle.
+                                pass_base_k <= prefetch_pass_base_k;
+                                pass_index <= prefetch_pass_index;
+                                pass_bank <= ~pass_bank;
+                                compute_done_seen <= 1'b0;
+                                // The old controller's registered done may
+                                // coincide with the new context's first fire.
+                                // Preserve that fire so the following
+                                // prefetch can arm without an extra cycle.
+                                compute_started_seen <= compute_fire;
+                                feeder_done_seen <= prefetch_feed_done_now;
+                                drain_started <= 1'b0;
+                                drain_done_seen <= 1'b0;
+                                drain_packet_count <= 16'd0;
+                                collector_final_done_seen <= 1'b0;
+                                prefetch_started <= 1'b0;
+                                prefetch_weight_done <= 1'b0;
+                                prefetch_feed_done <= 1'b0;
+                                fast_handoff_armed <= 1'b0;
+                                fast_handoff_accepted <= 1'b0;
+                                perf_prefetch_hit <= 1'b1;
+                                perf_psumovl_start <= 1'b1;
+                                perf_psumovl_hit <= 1'b1;
+                                state <= ST_COMP_WAIT;
+                            end
+                        end else if (!prefetch_start_now &&
                             (compute_done || compute_done_seen) &&
                             (!feeder_overlap_mode || feeder_done || feeder_done_seen)) begin
                             if (!last_k) begin
-                                if (prefetch_ready_now && collector_partial_credit &&
+                                // Admit the next tagged context as soon as its
+                                // IFM/weight prefetch and destination bank are
+                                // ready.  Waiting here for the first committed
+                                // partial-PSUM packet serialized the following
+                                // 16-cycle shadow-weight load after array tail
+                                // retirement.  The PSUM stream feeder and owner
+                                // scoreboard already gate each real
+                                // compute_fire on committed per-address credit,
+                                // so starting the context before credit is both
+                                // safe and necessary to hide that weight load.
+                                if (prefetch_ready_now &&
                                     collector_next_bank_safe) begin
                                     pass_base_k <= next_k[13:0];
+                                    pass_index <= pass_index + 1'b1;
                                     pass_bank <= ~pass_bank;
                                     perf_prefetch_hit <= 1'b1;
                                     perf_psumovl_start <= 1'b1;
@@ -370,6 +494,7 @@ module layer_scheduler_stream #(
                                 end else if (!prefetch_started &&
                                              collector_next_bank_safe) begin
                                     pass_base_k <= next_k[13:0];
+                                    pass_index <= pass_index + 1'b1;
                                     pass_bank <= ~pass_bank;
                                     state <= ST_WGT_START;
                                 end
@@ -378,6 +503,7 @@ module layer_scheduler_stream #(
                                 if (!last_cout) begin
                                     cout_base <= cout_base + COUT_STEP;
                                     pass_base_k <= 14'd0;
+                                    pass_index <= 16'd0;
                                     pass_bank <= 1'b0;
                                     state <= ST_BIAS_START;
                                 end else begin
@@ -394,6 +520,7 @@ module layer_scheduler_stream #(
                                 if (!last_k) begin
                                     if (prefetch_ready_now) begin
                                         pass_base_k <= next_k[13:0];
+                                        pass_index <= pass_index + 1'b1;
                                         pass_bank <= ~pass_bank;
                                         perf_prefetch_hit <= 1'b1;
                                         state <= ST_PREFETCH_COMMIT;
@@ -402,12 +529,14 @@ module layer_scheduler_stream #(
                                         state <= ST_PREFETCH_WAIT;
                                     end else begin
                                         pass_base_k <= next_k[13:0];
+                                        pass_index <= pass_index + 1'b1;
                                         pass_bank <= ~pass_bank;
                                         state <= ST_WGT_START;
                                     end
                                 end else if (!last_cout) begin
                                     cout_base <= cout_base + COUT_STEP;
                                     pass_base_k <= 14'd0;
+                                    pass_index <= 16'd0;
                                     pass_bank <= 1'b0;
                                     state <= ST_BIAS_START;
                                 end else begin
@@ -423,6 +552,7 @@ module layer_scheduler_stream #(
                                  (compute_done || compute_done_seen) &&
                                  (!feeder_overlap_mode || feeder_done || feeder_done_seen)) begin
                         pass_base_k <= next_k[13:0];
+                        pass_index <= pass_index + 1'b1;
                         pass_bank <= ~pass_bank;
                         prev_drain_pending <= !psum_drain_done;
                         drain_started <= 1'b0;
@@ -449,13 +579,18 @@ module layer_scheduler_stream #(
                         prefetch_weight_done <= 1'b0;
                         prefetch_feed_done <= 1'b0;
                         prefetch_pass_base_k <= next_k[13:0];
+                        prefetch_pass_index <= pass_index + 1'b1;
                         feeder_pass_base_k <= next_k[13:0];
+                        feeder_k_pass <= pass_index + 1'b1;
                         weight_load_start <= 1'b1;
                         feeder_start <= 1'b1;
                         perf_prefetch_start <= 1'b1;
+                        // Fast handoff is intentionally restricted to the
+                        // continuous tagged path handled in ST_COMP_WAIT.
                     end
                     if (!prefetch_start_now && psum_overlap_ready_now) begin
                         pass_base_k <= next_k[13:0];
+                        pass_index <= pass_index + 1'b1;
                         pass_bank <= ~pass_bank;
                         prev_drain_pending <= !psum_drain_done;
                         drain_started <= 1'b0;
@@ -469,6 +604,7 @@ module layer_scheduler_stream #(
                         if (!last_k) begin
                             if (prefetch_ready_now) begin
                                 pass_base_k <= next_k[13:0];
+                                pass_index <= pass_index + 1'b1;
                                 pass_bank <= ~pass_bank;
                                 perf_prefetch_hit <= 1'b1;
                                 state <= ST_PREFETCH_COMMIT;
@@ -477,12 +613,14 @@ module layer_scheduler_stream #(
                                 state <= ST_PREFETCH_WAIT;
                             end else begin
                                 pass_base_k <= next_k[13:0];
+                                pass_index <= pass_index + 1'b1;
                                 pass_bank <= ~pass_bank;
                                 state <= ST_WGT_START;
                             end
                         end else if (!last_cout) begin
                             cout_base <= cout_base + COUT_STEP;
                             pass_base_k <= 14'd0;
+                            pass_index <= 16'd0;
                             pass_bank <= 1'b0;
                             state <= ST_BIAS_START;
                         end else begin
@@ -494,6 +632,7 @@ module layer_scheduler_stream #(
                 ST_PREFETCH_WAIT: begin
                     if (prefetch_ready_now) begin
                         pass_base_k <= prefetch_pass_base_k;
+                        pass_index <= prefetch_pass_index;
                         pass_bank <= ~pass_bank;
                         perf_prefetch_hit <= 1'b1;
                         state <= ST_PREFETCH_COMMIT;

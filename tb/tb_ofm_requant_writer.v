@@ -44,6 +44,7 @@ module tb_ofm_requant_writer;
 
     integer pass, fail;
     integer i;
+    integer model_lane;
 
     function [7:0] golden;
         input signed [PSUM_W-1:0] p;
@@ -64,6 +65,157 @@ module tb_ofm_requant_writer;
             else golden = v[7:0];
         end
     endfunction
+
+    // Independent three-enabled-cycle model.  This checks the writer as one
+    // transaction pipeline: valid, metadata and every requantized byte must
+    // advance together, and all of them must freeze when packet_ready is low.
+    reg model_v1, model_v2, model_v3;
+    reg [ADDR_W-1:0] model_addr1, model_addr2, model_addr3;
+    reg [10:0] model_cout1, model_cout2, model_cout3;
+    reg [COLS*2-1:0] model_mask1, model_mask2, model_mask3;
+    reg [COLS*2*8-1:0] model_data1, model_data2, model_data3;
+    reg writer_freeze_history_valid;
+    reg [ADDR_W-1:0] hold_addr_r1, hold_addr_r2, hold_ofm_addr;
+    reg [10:0] hold_cout_r1, hold_cout_r2, hold_ofm_cout;
+    reg [COLS*2-1:0] hold_mask_r1, hold_mask_r2, hold_ofm_mask;
+
+    always @(posedge clk) begin
+        if (rst) begin
+            model_v1 = 1'b0;
+            model_v2 = 1'b0;
+            model_v3 = 1'b0;
+            model_addr1 = {ADDR_W{1'b0}};
+            model_addr2 = {ADDR_W{1'b0}};
+            model_addr3 = {ADDR_W{1'b0}};
+            model_cout1 = 11'd0;
+            model_cout2 = 11'd0;
+            model_cout3 = 11'd0;
+            model_mask1 = {COLS*2{1'b0}};
+            model_mask2 = {COLS*2{1'b0}};
+            model_mask3 = {COLS*2{1'b0}};
+            model_data1 = {COLS*2*8{1'b0}};
+            model_data2 = {COLS*2*8{1'b0}};
+            model_data3 = {COLS*2*8{1'b0}};
+        end else if (packet_ready) begin
+            // Shift this test-only oracle back-to-front with blocking
+            // assignments so data and valid remain deterministic under XSIM
+            // 2022.2 O2 as well as event-accurate simulators.
+            model_v3 = model_v2;
+            model_v2 = model_v1;
+            model_addr3 = model_addr2;
+            model_addr2 = model_addr1;
+            model_cout3 = model_cout2;
+            model_cout2 = model_cout1;
+            model_mask3 = model_mask2;
+            model_mask2 = model_mask1;
+            model_data3 = model_data2;
+            model_data2 = model_data1;
+            if (packet_valid) begin
+                model_addr1 = packet_addr;
+                model_cout1 = packet_cout_base;
+                model_mask1 = packet_channel_valid;
+                for (model_lane = 0; model_lane < COLS*2;
+                     model_lane = model_lane + 1)
+                    model_data1[model_lane*8 +: 8] = golden(
+                        packet_data[model_lane*PSUM_W +: PSUM_W],
+                        mult_flat[model_lane*MULT_W +: MULT_W],
+                        shift_flat[model_lane*SHIFT_W +: SHIFT_W],
+                        zp_flat[model_lane*ZP_W +: ZP_W]);
+            end
+            model_v1 = packet_valid;
+        end
+
+        #1;
+        if (!rst) begin
+            if ((dut.rq_col[0].u_rq.valid_r1 !== model_v1) ||
+                (dut.rq_col[0].u_rq.valid_r2 !== model_v2) ||
+                (dut.rq_col[0].u_rq.valid_r3 !== model_v3)) begin
+                $display("[FAIL] writer internal valid stages got=%0b/%0b/%0b exp=%0b/%0b/%0b",
+                         dut.rq_col[0].u_rq.valid_r1,
+                         dut.rq_col[0].u_rq.valid_r2,
+                         dut.rq_col[0].u_rq.valid_r3,
+                         model_v1, model_v2, model_v3);
+                fail = fail + 1;
+            end else begin
+                pass = pass + 1;
+            end
+            if (model_v1 &&
+                ((dut.addr_r1 !== model_addr1) ||
+                 (dut.cout_r1 !== model_cout1) ||
+                 (dut.mask_r1 !== model_mask1))) begin
+                $display("[FAIL] writer r1 metadata misaligned");
+                fail = fail + 1;
+            end else if (model_v1) begin
+                pass = pass + 1;
+            end
+            if (model_v2 &&
+                ((dut.addr_r2 !== model_addr2) ||
+                 (dut.cout_r2 !== model_cout2) ||
+                 (dut.mask_r2 !== model_mask2))) begin
+                $display("[FAIL] writer r2 metadata misaligned");
+                fail = fail + 1;
+            end else if (model_v2) begin
+                pass = pass + 1;
+            end
+            if (ofm_valid !== model_v3) begin
+                $display("[FAIL] writer valid got=%0b exp=%0b",
+                         ofm_valid, model_v3);
+                fail = fail + 1;
+            end else begin
+                pass = pass + 1;
+            end
+            if (model_v3) begin
+                if ((ofm_addr !== model_addr3) ||
+                    (ofm_cout_base !== model_cout3) ||
+                    (ofm_channel_valid !== model_mask3)) begin
+                    $display("[FAIL] writer metadata addr=%0d/%0d cout=%0d/%0d mask=%b/%b",
+                             ofm_addr, model_addr3,
+                             ofm_cout_base, model_cout3,
+                             ofm_channel_valid, model_mask3);
+                    fail = fail + 1;
+                end else begin
+                    pass = pass + 1;
+                end
+                if (ofm_data !== model_data3) begin
+                    $display("[FAIL] writer data got=%h exp=%h",
+                             ofm_data, model_data3);
+                    fail = fail + 1;
+                end else begin
+                    pass = pass + 1;
+                end
+            end
+
+            if (writer_freeze_history_valid && !packet_ready) begin
+                if ((dut.addr_r1 !== hold_addr_r1) ||
+                    (dut.cout_r1 !== hold_cout_r1) ||
+                    (dut.mask_r1 !== hold_mask_r1) ||
+                    (dut.addr_r2 !== hold_addr_r2) ||
+                    (dut.cout_r2 !== hold_cout_r2) ||
+                    (dut.mask_r2 !== hold_mask_r2) ||
+                    (ofm_addr !== hold_ofm_addr) ||
+                    (ofm_cout_base !== hold_ofm_cout) ||
+                    (ofm_channel_valid !== hold_ofm_mask)) begin
+                    $display("[FAIL] writer metadata advanced while ce=0");
+                    fail = fail + 1;
+                end else begin
+                    pass = pass + 1;
+                end
+            end
+
+            hold_addr_r1 = dut.addr_r1;
+            hold_cout_r1 = dut.cout_r1;
+            hold_mask_r1 = dut.mask_r1;
+            hold_addr_r2 = dut.addr_r2;
+            hold_cout_r2 = dut.cout_r2;
+            hold_mask_r2 = dut.mask_r2;
+            hold_ofm_addr = ofm_addr;
+            hold_ofm_cout = ofm_cout_base;
+            hold_ofm_mask = ofm_channel_valid;
+            writer_freeze_history_valid = 1'b1;
+        end else begin
+            writer_freeze_history_valid = 1'b0;
+        end
+    end
 
     task check_byte;
         input integer lane;
@@ -136,6 +288,45 @@ module tb_ofm_requant_writer;
             for (lane = 0; lane < COLS*2; lane = lane + 1)
                 data_o[lane*PSUM_W +: PSUM_W] =
                     (lane[0] ? -32'sd300 : 32'sd120) + pkt*32'sd31 + lane*32'sd19;
+        end
+    endtask
+
+    task set_quant_profile;
+        input integer profile;
+        integer lane;
+        begin
+            for (lane = 0; lane < COLS*2; lane = lane + 1) begin
+                mult_flat[lane*MULT_W +: MULT_W] =
+                    16'd1001 + profile*16'd977 + lane*16'd131;
+                shift_flat[lane*SHIFT_W +: SHIFT_W] =
+                    (profile + lane*3) & 4'hf;
+                zp_flat[lane*ZP_W +: ZP_W] =
+                    (profile*29 + lane*17) & 8'hff;
+            end
+        end
+    endtask
+
+    task check_varying_quant_alignment;
+        reg [ADDR_W-1:0] pkt_addr;
+        reg [10:0] pkt_cout;
+        reg [COLS*2-1:0] pkt_mask;
+        reg [COLS*2*PSUM_W-1:0] pkt_data;
+        integer pkt;
+        begin
+            repeat (3) @(negedge clk);
+            ofm_ready = 1'b1;
+            for (pkt = 6; pkt < 10; pkt = pkt + 1) begin
+                make_packet(pkt, pkt_addr, pkt_cout, pkt_mask, pkt_data);
+                set_quant_profile(pkt);
+                packet_addr = pkt_addr;
+                packet_cout_base = pkt_cout;
+                packet_channel_valid = pkt_mask;
+                packet_data = pkt_data;
+                packet_valid = 1'b1;
+                @(negedge clk);
+            end
+            packet_valid = 1'b0;
+            repeat (6) @(negedge clk);
         end
     endtask
 
@@ -307,6 +498,10 @@ module tb_ofm_requant_writer;
         zp_flat = 0;
         pass = 0;
         fail = 0;
+        writer_freeze_history_valid = 1'b0;
+        hold_addr_r1 = 0; hold_addr_r2 = 0; hold_ofm_addr = 0;
+        hold_cout_r1 = 0; hold_cout_r2 = 0; hold_ofm_cout = 0;
+        hold_mask_r1 = 0; hold_mask_r2 = 0; hold_ofm_mask = 0;
 
         for (i = 0; i < COLS*2; i = i + 1) begin
             packet_data[i*PSUM_W +: PSUM_W] = (i[0] ? -32'sd200 : 32'sd100) + i*32'sd17;
@@ -353,6 +548,7 @@ module tb_ofm_requant_writer;
 
         check_back_to_back();
         check_output_backpressure();
+        check_varying_quant_alignment();
 
         $display("=== tb_ofm_requant_writer: %0d pass, %0d fail ===", pass, fail);
         if (fail != 0) $fatal(1);

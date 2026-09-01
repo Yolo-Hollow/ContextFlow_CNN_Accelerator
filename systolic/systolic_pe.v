@@ -39,7 +39,14 @@ module systolic_pe #(
     end
 
     // ---- IFM + horizontal valid (4-cycle pipeline) ----
+    // These fixed-latency mesh pipelines are deliberately implemented as
+    // flip-flops.  An SRL saves FFs, but consumes one LUT for each extracted
+    // bit lane; across the full PE mesh that LUT cost is substantial.  The
+    // attribute also keeps the architectural four-cycle delay explicit when
+    // tagged context signals are added alongside these paths.
+    (* shreg_extract = "no" *)
     reg signed [IFM_W-1:0] ifm_r0, ifm_r1, ifm_r2, ifm_r3;
+    (* shreg_extract = "no" *)
     reg valid_h_r0, valid_h_r1, valid_h_r2, valid_h_r3;
     always @(posedge clk) begin
         if (rst) begin
@@ -60,9 +67,13 @@ module systolic_pe #(
     );
 
     // ---- PSUM + vertical valid (4-cycle align + 1-cycle accumulate) ----
+    (* shreg_extract = "no" *)
     reg signed [PSUM_W-1:0] psuma_r0, psuma_r1, psuma_r2, psuma_r3;
+    (* shreg_extract = "no" *)
     reg signed [PSUM_W-1:0] psumb_r0, psumb_r1, psumb_r2, psumb_r3;
+    (* shreg_extract = "no" *)
     reg valid_va_r0, valid_va_r1, valid_va_r2, valid_va_r3;
+    (* shreg_extract = "no" *)
     reg valid_vb_r0, valid_vb_r1, valid_vb_r2, valid_vb_r3;
     always @(posedge clk) begin
         if (rst) begin

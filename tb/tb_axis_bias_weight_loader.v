@@ -128,8 +128,9 @@ module tb_axis_bias_weight_loader;
             bias_tdata[63:32] = 32'h1000_0000 + beat*2 + 1;
             bias_tkeep = 8'hff;
             bias_tlast = last;
-            wait(bias_tready);
             @(posedge clk);
+            while (bias_tready !== 1'b1)
+                @(posedge clk);
             @(negedge clk);
             bias_tvalid = 1'b0;
             bias_tdata = 64'd0;
@@ -150,8 +151,9 @@ module tb_axis_bias_weight_loader;
                 weight_tdata[n*8 +: 8] = ((beat*8 + n) & 8'hff) ^ 8'h5a;
             weight_tkeep = 8'hff;
             weight_tlast = last;
-            wait(weight_tready);
             @(posedge clk);
+            while (weight_tready !== 1'b1)
+                @(posedge clk);
             @(negedge clk);
             weight_tvalid = 1'b0;
             weight_tdata = 64'd0;

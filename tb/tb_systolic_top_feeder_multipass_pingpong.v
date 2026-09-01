@@ -29,7 +29,7 @@ module tb_systolic_top_feeder_multipass_pingpong;
     reg [9:0] dma_wr_fy;
     reg [7:0] dma_wr_data [0:4];
     reg dma_line_advance;
-    reg [10:0] pass_base_k;
+    reg [13:0] pass_base_k;
     reg [5:0] bias_wr_addr;
     reg [PSUM_W-1:0] bias_wr_data;
     reg bias_wr_en, is_first_pass, use_ext_psum;
@@ -270,7 +270,7 @@ module tb_systolic_top_feeder_multipass_pingpong;
 
         load_bias();
 
-        pass_base_k = 11'd0;
+        pass_base_k = 14'd0;
         is_first_pass = 1'b1;
         use_ext_psum = 1'b0;
         psum_top_ext = 0;
@@ -311,7 +311,7 @@ module tb_systolic_top_feeder_multipass_pingpong;
         end
         psum_top_ext = pp_rd_data;
 
-        pass_base_k = 11'd32;
+        pass_base_k = 14'd32;
         is_first_pass = 1'b0;
         use_ext_psum = 1'b1;
         load_weights_tile(32);

@@ -11,33 +11,37 @@ module com_shift_reg
 	input [WIDTH-1:0] si,
 	output [WIDTH-1:0] so
 );
-	(* srl_style=SRL_STYLE_VAL*)
-	reg [WIDTH-1:0] sreg [0:DEPTH];
-	
-	integer t;
-	initial begin
-		for(t=0;t<=DEPTH;t=t+1)
-			sreg[t]=0;
-	end
-	
-	// tail
-	assign so=sreg[DEPTH];
-	//head
-	always@(*) begin
-		sreg[0]=si;
-	end
-	//body
 	genvar i;
-	generate 
-		for(i=1;i<=DEPTH;i=i+1)
-		begin
-			always@(posedge clk)
-			begin
-					if (rst)
-						sreg[i]<={WIDTH{1'b0}};
-					else
-						sreg[i]<=sreg[i-1];
+	generate
+		if (DEPTH == 0) begin : g_passthrough
+			// A continuous assignment avoids the time-zero race between the
+			// old procedural head assignment and memory initialization.  Tags
+			// often remain constant for an entire context, so waiting for an
+			// input transition is not a valid zero-delay implementation.
+			assign so = si;
+		end else begin : g_pipeline
+			(* srl_style=SRL_STYLE_VAL*)
+			reg [WIDTH-1:0] sreg [0:DEPTH-1];
+			integer t;
+			initial begin
+				for (t = 0; t < DEPTH; t = t + 1)
+					sreg[t] = {WIDTH{1'b0}};
 			end
+			always @(posedge clk) begin
+				if (rst)
+					sreg[0] <= {WIDTH{1'b0}};
+				else
+					sreg[0] <= si;
+			end
+			for (i = 1; i < DEPTH; i = i + 1) begin : g_shift
+				always @(posedge clk) begin
+					if (rst)
+						sreg[i] <= {WIDTH{1'b0}};
+					else
+						sreg[i] <= sreg[i-1];
+				end
+			end
+			assign so = sreg[DEPTH-1];
 		end
 	endgenerate
 endmodule

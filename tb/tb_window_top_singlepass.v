@@ -30,7 +30,7 @@ module tb_window_top_singlepass;
     reg [7:0] dma_wr_data [0:4];
     reg dma_line_advance;
     reg [1:0] conv_stride, conv_pad;
-    reg [10:0] pass_base_k;
+    reg [13:0] pass_base_k;
     wire [31:0] ifm_fifo_full;
 
     reg [5:0] bias_wr_addr;

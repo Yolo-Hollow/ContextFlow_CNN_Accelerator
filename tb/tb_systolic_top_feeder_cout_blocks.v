@@ -33,7 +33,7 @@ module tb_systolic_top_feeder_cout_blocks;
     reg [9:0] dma_wr_fy;
     reg [7:0] dma_wr_data [0:4];
     reg dma_line_advance;
-    reg [10:0] pass_base_k;
+    reg [13:0] pass_base_k;
     reg [5:0] bias_wr_addr;
     reg [PSUM_W-1:0] bias_wr_data;
     reg bias_wr_en, is_first_pass, use_ext_psum, use_psum_stream;
@@ -296,7 +296,7 @@ module tb_systolic_top_feeder_cout_blocks;
         repeat (2) @(negedge clk);
 
         for (block_base = 0; block_base < COUT_TOTAL; block_base = block_base + COUT_TILE) begin
-            pass_base_k = 11'd0;
+            pass_base_k = 14'd0;
             is_first_pass = 1'b1;
             use_ext_psum = 1'b0;
             use_psum_stream = 1'b0;

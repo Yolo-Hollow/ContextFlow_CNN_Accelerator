@@ -107,8 +107,9 @@ module tb_axis_hwc_tile_cache;
             s_axis_tkeep = keep;
             s_axis_tlast = last;
             s_axis_tvalid = 1'b1;
-            wait(s_axis_tready);
             @(posedge clk);
+            while (s_axis_tready !== 1'b1)
+                @(posedge clk);
             @(negedge clk);
             s_axis_tvalid = 1'b0;
             s_axis_tdata = 64'd0;

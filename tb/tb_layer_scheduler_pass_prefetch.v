@@ -20,6 +20,7 @@ module `TB_LAYER_SCHEDULER_PASS_PREFETCH_MODULE;
     wire done;
     wire [13:0] pass_base_k;
     wire [13:0] feeder_pass_base_k;
+    wire [15:0] feeder_k_pass;
     wire [10:0] cout_base;
     wire [10:0] cout_valid;
     wire [15:0] num_pixels_out;
@@ -40,6 +41,15 @@ module `TB_LAYER_SCHEDULER_PASS_PREFETCH_MODULE;
     wire perf_prefetch_hit;
     wire perf_prefetch_miss;
     wire perf_prefetch_stall;
+    wire perf_stage_bias;
+    wire perf_stage_weight;
+    wire perf_stage_feeder;
+    wire perf_stage_compute;
+    wire perf_stage_drain;
+    wire [4:0] perf_stage_vector = {
+        perf_stage_bias, perf_stage_weight, perf_stage_feeder,
+        perf_stage_compute, perf_stage_drain
+    };
     reg bias_load_done = 1'b0;
     reg weight_load_done = 1'b0;
     reg feeder_done = 1'b0;
@@ -64,6 +74,9 @@ module `TB_LAYER_SCHEDULER_PASS_PREFETCH_MODULE;
     integer drain_delay = 0;
     integer compute_fire_delay = 0;
     integer psum_ready_delay = 0;
+    integer prefetch_wait_stage_count = 0;
+    integer prefetch_commit_stage_count = 0;
+    integer done_stage_count = 0;
     reg compute_done_seen_for_pass = 1'b0;
 
     layer_scheduler_stream #(
@@ -79,7 +92,8 @@ module `TB_LAYER_SCHEDULER_PASS_PREFETCH_MODULE;
         .psum_wr_bank(psum_wr_bank), .psum_rd_bank(psum_rd_bank),
         .bias_load_start(bias_load_start), .bias_load_done(bias_load_done),
         .weight_load_start(weight_load_start), .weight_load_done(weight_load_done),
-        .feeder_start(feeder_start), .feeder_done(feeder_done),
+        .feeder_start(feeder_start), .feeder_start_ready(1'b1),
+        .feeder_done(feeder_done),
         .feeder_compute_ready(feeder_compute_ready),
         .feeder_overlap_mode(1'b1),
         .raw_hwc_mode(1'b1),
@@ -100,6 +114,7 @@ module `TB_LAYER_SCHEDULER_PASS_PREFETCH_MODULE;
         .compute_start(compute_start), .compute_done(compute_done),
         .psum_drain_start(psum_drain_start), .psum_drain_done(psum_drain_done),
         .feeder_pass_base_k(feeder_pass_base_k),
+        .feeder_k_pass(feeder_k_pass),
         .perf_prefetch_start(perf_prefetch_start),
         .perf_prefetch_weight_done(perf_prefetch_weight_done),
         .perf_prefetch_feed_done(perf_prefetch_feed_done),
@@ -107,8 +122,11 @@ module `TB_LAYER_SCHEDULER_PASS_PREFETCH_MODULE;
         .perf_prefetch_miss(perf_prefetch_miss),
         .perf_prefetch_stall(perf_prefetch_stall),
         .perf_psumovl_start(), .perf_psumovl_hit(), .perf_psumovl_wait_psum(),
-        .perf_stage_bias(), .perf_stage_weight(), .perf_stage_feeder(),
-        .perf_stage_compute(), .perf_stage_drain()
+        .perf_stage_bias(perf_stage_bias),
+        .perf_stage_weight(perf_stage_weight),
+        .perf_stage_feeder(perf_stage_feeder),
+        .perf_stage_compute(perf_stage_compute),
+        .perf_stage_drain(perf_stage_drain)
     );
 
     always #5 clk = ~clk;
@@ -123,12 +141,55 @@ module `TB_LAYER_SCHEDULER_PASS_PREFETCH_MODULE;
             prefetch_hit_count <= 0;
             prefetch_miss_count <= 0;
             prefetch_before_compute_done_count <= 0;
+            prefetch_wait_stage_count <= 0;
+            prefetch_commit_stage_count <= 0;
+            done_stage_count <= 0;
             compute_done_seen_for_pass <= 1'b0;
         end else begin
+            if (busy) begin
+                case (perf_stage_vector)
+                    5'b10000, 5'b01000, 5'b00100,
+                    5'b00010, 5'b00001: begin end
+                    default: begin
+                        $display("[FAIL] scheduler state=%0d stage vector=%05b",
+                                 dut.state, perf_stage_vector);
+                        fail = fail + 1;
+                    end
+                endcase
+            end
+            if (dut.state == dut.ST_PREFETCH_WAIT) begin
+                prefetch_wait_stage_count <= prefetch_wait_stage_count + 1;
+                if (!perf_stage_feeder) begin
+                    $display("[FAIL] prefetch wait is not feeder stage");
+                    fail = fail + 1;
+                end
+            end
+            if (dut.state == dut.ST_PREFETCH_COMMIT) begin
+                prefetch_commit_stage_count <=
+                    prefetch_commit_stage_count + 1;
+                if (!perf_stage_compute) begin
+                    $display("[FAIL] prefetch commit is not compute stage");
+                    fail = fail + 1;
+                end
+            end
+            if (dut.state == dut.ST_DONE) begin
+                done_stage_count <= done_stage_count + 1;
+                if (!perf_stage_drain) begin
+                    $display("[FAIL] scheduler done is not drain stage");
+                    fail = fail + 1;
+                end
+            end
             if (weight_load_start)
                 weight_start_count <= weight_start_count + 1;
-            if (feeder_start)
+            if (feeder_start) begin
+                if (feeder_pass_base_k !== feeder_k_pass * K_TILE) begin
+                    $display("[FAIL] feeder[%0d] base=%0d k_pass=%0d",
+                             feeder_start_count, feeder_pass_base_k,
+                             feeder_k_pass);
+                    fail = fail + 1;
+                end
                 feeder_start_count <= feeder_start_count + 1;
+            end
             if (compute_start) begin
                 compute_done_seen_for_pass <= 1'b0;
                 if (pass_base_k !== compute_start_count * K_TILE) begin
@@ -145,10 +206,11 @@ module `TB_LAYER_SCHEDULER_PASS_PREFETCH_MODULE;
                     prefetch_before_compute_done_count <=
                         prefetch_before_compute_done_count + 1;
                 if (pass_base_k !== (prefetch_start_count * K_TILE) ||
-                    feeder_pass_base_k !== ((prefetch_start_count + 1) * K_TILE)) begin
-                    $display("[FAIL] prefetch[%0d] exec=%0d feeder=%0d",
+                    feeder_pass_base_k !== ((prefetch_start_count + 1) * K_TILE) ||
+                    feeder_k_pass !== (prefetch_start_count + 1)) begin
+                    $display("[FAIL] prefetch[%0d] exec=%0d feeder=%0d k_pass=%0d",
                              prefetch_start_count, pass_base_k,
-                             feeder_pass_base_k);
+                             feeder_pass_base_k, feeder_k_pass);
                     fail = fail + 1;
                 end
                 prefetch_start_count <= prefetch_start_count + 1;
@@ -251,6 +313,15 @@ module `TB_LAYER_SCHEDULER_PASS_PREFETCH_MODULE;
             prefetch_before_compute_done_count !== 2) begin
             $display("[FAIL] expected during-compute prefetches, got %0d",
                      prefetch_before_compute_done_count);
+            fail = fail + 1;
+        end
+        if (prefetch_commit_stage_count !== 2 || done_stage_count !== 1 ||
+            (DURING_COMPUTE_PREFETCH ?
+                (prefetch_wait_stage_count !== 0) :
+                (prefetch_wait_stage_count == 0))) begin
+            $display("[FAIL] classified control stages wait=%0d commit=%0d done=%0d",
+                     prefetch_wait_stage_count,
+                     prefetch_commit_stage_count, done_stage_count);
             fail = fail + 1;
         end
 

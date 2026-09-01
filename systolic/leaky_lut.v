@@ -8,7 +8,11 @@ module leaky_lut (
     input  [7:0] wr_addr, wr_data,
     // Read port (combinational)
     input  [7:0] data_in,
-    output [7:0] data_out
+    output [7:0] data_out,
+    // Lane zero exposes this second asynchronous read for AXI-Lite
+    // write/read verification.  Unused lane copies optimize the port away.
+    input  [7:0] rd_addr,
+    output [7:0] rd_data
 );
     reg [7:0] lut [0:255];
 
@@ -17,4 +21,5 @@ module leaky_lut (
     end
 
     assign data_out = lut[data_in];
+    assign rd_data = lut[rd_addr];
 endmodule

@@ -35,6 +35,9 @@ module tb_systolic_pe;
     reg signed [IFM_W-1:0]  ifm_hist  [0:15];
     reg signed [PSUM_W-1:0] psuma_hist [0:15];
     reg signed [PSUM_W-1:0] psumb_hist [0:15];
+    reg valid_h_hist [0:15];
+    reg valid_va_hist [0:15];
+    reg valid_vb_hist [0:15];
     reg signed [WGT_W-1:0]  w0_ref, w1_ref;
     integer h;
     always @(posedge clk) begin
@@ -43,10 +46,16 @@ module tb_systolic_pe;
                 ifm_hist[h]   <= ifm_hist[h-1];
                 psuma_hist[h] <= psuma_hist[h-1];
                 psumb_hist[h] <= psumb_hist[h-1];
+                valid_h_hist[h]  <= valid_h_hist[h-1];
+                valid_va_hist[h] <= valid_va_hist[h-1];
+                valid_vb_hist[h] <= valid_vb_hist[h-1];
             end
             ifm_hist[0]   <= ifm_in;
             psuma_hist[0] <= psuma_in;
             psumb_hist[0] <= psumb_in;
+            valid_h_hist[0]  <= valid_in_h;
+            valid_va_hist[0] <= valid_in_va;
+            valid_vb_hist[0] <= valid_in_vb;
             if (w_load) begin
                 w0_ref <= w0_in;
                 w1_ref <= w1_in;
@@ -61,8 +70,14 @@ module tb_systolic_pe;
 
     wire signed [15:0] prod_a_ref = w0_ref * ifm_hist[4];
     wire signed [15:0] prod_b_ref = w1_ref * ifm_hist[4];
-    wire signed [PSUM_W-1:0] exp_psuma = psuma_hist[4] + {{PSUM_W-16{prod_a_ref[15]}}, prod_a_ref};
-    wire signed [PSUM_W-1:0] exp_psumb = psumb_hist[4] + {{PSUM_W-16{prod_b_ref[15]}}, prod_b_ref};
+    wire exp_valid_va = valid_h_hist[4] && valid_va_hist[4];
+    wire exp_valid_vb = valid_h_hist[4] && valid_vb_hist[4];
+    wire signed [PSUM_W-1:0] exp_psuma = exp_valid_va ?
+        (psuma_hist[4] + {{PSUM_W-16{prod_a_ref[15]}}, prod_a_ref}) :
+        psuma_hist[4];
+    wire signed [PSUM_W-1:0] exp_psumb = exp_valid_vb ?
+        (psumb_hist[4] + {{PSUM_W-16{prod_b_ref[15]}}, prod_b_ref}) :
+        psumb_hist[4];
 
     always @(negedge clk) begin
         if (!rst) begin
@@ -73,6 +88,24 @@ module tb_systolic_pe;
         if (checking) begin
             if (ifm_out !== ifm_hist[3]) begin
                 $display("[FAIL] ifm_out=%0d expected=%0d (hist[3])", ifm_out, ifm_hist[3]);
+                fail = fail + 1;
+            end else pass = pass + 1;
+
+            if (valid_out_h !== valid_h_hist[3]) begin
+                $display("[FAIL] valid_out_h=%0b expected=%0b",
+                    valid_out_h, valid_h_hist[3]);
+                fail = fail + 1;
+            end else pass = pass + 1;
+
+            if (valid_out_va !== exp_valid_va) begin
+                $display("[FAIL] valid_out_va=%0b expected=%0b",
+                    valid_out_va, exp_valid_va);
+                fail = fail + 1;
+            end else pass = pass + 1;
+
+            if (valid_out_vb !== exp_valid_vb) begin
+                $display("[FAIL] valid_out_vb=%0b expected=%0b",
+                    valid_out_vb, exp_valid_vb);
                 fail = fail + 1;
             end else pass = pass + 1;
 
@@ -119,11 +152,15 @@ module tb_systolic_pe;
         ifm_in = 0;  psuma_in = 0;   psumb_in = 0;   @(negedge clk);
 
         // ==== Stream 2: negative values ====
-        $display("=== Stream 2: negative ifm = -3, -7, -1 ===");
+        $display("=== Stream 2: negative values with independent valid bubbles ===");
         ifm_in = -3; psuma_in = 10; psumb_in = 20; @(negedge clk);
-        ifm_in = -7; psuma_in = 20; psumb_in = 30; @(negedge clk);
-        ifm_in = -1; psuma_in = 30; psumb_in = 40; @(negedge clk);
+        ifm_in = -7; psuma_in = 20; psumb_in = 30;
+        valid_in_h = 0; @(negedge clk);
+        ifm_in = -1; psuma_in = 30; psumb_in = 40;
+        valid_in_h = 1; valid_in_va = 0; @(negedge clk);
+        valid_in_va = 1; valid_in_vb = 0;
         ifm_in = 0;  psuma_in = 0;  psumb_in = 0;  @(negedge clk);
+        valid_in_vb = 1;
 
         // ==== Stream 3: max INT8 corner ====
         $display("=== Stream 3: corner ifm=127, -128 ===");

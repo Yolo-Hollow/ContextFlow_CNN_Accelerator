@@ -55,7 +55,7 @@ module tb_systolic_top_feeder_singlepass;
         .num_pixels(16'd9), .compute_done(compute_done),
         .fm_h(9'd5), .fm_w(9'd5), .ofm_h(9'd3), .ofm_w(9'd3),
         .tile_oy_base(9'd0), .tile_ofm_h(9'd0),
-        .conv_stride(2'd1), .conv_pad(2'd0), .pass_base_k(11'd0),
+        .conv_stride(2'd1), .conv_pad(2'd0), .pass_base_k(14'd0),
         .dma_bank_wr_en(dma_bank_wr_en), .dma_wr_x(dma_wr_x), .dma_wr_fy(dma_wr_fy),
         .dma_wr_data(dma_wr_data), .dma_line_advance(dma_line_advance),
         .bias_wr_addr(bias_wr_addr), .bias_wr_data(bias_wr_data), .bias_wr_en(bias_wr_en),

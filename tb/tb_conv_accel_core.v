@@ -26,7 +26,7 @@ module tb_conv_accel_core;
 
     reg clk, rst;
     reg cfg_wr_en, cfg_rd_en;
-    reg [6:0] cfg_addr;
+    reg [7:0] cfg_addr;
     reg [31:0] cfg_wdata;
     wire [31:0] cfg_rdata;
     wire bias_load_req, weight_load_req;
@@ -57,6 +57,7 @@ module tb_conv_accel_core;
     wire [15:0] ofm_mem_wr_addr;
     wire [7:0] ofm_mem_wr_data;
     wire ofm_packet_full;
+    wire configured_datapath_reset;
 
     conv_accel_core #(
         .ROWS(ROWS), .COLS(COLS), .IFM_W(IFM_W), .WEIGHT_W(WGT_W), .PSUM_W(PSUM_W),
@@ -85,6 +86,12 @@ module tb_conv_accel_core;
         .raw_hwc_load_unpack_cycles(32'd0),
         .raw_hwc_replay_active_cycles(32'd0),
         .raw_hwc_replay_wait_ready_cycles(32'd0),
+        // Deliberately non-zero: ENABLE_PACKED_HWC_OFM defaults to zero, so
+        // the core must suppress these inactive-path values.
+        .debug_packed_ofm_axis_byte_count(32'hdead_beef),
+        .debug_packed_ofm_axis_stall_cycles(32'h1234_5678),
+        .debug_packed_ofm_protocol_error(1'b1),
+        .configured_datapath_reset(configured_datapath_reset),
         .quant_wr_en(quant_wr_en), .quant_wr_addr(quant_wr_addr), .quant_wr_data(quant_wr_data),
         .quant_rd_addr(quant_rd_addr), .quant_rd_data(quant_rd_data),
         .act_lut_wr_en(act_lut_wr_en),
@@ -99,6 +106,7 @@ module tb_conv_accel_core;
     integer pass, fail;
     integer b, y, x, kk, cc, co, k, ch, ker, ky, kx, idx;
     integer ofm_mem_wr_count;
+    integer datapath_reset_active_cycles;
     reg signed [7:0] feat [0:CIN-1][0:FM_H-1][0:FM_W-1];
     reg signed [7:0] weight [0:K_TOTAL-1][0:COUT_TOTAL-1];
     reg signed [PSUM_W-1:0] bias [0:COUT_TOTAL-1];
@@ -122,7 +130,7 @@ module tb_conv_accel_core;
     endfunction
 
     task cfg_write;
-        input [6:0] addr;
+        input [7:0] addr;
         input [31:0] data;
         begin
             @(negedge clk);
@@ -276,12 +284,21 @@ module tb_conv_accel_core;
         end
     end
 
+    always @(posedge clk) begin
+        if (rst)
+            datapath_reset_active_cycles <= 0;
+        else if (configured_datapath_reset)
+            datapath_reset_active_cycles <=
+                datapath_reset_active_cycles + 1;
+    end
+
     initial begin
         clk = 0;
         rst = 1;
         pass = 0;
         fail = 0;
         ofm_mem_wr_count = 0;
+        datapath_reset_active_cycles = 0;
         clear_inputs();
         for (idx = 0; idx < PIXELS*COUT_TOTAL; idx = idx + 1)
             ofm_mem[idx] = 8'hxx;
@@ -356,6 +373,92 @@ module tb_conv_accel_core;
         #1;
         if (cfg_rdata[1] !== 1'b0) begin
             $display("[FAIL] done sticky did not clear");
+            fail = fail + 1;
+        end else pass = pass + 1;
+
+        // Packed-only counters must never expose dangling/stale values in the
+        // default legacy byte-write build.
+        cfg_addr = 7'h7d;
+        #1;
+        if (cfg_rdata !== 32'd0) begin
+            $display("[FAIL] non-packed OFM byte telemetry got=%h exp=0",
+                     cfg_rdata);
+            fail = fail + 1;
+        end else pass = pass + 1;
+        cfg_addr = 7'h7e;
+        #1;
+        if (cfg_rdata !== 32'd0) begin
+            $display("[FAIL] non-packed OFM stall telemetry got=%h exp=0",
+                     cfg_rdata);
+            fail = fail + 1;
+        end else pass = pass + 1;
+        cfg_addr = 7'h7f;
+        #1;
+        if (cfg_rdata[31] !== 1'b0) begin
+            $display("[FAIL] non-packed OFM protocol telemetry got=%h",
+                     cfg_rdata);
+            fail = fail + 1;
+        end else pass = pass + 1;
+
+        // Abort a live layer and recover without disturbing its programmed
+        // descriptor or quantization table.  CTRL bit2 must dominate bit0.
+        cfg_write(8'h00, 32'd1);
+        cfg_addr = 8'h00;
+        wait (cfg_rdata[0] == 1'b1);
+        repeat (8) @(negedge clk);
+        cfg_write(8'h00, 32'h0000_0005);
+        wait (configured_datapath_reset);
+        wait (!configured_datapath_reset);
+        repeat (20) @(negedge clk);
+        cfg_addr = 8'h00;
+        #1;
+        if (cfg_rdata[3:0] !== 4'b0000) begin
+            $display("[FAIL] recovered CTRL status got=%h exp low nibble 0",
+                     cfg_rdata);
+            fail = fail + 1;
+        end else pass = pass + 1;
+        if (datapath_reset_active_cycles != 4) begin
+            $display("[FAIL] datapath reset cycles got=%0d exp=4",
+                     datapath_reset_active_cycles);
+            fail = fail + 1;
+        end else pass = pass + 1;
+        cfg_addr = 8'h90;
+        #1;
+        if (cfg_rdata !== 32'd1) begin
+            $display("[FAIL] datapath reset count got=%0d exp=1", cfg_rdata);
+            fail = fail + 1;
+        end else pass = pass + 1;
+        cfg_addr = 8'h01;
+        #1;
+        if (cfg_rdata !== {7'd0, 9'd5, 7'd0, 9'd5}) begin
+            $display("[FAIL] soft reset changed FM_SIZE got=%h", cfg_rdata);
+            fail = fail + 1;
+        end else pass = pass + 1;
+        quant_rd_addr = 6'd7;
+        #1;
+        if (quant_rd_data !== {8'd0, 4'd0, 4'd0, 16'd32768}) begin
+            $display("[FAIL] soft reset changed quant lane got=%h",
+                     quant_rd_data);
+            fail = fail + 1;
+        end else pass = pass + 1;
+        cfg_addr = 8'h12;
+        #1;
+        if (cfg_rdata !== 32'd0) begin
+            $display("[FAIL] soft reset busy counter got=%0d exp=0",
+                     cfg_rdata);
+            fail = fail + 1;
+        end else pass = pass + 1;
+
+        // A clean inference immediately after recovery proves that FIFO and
+        // scheduler ownership returned to their reset states.
+        ofm_mem_wr_count = 0;
+        cfg_write(8'h00, 32'd1);
+        cfg_addr = 8'h00;
+        wait (cfg_rdata[1] == 1'b1);
+        repeat (2) @(negedge clk);
+        if (ofm_mem_wr_count != PIXELS*COUT_TOTAL) begin
+            $display("[FAIL] recovered inference writes got=%0d exp=%0d",
+                     ofm_mem_wr_count, PIXELS*COUT_TOTAL);
             fail = fail + 1;
         end else pass = pass + 1;
 

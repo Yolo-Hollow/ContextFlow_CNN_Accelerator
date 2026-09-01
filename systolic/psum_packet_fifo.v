@@ -38,7 +38,10 @@ module psum_packet_fifo #(
     wire fifo_full = (wptr[PTR_W-1] != rptr[PTR_W-1]) &&
                      (wptr[AW-1:0] == rptr[AW-1:0]);
     wire pop = out_valid && out_ready;
-    wire can_push = !fifo_full || pop;
+    // Use a strict registered-credit boundary.  A full FIFO waits one cycle
+    // even when an item is popped in the same cycle; this keeps downstream
+    // ready from propagating combinationally into collector retirement.
+    wire can_push = !fifo_full;
     wire push = in_valid && can_push;
 
     assign in_ready = can_push;

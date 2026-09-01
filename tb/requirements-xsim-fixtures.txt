@@ -1,0 +1,2 @@
+# Only the repository-local .bin -> XSIM .mem conversion requires NumPy.
+numpy>=1.26,<3
