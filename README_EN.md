@@ -52,6 +52,12 @@ OFM DMA -> DDR feature buffers -> dual-scale YOLO decode
 
 The PS manages network descriptors, four DMA channels, inter-layer tensors, and detection post-processing. The PL performs HWC vector generation, weight preparation, array execution, PSUM handling, requantization, activation, pooling, and output organization. The complete network contains 13 PL convolution layers; pooling, nearest-neighbor upsampling, concatenation, and branch connections are coordinated by the PS.
 
+### Overall architecture
+
+This is the same overall architecture figure used in the paper. The upper layers show PS/DDR and the four DMA interfaces; the PL combines on-chip vector generation and replay, folded-context scheduling, the shared systolic array, PSUM feedback, and output post-processing.
+
+![ContextFlow hardware/software architecture](docs/assets/architecture/contextflow_overall_architecture.svg)
+
 ## Current Release Results
 
 ### Performance
@@ -125,7 +131,9 @@ Canonical measurements and hashes are recorded in the [34.9 ms release manifest]
 │   └── power/                        Power-report parsing
 ├── repro/                            Reproduction entry points and compact data packages
 ├── docs/                             Release manifest, implementation, and evidence docs
-│   └── assets/results/               Board inference examples used by the README
+│   └── assets/
+│       ├── architecture/             Overall architecture vector used by the README
+│       └── results/                  Board inference examples used by the README
 ├── paper/
 │   └── lasa_journal_cn/              Frozen experimental data and publication evidence
 ├── release/

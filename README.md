@@ -52,6 +52,12 @@ OFM DMA -> DDR feature buffers -> dual-scale YOLO decode
 
 PS 负责网络描述、四路 DMA、层间张量与检测后处理；PL 负责 HWC 向量生成、权重准备、阵列执行、PSUM、量化、激活、池化和输出组织。完整网络包含 13 个 PL 卷积，池化、最近邻上采样、拼接和分支连接由 PS 配合完成。
 
+### 整体架构
+
+下图与论文中的整体架构图一致：上层为 PS/DDR 与四路 DMA 接口，PL 内部由片上向量生成与重放、折叠上下文调度、共享脉动阵列、PSUM 反馈及输出后处理组成。
+
+![ContextFlow 整体软硬件架构](docs/assets/architecture/contextflow_overall_architecture.svg)
+
 ## 当前发布结果
 
 ### 性能
@@ -125,7 +131,9 @@ PS 负责网络描述、四路 DMA、层间张量与检测后处理；PL 负责 
 │   └── power/                        功耗报告解析
 ├── repro/                            可复现实验入口与小型数据包
 ├── docs/                             发布清单、实现说明和证据文档
-│   └── assets/results/               README 使用的板端推理示例
+│   └── assets/
+│       ├── architecture/             README 使用的整体架构矢量图
+│       └── results/                  README 使用的板端推理示例
 ├── paper/
 │   └── lasa_journal_cn/              冻结的实验数据、表格与论文证据源
 ├── release/
